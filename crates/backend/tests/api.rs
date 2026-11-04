@@ -412,6 +412,18 @@ async fn tenant_isolation_and_encrypted_upload_flow() {
     )
     .await;
     assert_eq!(s, StatusCode::OK);
+
+    // Admin user listing must not panic when an account actually has chunks
+    // (PostgreSQL SUM(bigint) is numeric; the query must cast it).
+    let (s, body) = call(
+        &env.state,
+        req("GET", "/api/v1/admin/users", Some(&alice.token), None),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert!(body["users"].as_array().unwrap().iter().any(|u| {
+        u["id"] == alice.account_id.to_string() && u["used_bytes"].as_i64().unwrap_or(0) > 0
+    }));
 }
 
 async fn find_message_id(env: &Env, stripe_id: &str) -> String {

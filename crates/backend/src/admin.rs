@@ -63,7 +63,7 @@ pub async fn users(
     let rows = sqlx::query(
         "SELECT a.id, a.email, a.display_name, a.is_admin, a.disabled, a.quota_bytes, a.created_at,
                 (SELECT count(*) FROM devices d WHERE d.account_id = a.id AND d.revoked_at IS NULL) AS devices,
-                (SELECT COALESCE(SUM(c.plaintext_len),0) FROM chunks c WHERE c.account_id = a.id) AS used
+                (SELECT COALESCE(SUM(c.plaintext_len),0)::bigint FROM chunks c WHERE c.account_id = a.id) AS used
          FROM accounts a ORDER BY a.created_at",
     )
     .fetch_all(&state.pool)
