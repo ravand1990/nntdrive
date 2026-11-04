@@ -95,7 +95,22 @@ For development `flutter run -d linux` also needs
    build from an elevated prompt is the fallback.
 
 2. Install Flutter 3.47.9 for Windows and Visual Studio 2022 Build Tools with
-   the C++ workload + Windows SDK.
+   the C++ workload + Windows SDK. Add Flutter and Rust to the user PATH once so
+   a fresh terminal can run both:
+
+   ```powershell
+   [Environment]::SetEnvironmentVariable(
+     "Path",
+     [Environment]::GetEnvironmentVariable("Path", "User") +
+       ";C:\src\flutter\bin;$env:USERPROFILE\.cargo\bin",
+     "User")
+   ```
+
+   Close and reopen the terminal. `flutter doctor` should show:
+   `[√] Visual Studio - develop Windows apps` and a Windows 10/11 SDK. The
+   Android toolchain warning on Windows is irrelevant when Android is built in
+   WSL.
+
 3. Build the Rust DLL (Rust MSVC toolchain):
 
    ```powershell
