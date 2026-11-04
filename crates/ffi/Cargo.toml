@@ -18,3 +18,5 @@ uuid.workspace = true
 base64.workspace = true
 nntdrive-crypto = { path = "../crypto" }
 nntdrive-client = { path = "../client" }
+nntdrive-sync = { path = "../sync" }
+chrono.workspace = true

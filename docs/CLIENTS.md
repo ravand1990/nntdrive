@@ -25,19 +25,19 @@ Dart never implements crypto; it passes UTF-8 JSON to the native core.
 - Browse folders, decrypt names locally, search/filter.
 - Create folders, upload files, download + verify, version history with
   per-revision download, delete, favorites.
+- Multi-folder bidirectional sync: select a base folder plus additional folders,
+  automatic runs every 5 minutes while the app is open, pause/resume, per-folder
+  and global “Sync now”, conflict copies preserved, local plaintext by default.
 - Device list/revocation, quota display, light/dark/system theme.
 - Server URL + TLS backend support.
 
 ## Still missing in the client
 
-- Automatic bidirectional folder synchronization (the Rust sync engine is
-  tested but not yet driven from the UI).
 - Virtual drive (FUSE/WinFsp), Android DocumentsProvider, iOS File Provider,
   photo backup, background transfers.
 - Sharing UI/public links.
 - iOS build/signing.
-- Windows build requires enabling Developer Mode on the host; the FFI DLL must
-  be built and copied next to the executable (see below).
+- Windows packaging/signing (build works; the FFI DLL must ship next to the exe).
 
 ## What the Rust bridge exports
 

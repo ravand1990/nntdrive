@@ -19,6 +19,9 @@ use uuid::Uuid;
 
 const COMPRESSION_LEVEL: i32 = 3;
 
+pub mod sync_remote;
+pub use sync_remote::HttpRemote;
+
 #[derive(Debug, thiserror::Error)]
 pub enum ClientError {
     #[error("network error: {0}")]
@@ -187,6 +190,26 @@ impl ApiClient {
         let res = self
             .auth(self.http.patch(self.url(&format!("/files/{id}"))))
             .json(&json!({ "deleted": true }))
+            .send()
+            .await?;
+        self.check(res).await?;
+        Ok(())
+    }
+
+    pub async fn rename_file(&self, id: Uuid, name_enc_b64: &str) -> Result<()> {
+        let res = self
+            .auth(self.http.patch(self.url(&format!("/files/{id}"))))
+            .json(&json!({ "name_enc": name_enc_b64 }))
+            .send()
+            .await?;
+        self.check(res).await?;
+        Ok(())
+    }
+
+    pub async fn move_file(&self, id: Uuid, parent: Option<Uuid>) -> Result<()> {
+        let res = self
+            .auth(self.http.post(self.url(&format!("/files/{id}/move"))))
+            .json(&json!({ "parent_id": parent }))
             .send()
             .await?;
         self.check(res).await?;

@@ -11,6 +11,8 @@ import 'package:uuid/uuid.dart';
 
 import 'api.dart';
 import 'native.dart';
+import 'sync_controller.dart';
+import 'sync_page.dart';
 
 const _uuid = Uuid();
 
@@ -704,11 +706,49 @@ class _FilesPageState extends State<FilesPage> {
   bool _loading = true;
   String? _error;
   String _search = '';
+  late final SyncController _sync;
+  bool _wasSyncing = false;
 
   @override
   void initState() {
     super.initState();
+    _sync = SyncController(
+      server: widget.session.server,
+      token: widget.session.token,
+      handle: widget.session.handle,
+      api: _api,
+    );
+    _sync.addListener(_onSyncChanged);
+    _loadSync();
     _refresh();
+  }
+
+  Future<void> _loadSync() async {
+    await _sync.load();
+    _sync.start();
+  }
+
+  void _onSyncChanged() {
+    if (!mounted) return;
+    setState(() {});
+    if (_wasSyncing && !_sync.syncing) {
+      _refresh();
+    }
+    _wasSyncing = _sync.syncing;
+  }
+
+  @override
+  void dispose() {
+    _sync.removeListener(_onSyncChanged);
+    _sync.dispose();
+    super.dispose();
+  }
+
+  Future<void> _openSync() async {
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => SyncPage(controller: _sync),
+    ));
+    if (mounted) _refresh();
   }
 
   Future<void> _refresh() async {
@@ -1095,6 +1135,19 @@ class _FilesPageState extends State<FilesPage> {
               },
             ),
             ListTile(
+              leading: const Icon(Icons.sync),
+              title: const Text('Sync folders'),
+              subtitle: Text(
+                _sync.folders.isEmpty
+                    ? 'No folders selected'
+                    : '${_sync.folders.length} folder(s)${_sync.paused ? ' · paused' : ''}',
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                _openSync();
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.contrast),
               title: const Text('Toggle theme'),
               onTap: () {
@@ -1184,6 +1237,20 @@ class _FilesPageState extends State<FilesPage> {
           ],
         ),
         actions: [
+          IconButton(
+            onPressed: _openSync,
+            tooltip: 'Sync folders',
+            icon: Badge(
+              isLabelVisible: _sync.folders.any((f) => f.hasErrors),
+              child: _sync.syncing
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.sync),
+            ),
+          ),
           IconButton(onPressed: _refresh, icon: const Icon(Icons.refresh), tooltip: 'Refresh'),
           IconButton(
             onPressed: _showAccountMenu,

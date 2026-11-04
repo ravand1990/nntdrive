@@ -37,6 +37,7 @@ pub trait Remote {
     ) -> Result<RemoteEntry>;
     async fn fetch(&mut self, path: &str, revision: Uuid) -> Result<Vec<u8>>;
     async fn delete(&mut self, path: &str) -> Result<()>;
+    async fn mkdir(&mut self, path: &str) -> Result<()>;
     async fn move_path(&mut self, from: &str, to: &str) -> Result<()>;
 }
 
@@ -44,6 +45,7 @@ pub trait Remote {
 pub struct SyncReport {
     pub uploaded: usize,
     pub downloaded: usize,
+    pub created_dirs: usize,
     pub deleted_local: usize,
     pub deleted_remote: usize,
     pub moved: usize,
@@ -111,6 +113,10 @@ impl SyncEngine {
             &self.device_name,
             now,
         );
+        if std::env::var("NNTDRIVE_SYNC_DEBUG").is_ok() {
+            eprintln!("sync baseline: {:#?}", baseline);
+            eprintln!("sync actions: {actions:#?}");
+        }
 
         let mut report = SyncReport {
             skipped: scan.skipped.clone(),
@@ -145,6 +151,29 @@ impl SyncEngine {
                 .await
             {
                 report.errors.push((label, e.to_string()));
+            }
+        }
+
+        // Directories are tracked as baseline entries even when they produced
+        // no action, so a folder present on both sides is not re-detected as a
+        // conflict on every run.
+        for entry in scan.entries.iter().filter(|e| e.is_dir) {
+            let local = local_path(root.as_path(), &entry.path)?;
+            if tokio::fs::metadata(&local)
+                .await
+                .map(|m| m.is_dir())
+                .unwrap_or(false)
+            {
+                journal
+                    .upsert(&BaselineEntry {
+                        path: entry.path.clone(),
+                        is_dir: true,
+                        size: 0,
+                        content_hash: None,
+                        revision: None,
+                        deleted: false,
+                    })
+                    .await?;
             }
         }
         Ok(report)
@@ -212,10 +241,53 @@ impl SyncEngine {
                 match tokio::fs::remove_file(&p).await {
                     Ok(()) => {}
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::IsADirectory => {
+                        // Remove empty directories only; never recursively delete
+                        // local content that a remote deletion may not cover.
+                        match tokio::fs::remove_dir(&p).await {
+                            Ok(()) => {}
+                            Err(e)
+                                if matches!(
+                                    e.kind(),
+                                    std::io::ErrorKind::NotFound
+                                        | std::io::ErrorKind::DirectoryNotEmpty
+                                ) => {}
+                            Err(e) => return Err(e.into()),
+                        }
+                    }
                     Err(e) => return Err(e.into()),
                 }
                 journal.remove(&path).await?;
                 report.deleted_local += 1;
+            }
+            Action::CreateLocalDir { path } => {
+                let p = local_path(root, &path)?;
+                tokio::fs::create_dir_all(&p).await?;
+                journal
+                    .upsert(&BaselineEntry {
+                        path,
+                        is_dir: true,
+                        size: 0,
+                        content_hash: None,
+                        revision: None,
+                        deleted: false,
+                    })
+                    .await?;
+                report.created_dirs += 1;
+            }
+            Action::CreateRemoteDir { path } => {
+                remote.mkdir(&path).await?;
+                journal
+                    .upsert(&BaselineEntry {
+                        path,
+                        is_dir: true,
+                        size: 0,
+                        content_hash: None,
+                        revision: None,
+                        deleted: false,
+                    })
+                    .await?;
+                report.created_dirs += 1;
             }
             Action::RenameLocal { from, to } => {
                 let src = local_path(root, &from)?;
@@ -311,6 +383,8 @@ fn action_label(a: &Action) -> String {
         Action::Download { path, .. } => format!("download {path}"),
         Action::DeleteRemote { path, .. } => format!("delete remote {path}"),
         Action::DeleteLocal { path } => format!("delete local {path}"),
+        Action::CreateLocalDir { path } => format!("create folder {path}"),
+        Action::CreateRemoteDir { path } => format!("create remote folder {path}"),
         Action::RenameLocal { from, to } | Action::MoveRemote { from, to } => {
             format!("move {from} -> {to}")
         }
@@ -415,6 +489,10 @@ mod tests {
 
         async fn delete(&mut self, path: &str) -> Result<()> {
             self.0.lock().await.files.remove(path);
+            Ok(())
+        }
+
+        async fn mkdir(&mut self, _path: &str) -> Result<()> {
             Ok(())
         }
 

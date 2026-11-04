@@ -16,6 +16,8 @@ against real PostgreSQL and an in-process NNTP server, plus the CLI demo.
 | Scanner ignore rules, case collisions, path validation, rename detection, concurrent offline edits, conflict preservation, delete propagation | `nntdrive-sync` tests |
 | Register/login/logout, revoked device, admin authorization, tenant isolation, ciphertext upload, article proxy, dedupe lookup, shard locations | `nntdrive-backend/tests/api.rs` |
 | Real client SDK: register → create node → encrypted upload → manifest → download → decrypt → verify; dedupe; unauthorized access | `crates/client/tests/e2e.rs` |
+| Two-device sync: create/modify/delete propagation, conflict copies, independent multiple roots | `crates/client/tests/sync_e2e.rs` (real API + mock NNTP) |
+| Dart ↔ Rust FFI sync: two local folders, upload/download/edit propagation against the live backend | `clients/flutter/tool/sync_smoke.dart` (verified) |
 | Dart ↔ Rust FFI: account generation, keyfile unlock, name seal/open with wrong-key rejection | `clients/flutter/test/native_test.dart` + `crates/ffi` tests |
 | Live deployment: dev Compose stack with mock NNTP; register/upload/download through the API | `crates/client/examples/smoke.rs` (verified) |
 | Docker image build, Compose stack, healthcheck, admin page, CLI bootstrap, admin API | ✅ verified locally (image built, stack started, `/healthz` 200, admin stats returned) |
@@ -54,7 +56,7 @@ whole-stripe loss correctly reported: data is unrecoverable: ...
 |---|---|
 | 1. Working storage engine | **Done and tested** (CLI demo uploads, downloads, decrypts, verifies) |
 | 2. Self-healing storage | **Done and tested** (health, repair, refresh, snapshots via sealed manifests, simulated loss) |
-| 3. Desktop synchronization | **Client implemented for manual upload/download/versioning on Linux, Android and Windows; automatic folder sync engine tested but not yet driven by the UI** |
+| 3. Desktop synchronization | **Done for multi-folder bidirectional sync, automatic runs, conflicts and versions; virtual drives remain separate** |
 | 4. Virtual filesystem | **Not implemented** (WinFsp/FUSE design only) |
 | 5. Mobile clients | **Android app builds and performs encrypted upload/download; iOS unbuilt; no DocumentsProvider/File Provider/photo backup** |
 | 6. Sharing & production readiness | **Partial**: backend, admin dashboard, auth, jobs, Docker, backups, CI done; sharing/link endpoints absent; hardening/audit pending |
@@ -71,33 +73,36 @@ whole-stripe loss correctly reported: data is unrecoverable: ...
 - The client stores the password-wrapped keyfile and an (unused) device identity
   secret in shared preferences; move the device secret to the platform keystore
   before relying on device enrollment. The keyfile itself is Argon2id-wrapped.
-- Automatic folder synchronization is not wired to the UI yet; upload/download
-  are manual.
+- Sync runs only while the desktop app is open (no background service yet) and
+  each file is buffered in memory by the `Remote` adapter; very large files and
+  true background sync are future work.
+- Empty local folders are synced, but remote folder renames are currently seen
+  as delete+recreate (content is preserved; history/path identity is not).
 
 ## Immediate next tasks (in order)
 
-1. **Sync engine integration**: implement the `Remote` adapter over the HTTP API
-   and add a "Choose folder / Sync now / Pause" UI with conflict review.
-   `crates/sync` already reconciles and preserves conflicts.
-2. **Windows packaging**: the build is verified, but add code signing, an
+1. **Windows packaging**: the build is verified, but add code signing, an
    installer/updater and test on a clean Windows VM without the SDKs. The FFI
    DLL must ship next to the executable.
-3. **iOS**: build the Rust static library as an XCFramework, add the File
+2. **iOS**: build the Rust static library as an XCFramework, add the File
    Provider extension and BGTaskScheduler integration; requires macOS.
-4. **AMK epoch rotation** on device revocation (client command + keyring update);
+3. **AMK epoch rotation** on device revocation (client command + keyring update);
    currently the backend only tells the client rotation is required.
-5. **Sharing**: complete folder share endpoints and per-share wrapped keys, link
+4. **Sharing**: complete folder share endpoints and per-share wrapped keys, link
    tokens with password/expiry; share the AMK-derived folder key without exposing
    the AMK.
-6. **Virtual drives**: FUSE (Linux) and WinFsp (Windows) adapters with range
+5. **Virtual drives**: FUSE (Linux) and WinFsp (Windows) adapters with range
    reads, write-back cache, offline pinning and safe interrupted writes.
-7. **Mobile integrations**: Android DocumentsProvider + WorkManager/JobScheduler;
+6. **Mobile integrations**: Android DocumentsProvider + WorkManager/JobScheduler;
    iOS File Provider extension + BGTaskScheduler with honest background limits.
-8. **Security review**, fuzzing of article/yEnc parsers, rate limiting at the
+7. **Security review**, fuzzing of article/yEnc parsers, rate limiting at the
    proxy, password reset policy, audit logging coverage.
-9. **Tests to add**: interrupted upload/download, huge-file memory ceiling
+8. **Tests to add**: interrupted upload/download, huge-file memory ceiling
    measurement, replayed manifest, provider backbone correlation,
    restore-from-dump automation, Flutter integration tests for the upload flow.
+9. **Sync scalability**: sync currently buffers each file in memory for the
+   `Remote` trait; move to streaming for multi-GB files, and run sync in a
+   background isolate/service rather than only while the UI process is open.
 
 ## Known bugs / rough edges
 

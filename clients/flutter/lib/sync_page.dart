@@ -1,0 +1,260 @@
+import 'package:file_selector/file_selector.dart';
+import 'package:flutter/material.dart';
+
+import 'sync_controller.dart';
+
+class SyncPage extends StatefulWidget {
+  const SyncPage({super.key, required this.controller});
+  final SyncController controller;
+
+  @override
+  State<SyncPage> createState() => _SyncPageState();
+}
+
+class _SyncPageState extends State<SyncPage> {
+  bool _adding = false;
+
+  SyncController get c => widget.controller;
+
+  @override
+  void initState() {
+    super.initState();
+    c.addListener(_changed);
+  }
+
+  @override
+  void dispose() {
+    c.removeListener(_changed);
+    super.dispose();
+  }
+
+  void _changed() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _addFolder() async {
+    setState(() => _adding = true);
+    try {
+      final path = await getDirectoryPath(confirmButtonText: 'Sync this folder');
+      if (path == null) return;
+      final ok = await c.addFolder(path);
+      if (!mounted) return;
+      if (!ok) {
+        _toast(c.lastStatus ?? 'Could not add the folder.');
+      } else {
+        _toast('Folder added and synchronized.');
+      }
+    } catch (e) {
+      _toast('Folder picker failed: $e');
+    } finally {
+      if (mounted) setState(() => _adding = false);
+    }
+  }
+
+  Future<void> _syncAll() async {
+    await c.syncAll();
+    if (!mounted) return;
+    _toast(c.lastStatus ?? 'Sync finished.');
+  }
+
+  Future<void> _remove(SyncFolderConfig folder) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remove sync folder?'),
+        content: Text(
+          '“${folder.name}” will no longer be synchronized. Local files and the '
+          'remote copy are kept; only the sync relationship and its local journal are removed.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Remove')),
+        ],
+      ),
+    );
+    if (ok == true) await c.removeFolder(folder);
+  }
+
+  void _toast(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Sync folders'),
+        actions: [
+          IconButton(
+            tooltip: 'Sync all now',
+            onPressed: c.syncing ? null : _syncAll,
+            icon: c.syncing
+                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.sync),
+          ),
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Card(
+            color: theme.colorScheme.surfaceContainerHighest,
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Bidirectional folder sync', style: theme.textTheme.titleMedium),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'The first folder is your base folder; add as many additional folders as you like. '
+                    'Content is encrypted before it leaves this device. Local files stay readable on disk '
+                    'unless you use full-disk encryption or a vault.',
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      const Icon(Icons.schedule, size: 16),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          c.paused
+                              ? 'Automatic sync is paused.'
+                              : 'Automatic sync every ${SyncController.autoSyncInterval.inMinutes} minutes while the app is open.',
+                          style: theme.textTheme.bodySmall,
+                        ),
+                      ),
+                      Switch(
+                        value: !c.paused,
+                        onChanged: (enabled) => c.setPaused(!enabled),
+                      ),
+                    ],
+                  ),
+                  if (c.lastStatus != null) ...[
+                    const SizedBox(height: 6),
+                    Text(c.lastStatus!, style: theme.textTheme.bodySmall),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          if (c.folders.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 40),
+              child: Column(
+                children: [
+                  const Icon(Icons.folder_copy_outlined, size: 56),
+                  const SizedBox(height: 12),
+                  Text('Choose your base folder', style: theme.textTheme.titleLarge),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Pick a folder on this device. Its contents will be encrypted and mirrored to your '
+                    'encrypted library, and remote changes will be written back.',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 18),
+                  FilledButton.icon(
+                    onPressed: _adding ? null : _addFolder,
+                    icon: _adding
+                        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.create_new_folder_outlined),
+                    label: const Text('Select base folder'),
+                  ),
+                ],
+              ),
+            )
+          else ...[
+            for (var i = 0; i < c.folders.length; i++) _folderCard(c.folders[i], i),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _adding ? null : _addFolder,
+                    icon: _adding
+                        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.add),
+                    label: const Text('Add another folder'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: c.syncing || c.paused ? null : _syncAll,
+                    icon: const Icon(Icons.sync),
+                    label: const Text('Sync all now'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _folderCard(SyncFolderConfig folder, int index) {
+    final theme = Theme.of(context);
+    final lastSync = folder.lastSync == null
+        ? 'Never synced'
+        : 'Last sync ${DateTime.parse(folder.lastSync!).toLocal().toString().substring(0, 19)}';
+    final counts = folder.lastReport == null
+        ? ''
+        : ' · ↑${folder.uploaded} ↓${folder.downloaded}'
+            '${folder.conflicts > 0 ? ' · ${folder.conflicts} conflict(s)' : ''}';
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 10, 6, 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(index == 0 ? Icons.home_outlined : Icons.folder_outlined),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${index == 0 ? 'Base folder' : 'Additional folder'} · ${folder.name}',
+                        style: theme.textTheme.titleSmall,
+                      ),
+                      Text(folder.localPath, style: theme.textTheme.bodySmall),
+                    ],
+                  ),
+                ),
+                Switch(
+                  value: folder.enabled,
+                  onChanged: (v) => c.setEnabled(folder, v),
+                ),
+                PopupMenuButton<String>(
+                  onSelected: (value) {
+                    if (value == 'sync') c.syncFolder(folder);
+                    if (value == 'remove') _remove(folder);
+                  },
+                  itemBuilder: (context) => const [
+                    PopupMenuItem(value: 'sync', child: Text('Sync now')),
+                    PopupMenuItem(value: 'remove', child: Text('Remove')),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text('$lastSync$counts', style: theme.textTheme.bodySmall),
+            if (folder.hasErrors) ...[
+              const SizedBox(height: 6),
+              Text(
+                folder.lastError ?? 'Some files could not be synchronized.',
+                style: TextStyle(color: theme.colorScheme.error, fontSize: 12),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}

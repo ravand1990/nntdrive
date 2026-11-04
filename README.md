@@ -8,10 +8,11 @@ permanent plaintext or ciphertext copy of your library on the server.
 
 > **Project status.** The storage engine, self-healing layer, backend and the
 > Linux/Android/Windows Flutter clients are working end-to-end: register/login,
-> browse, upload, download, verify, versions, delete and favorites are implemented
-> and verified against a real backend. Not finished: iOS builds, automatic folder
-> synchronization, virtual drives, native mobile document providers/photo backup,
-> and sharing UIs. See [docs/STATUS.md](docs/STATUS.md) for the exact list.
+> browse, upload, download, verify, versions, delete, favorites and
+> **multi-folder bidirectional sync** (base + additional folders, automatic every
+> 5 minutes, conflict copies) are implemented and verified. Not finished: iOS
+> builds, virtual drives, native mobile document providers/photo backup, and
+> sharing UIs.
 
 ## What works today (verified by automated tests)
 
@@ -30,8 +31,9 @@ permanent plaintext or ciphertext copy of your library on the server.
 | Multi-tenant Axum API, device tokens, revocation, admin endpoints, SSE | ✅ tested |
 | PostgreSQL schema, migrations, durable jobs, admin dashboard | ✅ tested |
 | Dockerfile, Compose, backup/restore scripts, CI | ✅ provided (image build in CI) |
-| Flutter desktop/mobile client | ✅ Linux/Android/Windows release builds and E2E verified (Rust FFI); iOS needs macOS |
-| Automatic folder sync / virtual drives / mobile document providers | ❌ not implemented |
+| Flutter desktop/mobile client | ✅ Linux/Android/Windows builds; browse/upload/download + multi-folder sync verified |
+| iOS build/signing | ❌ needs macOS/Xcode |
+| Virtual drives / mobile document providers | ❌ not implemented |
 
 ## Quick start: the storage demo (no Usenet account needed)
 
@@ -114,7 +116,6 @@ recovery code and admin API token. Later registrations appear only if
 
 Prefer a terminal bootstrap? One command creates the first admin, keyfile,
 recovery kit and admin token:
-
 ```bash
 docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml up -d
 scripts/bootstrap.sh you@example.com
@@ -132,6 +133,21 @@ cargo run -p nntdrive-client --example smoke -- http://127.0.0.1:8080 /tmp/somef
 For a real deployment replace the dev override with `NNTDRIVE_NNTP_PROVIDERS`
 pointing at a posting-enabled provider (Eweka example in
 `deploy/providers.example.json`).
+
+## Folder sync
+
+Open the sync icon (⟳) in the file browser:
+
+1. **Select base folder** — e.g. `C:\Users\you\NNTDrive` or `~/NNTDrive`.
+2. Add **additional folders** for anything else you want mirrored.
+3. Sync runs automatically every 5 minutes while the app is open; use **Sync all
+   now** or per-folder **Sync now** for immediate runs. Pause is available.
+4. Concurrent edits on two devices produce conflict copies
+   (`name (conflict device timestamp).ext`); nothing is overwritten.
+
+The same encrypted remote tree is used by the browser and sync. Local files stay
+plaintext on disk (use BitLocker/LUKS/FileVault if that matters); everything sent
+to the backend/Usenet is encrypted per chunk with filenames sealed.
 
 ## Eweka / first provider
 

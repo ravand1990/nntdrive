@@ -37,6 +37,10 @@ typedef _FreeNative = Void Function(Pointer<Utf8>);
 typedef _FreeDart = void Function(Pointer<Utf8>);
 typedef _VersionNative = Uint32 Function();
 typedef _VersionDart = int Function();
+typedef _SyncNative = Pointer<Utf8> Function(Uint64, Pointer<Utf8>, Pointer<Utf8>,
+    Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>);
+typedef _SyncDart = Pointer<Utf8> Function(int, Pointer<Utf8>, Pointer<Utf8>,
+    Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>);
 
 class NativeBridge {
   NativeBridge._(this._lib) {
@@ -217,8 +221,7 @@ class NativeBridge {
     required String fileId,
     required String revisionId,
     required String destination,
-  }) {
-    final f = _lib.lookupFunction<_DownloadNative, _DownloadDart>('nntdrive_download');
+  }) {    final f = _lib.lookupFunction<_DownloadNative, _DownloadDart>('nntdrive_download');
     final args = [baseUrl, token, fileId, revisionId, destination].map(_cstr).toList();
     try {
       return _decode(f(handle, args[0], args[1], args[2], args[3], args[4]));
@@ -227,6 +230,60 @@ class NativeBridge {
         malloc.free(a);
       }
     }
+  }
+
+  Map<String, dynamic> syncRun({
+    required int handle,
+    required String baseUrl,
+    required String token,
+    required String remoteRootId,
+    required String localPath,
+    required String journalPath,
+    required String deviceName,
+  }) {
+    final f = _lib.lookupFunction<_SyncNative, _SyncDart>('nntdrive_sync_run');
+    final args = [baseUrl, token, remoteRootId, localPath, journalPath, deviceName]
+        .map(_cstr)
+        .toList();
+    try {
+      return _decode(f(handle, args[0], args[1], args[2], args[3], args[4], args[5]));
+    } finally {
+      for (final a in args) {
+        malloc.free(a);
+      }
+    }
+  }
+
+  Future<Map<String, dynamic>> syncRunAsync({
+    required int handle,
+    required String baseUrl,
+    required String token,
+    required String remoteRootId,
+    required String localPath,
+    required String journalPath,
+    required String deviceName,
+  }) {
+    final args = <String, dynamic>{
+      'handle': handle,
+      'baseUrl': baseUrl,
+      'token': token,
+      'remoteRootId': remoteRootId,
+      'localPath': localPath,
+      'journalPath': journalPath,
+      'deviceName': deviceName,
+    };
+    return Isolate.run(() {
+      final a = args;
+      return NativeBridge.instance.syncRun(
+        handle: a['handle'] as int,
+        baseUrl: a['baseUrl'] as String,
+        token: a['token'] as String,
+        remoteRootId: a['remoteRootId'] as String,
+        localPath: a['localPath'] as String,
+        journalPath: a['journalPath'] as String,
+        deviceName: a['deviceName'] as String,
+      );
+    });
   }
 
   // Isolate helpers: all parameters are primitives, so nothing unsafe crosses

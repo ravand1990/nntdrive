@@ -1413,6 +1413,7 @@ dependencies = [
  "nntdrive-crypto",
  "nntdrive-nntp",
  "nntdrive-storage",
+ "nntdrive-sync",
  "reqwest",
  "rustls",
  "serde",
@@ -1452,8 +1453,10 @@ name = "nntdrive-ffi"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "chrono",
  "nntdrive-client",
  "nntdrive-crypto",
+ "nntdrive-sync",
  "serde",
  "serde_json",
  "tokio",

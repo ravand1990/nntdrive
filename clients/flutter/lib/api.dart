@@ -218,6 +218,12 @@ class ApiClient {
   Future<void> setFavorite(String id, bool favorite) =>
       _send('PATCH', '/files/$id', body: {'favorite': favorite});
 
+  Future<void> renameFile(String id, String nameEnc) =>
+      _send('PATCH', '/files/$id', body: {'name_enc': nameEnc});
+
+  Future<void> moveFile(String id, String? parentId) =>
+      _send('POST', '/files/$id/move', body: {'parent_id': parentId});
+
   Future<AccountInfo> me() async {
     final j = await _send('GET', '/me');
     final info = AccountInfo.fromJson(j);

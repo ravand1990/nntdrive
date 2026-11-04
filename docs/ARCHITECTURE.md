@@ -131,8 +131,13 @@ last synced content hashes and server revisions.
 - both deleted → no action;
 - renames are detected by unique content hash and propagated as moves.
 
-Actions are applied through the `Remote` trait. The backend adapter is not yet
-implemented in a shipped client; the engine is tested against an in-memory remote.
+Actions are applied through the `Remote` trait. The shipped client implements it
+over the HTTP API (`crates/client/src/sync_remote.rs`): a sync root maps to an
+encrypted remote folder; names are decrypted by walking the tree locally, and
+missing remote folders are created before uploads. The Flutter sync controller
+stores one journal per selected folder, supports a base folder plus additional
+folders, runs every five minutes while the app is open, and exposes manual
+sync/pause. Concurrent edits preserve conflict copies.
 
 ## Metadata model
 

@@ -119,6 +119,14 @@ pub enum Action {
     DeleteLocal {
         path: String,
     },
+    /// Create an empty local directory to mirror a remote folder.
+    CreateLocalDir {
+        path: String,
+    },
+    /// Create a remote folder for a local directory.
+    CreateRemoteDir {
+        path: String,
+    },
     RenameLocal {
         from: String,
         to: String,
@@ -270,7 +278,10 @@ pub fn detect_remote(
                 size: entry.size,
                 hash: entry.content_hash.clone(),
             }),
-            Some(b) if b.revision != entry.revision || b.content_hash != entry.content_hash => {
+            Some(b)
+                if b.revision != entry.revision
+                    || (entry.content_hash.is_some() && b.content_hash != entry.content_hash) =>
+            {
                 changed.push(RemoteChange::Modified {
                     path: entry.path.clone(),
                     revision: entry.revision.unwrap_or_else(Uuid::new_v4),
@@ -400,6 +411,9 @@ pub fn reconcile(
             (None, Some(RemoteChange::Deleted { .. })) => {
                 actions.push(Action::DeleteLocal { path });
             }
+            (None, Some(RemoteChange::Added { is_dir: true, .. })) => {
+                actions.push(Action::CreateLocalDir { path });
+            }
             (None, Some(RemoteChange::Added { revision, .. })) => {
                 actions.push(Action::Download {
                     path,
@@ -412,6 +426,16 @@ pub fn reconcile(
                     revision: Some(*revision),
                 });
             }
+            (Some(LocalChange::Added { is_dir: true, .. }), None) => {
+                actions.push(Action::CreateRemoteDir { path });
+            }
+            (
+                Some(LocalChange::Added { is_dir: true, .. }),
+                Some(RemoteChange::Added { is_dir: true, .. }),
+            ) => {}
+            (Some(LocalChange::Added { is_dir: true, .. }), Some(RemoteChange::Deleted { .. })) => {
+                actions.push(Action::CreateRemoteDir { path });
+            }
             (None, Some(RemoteChange::Renamed { .. })) | (None, None) => {}
 
             (Some(LocalChange::Deleted { .. }), None) => {
@@ -421,12 +445,21 @@ pub fn reconcile(
                 });
             }
             (Some(LocalChange::Deleted { .. }), Some(RemoteChange::Deleted { .. })) => {}
-            (Some(LocalChange::Deleted { .. }), Some(RemoteChange::Added { revision, .. })) => {
+            (
+                Some(LocalChange::Deleted { .. }),
+                Some(RemoteChange::Added {
+                    revision, is_dir, ..
+                }),
+            ) => {
                 // Re-created remotely while deleted locally: take remote.
-                actions.push(Action::Download {
-                    path,
-                    revision: Some(*revision),
-                });
+                if *is_dir {
+                    actions.push(Action::CreateLocalDir { path });
+                } else {
+                    actions.push(Action::Download {
+                        path,
+                        revision: Some(*revision),
+                    });
+                }
             }
             (Some(LocalChange::Deleted { .. }), Some(RemoteChange::Modified { revision, .. })) => {
                 // Delete vs modify: never destroy the modified remote content.
@@ -782,5 +815,63 @@ mod tests {
             conflict_copy_name("dir/photo.JPG", "my laptop/1", "T"),
             "dir/photo (conflict my_laptop_1 T).JPG"
         );
+    }
+
+    #[test]
+    fn directories_reconcile_without_downloading_or_conflicts() {
+        let base = HashMap::new();
+        let local_dir = ScannedEntry {
+            path: "docs".into(),
+            is_dir: true,
+            size: 0,
+            mtime_ms: 0,
+            content_hash: None,
+            read_only: false,
+        };
+        let local = detect_local(&base, &[local_dir]);
+        let actions = reconcile(&base, &local, &[], "d", "t");
+        assert_eq!(
+            actions,
+            vec![Action::CreateRemoteDir {
+                path: "docs".into()
+            }]
+        );
+
+        let remote = vec![RemoteChange::Added {
+            path: "photos".into(),
+            revision: Uuid::new_v4(),
+            is_dir: true,
+            size: 0,
+            hash: None,
+        }];
+        let actions = reconcile(&base, &[], &remote, "d", "t");
+        assert_eq!(
+            actions,
+            vec![Action::CreateLocalDir {
+                path: "photos".into()
+            }]
+        );
+
+        // Directory present on both sides is not a conflict when the baseline
+        // does not know it yet.
+        let actions = reconcile(
+            &base,
+            &[LocalChange::Added {
+                path: "docs".into(),
+                is_dir: true,
+                size: 0,
+                hash: None,
+            }],
+            &[RemoteChange::Added {
+                path: "docs".into(),
+                revision: Uuid::new_v4(),
+                is_dir: true,
+                size: 0,
+                hash: None,
+            }],
+            "d",
+            "t",
+        );
+        assert!(actions.is_empty(), "{actions:?}");
     }
 }

@@ -348,6 +348,52 @@ pub unsafe extern "C" fn nntdrive_download(
     })
 }
 
+/// Runs one synchronization pass for a local folder and a remote root node.
+///
+/// # Safety
+/// All string arguments must be valid NUL-terminated UTF-8 strings.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn nntdrive_sync_run(
+    handle: u64,
+    base_url: *const c_char,
+    token: *const c_char,
+    root_id: *const c_char,
+    local_path: *const c_char,
+    journal_path: *const c_char,
+    device_name: *const c_char,
+) -> *mut c_char {
+    guard(|| {
+        let master = key(handle)?;
+        let base_url = arg(base_url)?;
+        let token = arg(token)?;
+        let root_id: Uuid = arg(root_id)?
+            .parse()
+            .map_err(|_| "invalid remote root id".to_string())?;
+        let local_path = arg(local_path)?;
+        let journal_path = arg(journal_path)?;
+        let device_name = arg(device_name)?;
+        let path = Path::new(&local_path);
+        if !path.is_dir() {
+            return Err(format!(
+                "sync folder {local_path} does not exist or is not a directory"
+            ));
+        }
+        let mut api = ApiClient::new(base_url).map_err(|e| e.to_string())?;
+        api.set_token(token);
+        let mut remote = nntdrive_client::HttpRemote::new(api, master, root_id);
+        let journal = runtime()
+            .block_on(nntdrive_sync::Journal::open(&journal_path))
+            .map_err(|e| e.to_string())?;
+        let engine = nntdrive_sync::SyncEngine::new(device_name);
+        let now = chrono::Utc::now().format("%Y-%m-%dT%H%M%SZ").to_string();
+        let report = runtime()
+            .block_on(engine.run_once(&mut remote, path, &journal, &now))
+            .map_err(|e| e.to_string())?;
+        serde_json::to_value(report).map_err(|e| e.to_string())
+    })
+}
+
 /// Creates a recovery kit for an unlocked account.
 ///
 /// # Safety
