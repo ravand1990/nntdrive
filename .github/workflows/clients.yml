@@ -1,8 +1,10 @@
 name: Clients
 
 on:
+  workflow_call:
   workflow_dispatch:
   push:
+    branches: [main]
     paths:
       - "clients/flutter/**"
       - "crates/**"
@@ -64,10 +66,11 @@ jobs:
       - run: flutter pub get
       - run: flutter build linux --release
       - run: cp linux/lib/libnntdrive_ffi.so build/linux/x64/release/bundle/lib/
+      - run: tar -czf nntdrive-linux-x64.tar.gz -C build/linux/x64/release/bundle .
       - uses: actions/upload-artifact@v4
         with:
-          name: nntdrive-linux
-          path: clients/flutter/build/linux/x64/release/bundle/
+          name: nntdrive-linux-x64
+          path: clients/flutter/nntdrive-linux-x64.tar.gz
 
   build-android:
     runs-on: ubuntu-24.04
@@ -104,10 +107,11 @@ jobs:
             build --release -p nntdrive-ffi
       - run: flutter pub get
       - run: flutter build apk --release
+      - run: cp build/app/outputs/flutter-apk/app-release.apk nntdrive-android.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: nntdrive-android-release
-          path: clients/flutter/build/app/outputs/flutter-apk/app-release.apk
+          name: nntdrive-android
+          path: clients/flutter/nntdrive-android.apk
 
   # Requires Developer Mode (symlink support) on the Windows runner.
   build-windows:
@@ -134,6 +138,11 @@ jobs:
           copy ..\..\target\release\nntdrive_ffi.dll windows\runner\
       - run: flutter pub get
       - run: flutter build windows --release
+      - run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath nntdrive-windows-x64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nntdrive-windows-x64
+          path: clients/flutter/nntdrive-windows-x64.zip
 
   # Requires macOS/Xcode; unsigned compile only until the Rust static library is
   # packaged as an XCFramework and the File Provider extension exists.

@@ -4,6 +4,17 @@ All notable changes are documented here. Every release tag **must** have an
 entry with `### Features` and/or `### Bug fixes` (at least one bullet). The
 release workflow refuses to publish if the entry is missing.
 
+## [0.2.1] - 2026-11-04
+
+### Features
+
+- GitHub releases now include client builds alongside the backend image: a Linux x64 tarball, an Android APK and a Windows x64 zip.
+- The release pipeline reuses the client workflow, so published clients are built from the same tag as the backend.
+
+### Bug fixes
+
+- Release creation no longer fails on a malformed shell heredoc in the notes/upload step. Client artifacts are downloaded and attached even when the Windows build is skipped by the runner.
+
 ## [0.2.0] - 2026-11-04
 
 ### Features
