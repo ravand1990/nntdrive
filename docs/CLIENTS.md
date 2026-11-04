@@ -55,7 +55,9 @@ Dart never implements crypto; it passes UTF-8 JSON to the native core.
 6. `device_identity`, `recovery_kit`.
 
 Dart (`lib/native.dart`) wraps this with `dart:ffi`; long calls run in an
-isolate. The sync engine (`crates/sync`) is still driven by Rust tests only.
+isolate. The Flutter sync controller drives `crates/sync` through the
+`nntdrive_sync_run_ex` FFI call, and `tool/sync_smoke.dart` verifies two-folder
+sync against a running backend.
 
 ## Build instructions
 

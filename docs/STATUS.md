@@ -28,7 +28,7 @@ decrypt, verify) and through the Flutter FFI sync layer.
 | Real Eweka round-trip: post via `post.eweka.nl:563`, retrieve via `news.eweka.nl:563`, decrypt, verify hash | 4 KB live upload; both articles STAT-verified |
 | Live deployment: dev Compose stack with mock NNTP; register/upload/download through the API | `crates/client/examples/smoke.rs` (verified) |
 | Docker image build, Compose stack, healthcheck, admin page, CLI bootstrap, admin API | ✅ verified locally (image built, stack started, `/healthz` 200, admin stats returned) |
-| Versioned image release: tests → GHCR push (`0.1.0`, `0.1`, `latest`, `sha-*`) → GitHub release with compose/env assets | ✅ v0.1.0 published (`sha256:5d2d007c…`) |
+| Versioned image release: tests → GHCR push (`0.2.0`, `0.2`, `latest`, `sha-*`) → GitHub release with compose/env assets | ✅ v0.2.0 published |
 | Flutter client analyze/tests, Linux/Android/Windows release builds | ✅ clean analyze, Dart FFI tests pass; Linux/Windows bundles run, Android APK (~77 MB, debug-signed) embeds all ABIs |
 
 Run it yourself:
@@ -94,9 +94,17 @@ provider when both aws-lc-rs and ring are in the dependency graph.
 - Real Eweka upload/download fixed: host/port/TLS validation, posting host split,
   valid From header, Rustls provider selection.
 - Flutter Windows release build and Android/Linux release artifacts verified.
-- Tag-driven release pipeline: tests, GHCR image `0.1.0`/`latest`/`sha-*`, and a
-  GitHub release with the image-only Compose files. The image is amd64 only;
-  arm64 needs native runners or a longer QEMU build.
+- Streaming sync and remote content-hash caching: files are transferred through
+  the `Remote` adapter without whole-file buffering, and remote file renames are
+  detected as local moves.
+- Selective sync and conflict review: per-folder exclusions are applied to local
+  scans and the remote snapshot, and the sync screen lists conflict copies with a
+  review panel.
+- Admin dashboard can edit users (name, quota, role, status) and providers in
+  place, with a provider-type dropdown.
+- Tag-driven release pipeline: tests, GHCR image `0.2.0`/`0.2`/`latest`/`sha-*`,
+  and a GitHub release with the image-only Compose files. The image is amd64
+  only; arm64 needs native runners or a longer QEMU build.
 
 ## Phase status
 
@@ -104,7 +112,7 @@ provider when both aws-lc-rs and ring are in the dependency graph.
 |---|---|
 | 1. Working storage engine | **Done and tested** (CLI demo uploads, downloads, decrypts, verifies) |
 | 2. Self-healing storage | **Done and tested** (health, repair, refresh, snapshots via sealed manifests, simulated loss) |
-| 3. Desktop synchronization | **Core done: multi-folder bidirectional sync, automatic 5-min runs while open, conflicts and versions. Remaining: background service, streaming large files, conflict-review UI, virtual drives** |
+| 3. Desktop synchronization | **Core done: multi-folder bidirectional sync, automatic 5-min runs while open, streaming transfers, selective sync, conflict copies and review. Remaining: background service, remote folder rename moves, per-file progress, virtual drives** |
 | 4. Virtual filesystem | **Not implemented** (WinFsp/FUSE design only) |
 | 5. Mobile clients | **Android app builds, browses and syncs (same Flutter UI); iOS unbuilt; no DocumentsProvider/File Provider/photo backup or reliable background sync** |
 | 6. Sharing & production readiness | **Partial**: backend, admin dashboard, auth, jobs, Docker, backups, CI done; sharing/link endpoints absent; hardening/audit pending |
@@ -171,8 +179,9 @@ provider when both aws-lc-rs and ring are in the dependency graph.
 - SSE only supports `Authorization` headers (fine for Dart/Flutter HTTP clients,
   not for browser `EventSource`). The app does not yet consume SSE; it refreshes
   on demand and after sync.
-- Provider changes require a process restart (one click in the dashboard). There
-  is no in-place edit form for existing provider rows yet.
+- Provider changes require a process restart (one click in the dashboard).
+  Providers can be edited in place, but the running NNTP pool picks them up only
+  after the restart.
 - `nntdrive_storage::store::platform_totals` casts aggregate sums to `bigint` because
   PostgreSQL returns `numeric`; keep casts when editing.
 - Full-text search is impossible server-side (names/content encrypted); the
@@ -188,7 +197,8 @@ provider when both aws-lc-rs and ring are in the dependency graph.
 - The app's "upload" of a new file creates the node first; if the upload fails it
   tombstones the node. An interrupted version upload leaves the previous version
   intact (the manifest commits last).
-- Sync conflicts are preserved as files but there is no merge/review dialog yet.
+- Sync conflicts are preserved as files and listed in the sync screen's review
+  panel; there are no explicit keep-mine/keep-theirs merge actions yet.
 - Remote folder renames are not detected as moves; they become delete + recreate.
 - The sync `Remote` adapter caches remote content hashes on disk; without cached
   entries it fetches and decrypts manifests (bounded per run), so large first

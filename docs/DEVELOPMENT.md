@@ -129,9 +129,11 @@ built from Windows or Linux.
   provider outage.
 - Backend tests use the real router (`tower::oneshot`) and a real database.
   They cover registration/login, token revocation, tenant isolation, ciphertext
-  upload, article proxying and admin authorization.
+  upload, article proxying, admin authorization, user edits and provider
+  create/edit/delete.
 - Sync tests use two temp directories and a shared in-memory remote to simulate
-  two devices, offline edits, conflicts, renames, deletions.
+  two devices, offline edits, conflicts, renames, deletions and selective-sync
+  exclusions.
 - Destructive tests are simulated client-side (`MockStore::delete_message`,
   `corrupt_message`, `expire_older_than`, `set_outage`), never against a provider.
 

@@ -4,24 +4,6 @@ All notable changes are documented here. Every release tag **must** have an
 entry with `### Features` and/or `### Bug fixes` (at least one bullet). The
 release workflow refuses to publish if the entry is missing.
 
-## [Unreleased]
-
-### Features
-
-- The admin dashboard can edit existing users: display name, quota (including
-  restoring unlimited storage), administrator role and enabled/disabled status.
-- Usenet providers can be edited in place (host, port, TLS, credentials, type,
-  priority, groups, connections, retention and enabled) without deleting and
-  recreating them. Leaving the password blank keeps the stored one.
-- Provider type is now a dropdown (both, posting only, retrieval only).
-- The dashboard overview is condensed, and provider configuration and live
-  traffic counters share one table.
-
-### Bug fixes
-
-- Administrators can no longer remove their own admin role (previously this
-  could leave an instance with no administrator).
-
 ## [0.2.0] - 2026-11-04
 
 ### Features
@@ -30,11 +12,16 @@ release workflow refuses to publish if the entry is missing.
 - Remote content hashes are cached locally, enabling remote file-rename detection and same-content convergence.
 - Selective sync: exclude subfolders per sync root; exclusions apply to local scanning and the remote snapshot, so excluded content is neither uploaded nor downloaded.
 - Conflict review: the sync screen lists conflict copies with a badge and count, and can reveal each one in the file manager.
+- The admin dashboard can edit existing users: display name, quota (including restoring unlimited storage), administrator role and enabled/disabled status.
+- Usenet providers can be edited in place (host, port, TLS, credentials, type, priority, groups, connections, retention and enabled) without deleting and recreating them. Leaving the password blank keeps the stored one.
+- Provider type is now a dropdown (both, posting only, retrieval only).
+- The dashboard overview is condensed, and provider configuration and live traffic counters share one table.
 
 ### Bug fixes
 
 - Sync folder removal now also deletes the remote-hash cache.
 - Excluding a folder that was already synced keeps its baseline history, so re-enabling it does not create conflicts or duplicate uploads.
+- Administrators can no longer remove their own admin role (previously this could leave an instance with no administrator).
 
 ## [0.1.0] - 2026-11-04
 

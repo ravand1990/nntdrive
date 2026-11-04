@@ -129,7 +129,7 @@ cp deploy/providers.example.json /tmp/providers.json
 # fill credentials, then set NNTDRIVE_NNTP_PROVIDERS="$(cat /tmp/providers.json)"
 ```
 
-Or add a provider in the admin dashboard. New providers are stored (password
+Or add or edit a provider in the admin dashboard. Providers are stored (password
 encrypted) and applied on the next restart. The dashboard has a **Restart
 backend** button in Maintenance; it shuts the process down gracefully and waits
 for the container manager to start it again (Compose `restart: unless-stopped`,

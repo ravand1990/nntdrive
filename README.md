@@ -10,9 +10,10 @@ permanent plaintext or ciphertext copy of your library on the server.
 > Linux/Android/Windows Flutter clients are working end-to-end: register/login,
 > browse, upload, download, verify, versions, delete, favorites and
 > **multi-folder bidirectional sync** (base + additional folders, automatic every
-> 5 minutes, conflict copies) are implemented and verified. Not finished: iOS
-> builds, virtual drives, native mobile document providers/photo backup, and
-> sharing UIs.
+> 5 minutes, conflict copies, selective subfolders and conflict review) are
+> implemented and verified. The admin dashboard can edit users and providers in
+> place. Not finished: iOS builds, background sync while the app is closed,
+> virtual drives, native mobile document providers/photo backup, and sharing UIs.
 
 ## What works today (verified by automated tests)
 
@@ -29,7 +30,7 @@ permanent plaintext or ciphertext copy of your library on the server.
 | Immutable versions, manifest encryption, version history | ✅ tested |
 | Three-way sync reconciliation, conflict copies, renames, case collisions | ✅ tested |
 | Multi-tenant Axum API, device tokens, revocation, admin endpoints, SSE | ✅ tested |
-| PostgreSQL schema, migrations, durable jobs, admin dashboard | ✅ tested |
+| PostgreSQL schema, migrations, durable jobs, admin dashboard (user/provider editing) | ✅ tested |
 | Dockerfile, Compose, backup/restore scripts, CI | ✅ provided (image build in CI) |
 | Flutter desktop/mobile client | ✅ Linux/Android/Windows builds; browse/upload/download + multi-folder sync verified |
 | iOS build/signing | ❌ needs macOS/Xcode |
