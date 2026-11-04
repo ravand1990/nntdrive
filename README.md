@@ -107,16 +107,107 @@ with a GitHub token that has `read:packages`:
 echo "$GHCR_TOKEN" | docker login ghcr.io -u ravand1990 --password-stdin
 ```
 
-Download `docker-compose.release.yml`, `env.release.example` and
-`README-IMAGES.md` from the latest GitHub **Release → Assets**, then:
+Create a directory:
 
 ```bash
 mkdir nntdrive && cd nntdrive
-# put the downloaded compose file here as docker-compose.release.yml
-mv env.release.example .env
-# set POSTGRES_PASSWORD and NNTDRIVE_SECRET_KEY (openssl rand -base64 32)
-# set NNTDRIVE_VERSION=0.1.0 to pin the image
-docker compose --env-file .env -f docker-compose.release.yml up -d
+```
+
+Save the following as `docker-compose.yml`, and save the environment block as
+`.env` beside it. No repository checkout is needed.
+
+```yaml
+name: nntdrive
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nntdrive
+      POSTGRES_USER: nntdrive
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - nntdrive-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nntdrive -d nntdrive"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    expose:
+      - "5432"
+
+  backend:
+    image: "${NNTDRIVE_IMAGE:-ghcr.io/ravand1990/nntdrive-backend}:${NNTDRIVE_VERSION:-latest}"
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgres://nntdrive:${POSTGRES_PASSWORD}@postgres:5432/nntdrive
+      NNTDRIVE_BIND: 0.0.0.0:8080
+      NNTDRIVE_CACHE_DIR: /var/lib/nntdrive/cache
+    volumes:
+      - nntdrive-cache:/var/lib/nntdrive/cache
+    ports:
+      - "${NNTDRIVE_HOST_BIND:-127.0.0.1}:${NNTDRIVE_HOST_PORT:-8080}:8080"
+    security_opt:
+      - no-new-privileges:true
+
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["tls"]
+    restart: unless-stopped
+    depends_on:
+      - backend
+    command:
+      - caddy
+      - reverse-proxy
+      - --from
+      - "${NNTDRIVE_DOMAIN:?set NNTDRIVE_DOMAIN}"
+      - --to
+      - backend:8080
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  nntdrive-pg:
+  nntdrive-cache:
+  caddy-data:
+  caddy-config:
+```
+
+`.env` (set a random `POSTGRES_PASSWORD`, a base64 32-byte
+`NNTDRIVE_SECRET_KEY`, and pin a version):
+
+```dotenv
+POSTGRES_PASSWORD=change-me-to-a-long-random-value
+NNTDRIVE_SECRET_KEY=
+
+NNTDRIVE_IMAGE=ghcr.io/ravand1990/nntdrive-backend
+NNTDRIVE_VERSION=0.1.0
+NNTDRIVE_HOST_BIND=127.0.0.1
+NNTDRIVE_HOST_PORT=8080
+
+# Only used by the "tls" profile.
+NNTDRIVE_DOMAIN=drive.example.com
+
+RUST_LOG=info,sqlx=warn
+LOG_FORMAT=json
+```
+
+Generate the secret with `openssl rand -base64 32` (PowerShell:
+`[Convert]::ToBase64String((1..32 | ForEach-Object { Get-Random -Maximum 256 }))`),
+then start:
+
+```bash
+docker compose up -d
 curl -fsS http://127.0.0.1:8080/healthz
 ```
 
@@ -124,7 +215,7 @@ Open `http://127.0.0.1:8080/`: a fresh backend offers first-time setup. Add
 providers in `/admin`, then **Maintenance → Restart backend**. For automatic TLS:
 
 ```bash
-docker compose --env-file .env -f docker-compose.release.yml --profile tls up -d
+docker compose --profile tls up -d
 ```
 
 Details, upgrades and backups: [deploy/README-IMAGES.md](deploy/README-IMAGES.md).

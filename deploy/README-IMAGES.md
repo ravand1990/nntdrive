@@ -1,37 +1,9 @@
 # Running NNTDrive without cloning the repository
 
-Published images are available at:
-
-```
-ghcr.io/ravand1990/nntdrive-backend:<version>
-ghcr.io/ravand1990/nntdrive-backend:latest
-ghcr.io/ravand1990/nntdrive-backend:edge        # main branch build
-```
-
-The repository is currently **private**, so the container package is private too.
-Authenticate once with a GitHub token that has `read:packages`:
-
-```bash
-echo "$GHCR_TOKEN" | docker login ghcr.io -u ravand1990 --password-stdin
-```
-
-## 1. Get two files (no clone)
-
-Download `docker-compose.release.yml` and `env.release.example` from the
-repository's **Releases → Assets**, or copy them from this repository:
-
-- `deploy/docker-compose.release.yml`
-- `deploy/env.release.example`
-
-Put both files in an empty directory:
-
-```bash
-mkdir nntdrive && cd nntdrive
-mv ~/Downloads/docker-compose.release.yml docker-compose.release.yml
-mv ~/Downloads/env.release.example .env
-```
-
-## 2. Set secrets
+The canonical no-clone instructions, including the complete
+`docker-compose.yml` snippet and `.env` block, are in the main
+[`README.md`](../README.md). Use those snippets directly; this document covers
+operational details around them.
 
 Edit `.env`:
 
