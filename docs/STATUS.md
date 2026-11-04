@@ -27,6 +27,7 @@ decrypt, verify) and through the Flutter FFI sync layer.
 | Real Eweka round-trip: post via `post.eweka.nl:563`, retrieve via `news.eweka.nl:563`, decrypt, verify hash | 4 KB live upload; both articles STAT-verified |
 | Live deployment: dev Compose stack with mock NNTP; register/upload/download through the API | `crates/client/examples/smoke.rs` (verified) |
 | Docker image build, Compose stack, healthcheck, admin page, CLI bootstrap, admin API | ✅ verified locally (image built, stack started, `/healthz` 200, admin stats returned) |
+| Versioned image release: tests → GHCR push (`0.1.0`, `0.1`, `latest`, `sha-*`) → GitHub release with compose/env assets | ✅ v0.1.0 published (`sha256:5d2d007c…`) |
 | Flutter client analyze/tests, Linux/Android/Windows release builds | ✅ clean analyze, Dart FFI tests pass; Linux/Windows bundles run, Android APK (~77 MB, debug-signed) embeds all ABIs |
 
 Run it yourself:
@@ -92,6 +93,9 @@ provider when both aws-lc-rs and ring are in the dependency graph.
 - Real Eweka upload/download fixed: host/port/TLS validation, posting host split,
   valid From header, Rustls provider selection.
 - Flutter Windows release build and Android/Linux release artifacts verified.
+- Tag-driven release pipeline: tests, GHCR image `0.1.0`/`latest`/`sha-*`, and a
+  GitHub release with the image-only Compose files. The image is amd64 only;
+  arm64 needs native runners or a longer QEMU build.
 
 ## Phase status
 
