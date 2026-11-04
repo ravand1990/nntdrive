@@ -128,7 +128,8 @@ jobs:
             echo "## Changes"
             echo
             bash scripts/release-notes.sh "$TAG"
-          } > "$NOTES_FILE"          if gh release view "$TAG" >/dev/null 2>&1; then
+          } > "$NOTES_FILE"
+          if gh release view "$TAG" >/dev/null 2>&1; then
             gh release edit "$TAG" --notes-file "$NOTES_FILE"
             gh release upload "$TAG" --clobber \
               deploy/docker-compose.release.yml \
