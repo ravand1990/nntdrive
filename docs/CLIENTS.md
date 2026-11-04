@@ -78,8 +78,22 @@ For development `flutter run -d linux` also needs
 
 ### Windows
 
-1. Enable **Settings → System → For developers → Developer Mode** (Flutter
-   needs symlink support for plugins; this requires an administrator action).
+1. Enable **Settings → System → For developers → Developer Mode → On** (Flutter
+   needs symlink support for plugin links; this requires an administrator).
+   From an **administrator** PowerShell you can set the same policy directly:
+
+   ```powershell
+   reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" `
+     /t REG_DWORD /f /v AllowDevelopmentWithoutDevLicense /d 1
+   reg query "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" `
+     /v AllowDevelopmentWithoutDevLicense
+   ```
+
+   The last command must print `0x1`. Close and reopen the terminal afterwards.
+   If the machine is domain-managed and the value reverts, ask IT to allow
+   Developer Mode/`AllowDevelopmentWithoutDevLicense` (Intune/GPO); running the
+   build from an elevated prompt is the fallback.
+
 2. Install Flutter 3.47.9 for Windows and Visual Studio 2022 Build Tools with
    the C++ workload + Windows SDK.
 3. Build the Rust DLL (Rust MSVC toolchain):

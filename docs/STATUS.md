@@ -79,9 +79,9 @@ whole-stripe loss correctly reported: data is unrecoverable: ...
 1. **Sync engine integration**: implement the `Remote` adapter over the HTTP API
    and add a "Choose folder / Sync now / Pause" UI with conflict review.
    `crates/sync` already reconciles and preserves conflicts.
-2. **Windows build**: enable Developer Mode on the build host, build
-   `nntdrive_ffi.dll`, bundle it, and produce `nntdrive.exe`. Code is ready;
-   only the host policy blocks it here.
+2. **Windows packaging**: the build is verified, but add code signing, an
+   installer/updater and test on a clean Windows VM without the SDKs. The FFI
+   DLL must ship next to the executable.
 3. **iOS**: build the Rust static library as an XCFramework, add the File
    Provider extension and BGTaskScheduler integration; requires macOS.
 4. **AMK epoch rotation** on device revocation (client command + keyring update);
