@@ -7,7 +7,7 @@
 Images are published to GHCR with semantic version tags:
 
 ```
-ghcr.io/ravand1990/nntdrive-backend:0.2.1
+ghcr.io/ravand1990/nntdrive-backend:0.3.0
 ghcr.io/ravand1990/nntdrive-backend:latest
 ghcr.io/ravand1990/nntdrive-backend:edge
 ```

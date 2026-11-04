@@ -123,6 +123,8 @@ jobs:
           pattern: nntdrive-*
           path: dist
           merge-multiple: true
+      - name: Generate update checksums
+        run: cd dist && sha256sum * > SHA256SUMS.txt
       - name: Create GitHub release and attach deployment and client files
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -135,7 +137,7 @@ jobs:
             echo "Container image: \`${IMAGE}\` (linux/amd64)"
             echo
             echo "Client builds: Linux x64 (tar.gz), Android (APK) and Windows x64 (zip)."
-            echo "iOS is not built yet; it requires macOS, Xcode and signing."
+            echo "Checking for updates in the Windows/Linux clients uses this release feed; iOS is not built yet."
             echo
             echo "## Changes"
             echo

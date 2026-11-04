@@ -4,6 +4,15 @@ All notable changes are documented here. Every release tag **must** have an
 entry with `### Features` and/or `### Bug fixes` (at least one bullet). The
 release workflow refuses to publish if the entry is missing.
 
+## [0.3.0] - 2026-11-05
+
+### Features
+
+- Windows and Linux clients check GitHub Releases for new versions at most once a day, and expose **Check for updates** in the account menu.
+- Updates are downloaded over HTTPS, verified against the release's `SHA256SUMS.txt`, then replaced in place and restarted by a detached helper after the app exits.
+- The release workflow now publishes `SHA256SUMS.txt` for the Linux, Android and Windows assets.
+- Private builds can point the updater at another repository or supply a read-only token with `--dart-define=NNTDRIVE_UPDATE_REPO=...` and `--dart-define=NNTDRIVE_UPDATE_TOKEN=...`; public releases need neither.
+
 ## [0.2.1] - 2026-11-04
 
 ### Features

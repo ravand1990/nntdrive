@@ -194,6 +194,24 @@ iOS platform constraints:
 - **Security**: keys go to the Keychain with
   `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`; never UserDefaults.
 
+## Client updates
+
+Windows and Linux clients check the latest GitHub release at most once a day and
+also expose **Account → Check for updates**. The updater:
+
+1. reads `releases/latest` and compares the tag with the installed version;
+2. selects `nntdrive-windows-x64.zip` or `nntdrive-linux-x64.tar.gz`;
+3. downloads over HTTPS and verifies the SHA-256 from `SHA256SUMS.txt`;
+4. unpacks to a temporary directory and starts a detached helper;
+5. exits, letting the helper replace the install directory and restart the app.
+
+The release repository is private today, so the check returns 404 until releases
+are public. Private test builds can pass a read-only token and repository with
+`--dart-define=NNTDRIVE_UPDATE_TOKEN=...` and
+`--dart-define=NNTDRIVE_UPDATE_REPO=owner/repo`. Android and iOS are not updated
+by this mechanism (Android requires the system package installer; iOS requires
+App Store/TestFlight or a signed enterprise install).
+
 ## Sync model on clients
 
 - One device-local SQLite journal (`nntdrive-sync`) holds the baseline.

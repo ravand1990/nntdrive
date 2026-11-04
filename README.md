@@ -12,7 +12,8 @@ permanent plaintext or ciphertext copy of your library on the server.
 > **multi-folder bidirectional sync** (base + additional folders, automatic every
 > 5 minutes, conflict copies, selective subfolders and conflict review) are
 > implemented and verified. The admin dashboard can edit users and providers in
-> place. Not finished: iOS builds, background sync while the app is closed,
+> place, and the Windows/Linux clients can update themselves from GitHub
+> Releases. Not finished: iOS builds, background sync while the app is closed,
 > virtual drives, native mobile document providers/photo backup, and sharing UIs.
 
 ## What works today (verified by automated tests)
@@ -33,6 +34,7 @@ permanent plaintext or ciphertext copy of your library on the server.
 | PostgreSQL schema, migrations, durable jobs, admin dashboard (user/provider editing) | ✅ tested |
 | Dockerfile, Compose, backup/restore scripts, CI | ✅ provided (image build in CI) |
 | Flutter desktop/mobile client | ✅ Linux/Android/Windows builds; browse/upload/download + multi-folder sync verified |
+| Windows/Linux client auto-update | ✅ GitHub Releases check, SHA-256 verification, in-place replace and restart |
 | iOS build/signing | ❌ needs macOS/Xcode |
 | Virtual drives / mobile document providers | ❌ not implemented |
 
@@ -97,7 +99,7 @@ For a public deployment, enable the Caddy profile (`--profile tls`) and set
 Backend images are published to GHCR by `.github/workflows/release.yml`:
 
 ```
-ghcr.io/ravand1990/nntdrive-backend:<version>   # e.g. 0.2.1
+ghcr.io/ravand1990/nntdrive-backend:<version>   # e.g. 0.3.0
 ghcr.io/ravand1990/nntdrive-backend:latest
 ghcr.io/ravand1990/nntdrive-backend:edge        # main branch
 ```
@@ -193,7 +195,7 @@ POSTGRES_PASSWORD=change-me-to-a-long-random-value
 NNTDRIVE_SECRET_KEY=
 
 NNTDRIVE_IMAGE=ghcr.io/ravand1990/nntdrive-backend
-NNTDRIVE_VERSION=0.2.1
+NNTDRIVE_VERSION=0.3.0
 NNTDRIVE_HOST_BIND=127.0.0.1
 NNTDRIVE_HOST_PORT=8080
 
@@ -229,8 +231,8 @@ entry, tests the workspace, builds and pushes the `linux/amd64` image, and creat
 a GitHub release whose notes are generated from that section.
 
 ```bash
-git tag v0.2.1
-git push origin v0.2.1
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
 ## Run the full app without a Usenet account (dev stack)

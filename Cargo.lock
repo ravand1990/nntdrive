@@ -1349,7 +1349,7 @@ dependencies = [
 
 [[package]]
 name = "nntdrive-backend"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -1380,7 +1380,7 @@ dependencies = [
 
 [[package]]
 name = "nntdrive-cli"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1402,7 +1402,7 @@ dependencies = [
 
 [[package]]
 name = "nntdrive-client"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -1429,7 +1429,7 @@ dependencies = [
 
 [[package]]
 name = "nntdrive-crypto"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "argon2",
  "base64 0.22.1",
@@ -1451,7 +1451,7 @@ dependencies = [
 
 [[package]]
 name = "nntdrive-ffi"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -1466,7 +1466,7 @@ dependencies = [
 
 [[package]]
 name = "nntdrive-nntp"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "crc32fast",
@@ -1485,7 +1485,7 @@ dependencies = [
 
 [[package]]
 name = "nntdrive-storage"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1509,7 +1509,7 @@ dependencies = [
 
 [[package]]
 name = "nntdrive-sync"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "blake3",
