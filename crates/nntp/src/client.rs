@@ -483,6 +483,10 @@ struct Connection {
 
 impl Connection {
     async fn connect(cfg: &NntpConfig) -> Result<Self> {
+        // The dependency graph enables both aws-lc-rs and ring (sqlx/reqwest), so
+        // rustls cannot auto-select a provider. Pick one explicitly before any
+        // TLS handshake.
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         let addr = format!("{}:{}", cfg.host, cfg.port);
         let stream = tokio::time::timeout(
             Duration::from_secs(cfg.connect_timeout_secs.max(1)),

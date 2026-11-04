@@ -104,6 +104,9 @@ pub struct ApiClient {
 
 impl ApiClient {
     pub fn new(base_url: impl Into<String>) -> Result<Self> {
+        // Explicit provider selection: the dependency graph can enable more than
+        // one rustls crypto backend.
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         let http = reqwest::Client::builder()
             .user_agent("NNTDrive/0.1")
             .build()?;

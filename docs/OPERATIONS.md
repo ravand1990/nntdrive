@@ -79,6 +79,24 @@ backend** button in Maintenance; it shuts the process down gracefully and waits
 for the container manager to start it again (Compose `restart: unless-stopped`,
 systemd `Restart=always`). Active transfers are interrupted during the restart.
 If you run the binary by hand, restart it yourself after changing providers.
+Configured providers have a **Test** button that verifies DNS, TLS and
+authentication without posting (posting permission is only proven by a real
+upload).
+
+### Eweka
+
+Eweka commonly uses separate hosts for reading and posting:
+
+| Purpose | Host | Port | TLS | Role |
+|---|---|---|---|---|
+| Retrieval | `news.eweka.nl` | 563 | yes | `retrieval_only` |
+| Posting | `post.eweka.nl` | 563 | yes | `posting_only` |
+
+Use the same username/password for both, set a posting priority lower than the
+retrieval provider, and choose a group the provider carries (e.g.
+`alt.binaries.test` for a small test). Posting is only allowed if it is enabled
+on your Eweka plan. A `440 posting not allowed` or `441 Posting Failed` error
+comes from the provider, not from NNTDrive.
 
 Test posting with a small demo/upload before trusting the provider with important
 data.

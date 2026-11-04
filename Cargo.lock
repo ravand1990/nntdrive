@@ -1414,6 +1414,7 @@ dependencies = [
  "nntdrive-nntp",
  "nntdrive-storage",
  "reqwest",
+ "rustls",
  "serde",
  "serde_json",
  "sha2",

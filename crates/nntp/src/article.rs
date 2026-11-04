@@ -20,7 +20,7 @@ impl Article {
             subject,
             groups,
             body,
-            from: "NNTDrive <nntdrive@localhost>".into(),
+            from: "NNTDrive <nntdrive@example.com>".into(),
             date: Utc::now(),
         }
     }

@@ -73,8 +73,9 @@
   </section>
   <section>
     <h2>Usenet providers</h2>
-    <p class="muted">New providers are stored encrypted and applied after a backend restart. Never enter credentials for an account that does not permit posting if you rely on uploads.</p>
-    <div class="card">
+    <p class="muted">Posting and retrieval can use different hosts/accounts. After adding or changing a provider, use <strong>Restart backend</strong> in Maintenance.</p>
+    <table><thead><tr><th>Name</th><th>Host</th><th>Role</th><th>Priority</th><th>Groups</th><th>Enabled</th><th></th></tr></thead><tbody id="configured"></tbody></table>
+    <div class="card" style="margin-top:12px">
       <div class="row">
         <div class="field"><label>Name</label><input id="p_name" placeholder="eweka"></div>
         <div class="field"><label>Host</label><input id="p_host" placeholder="news.eweka.nl"></div>
@@ -131,11 +132,27 @@ function showLogin(msg = '') {
 }
 
 async function load() {
-  const [stats, users, jobs, providers] = await Promise.all([
+  const [stats, users, jobs, configured] = await Promise.all([
     api('/admin/stats'), api('/admin/users'), api('/admin/jobs'), api('/admin/providers')
   ]);
   $('app').hidden = false; $('login').hidden = true;
   $('refresh').hidden = false; $('logout').hidden = false;
+
+  $('configured').innerHTML = (configured.providers||[]).map(p => `<tr>
+    <td>${esc(p.name)}</td><td>${esc(p.host)}:${p.port}${p.tls?' (TLS)':''}</td>
+    <td>${esc(p.role)}</td><td>${p.priority}</td><td>${esc((p.groups||[]).join(', '))}</td>
+    <td>${p.enabled?'yes':'no'}</td>
+    <td><button class="secondary" data-test="${p.id}" data-name="${esc(p.name)}">Test</button></td>
+    </tr>`).join('') || '<tr><td colspan="7" class="muted">No providers configured.</td></tr>';
+  $('configured').querySelectorAll('button[data-test]').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    $('pmsg').textContent = `Testing ${b.dataset.name}…`;
+    try {
+      const r = await api('/admin/providers/' + b.dataset.test + '/test', { method: 'POST' });
+      $('pmsg').textContent = `${b.dataset.name}: ${r.ok ? 'OK — ' : 'FAILED — '}${r.message}`;
+    } catch (e) { $('pmsg').textContent = `${b.dataset.name}: ${e.message}`; }
+    b.disabled = false;
+  });
 
   const cards = [
     ['Users', stats.users + ' (' + stats.active_users + ' active)'],

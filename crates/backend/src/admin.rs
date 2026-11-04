@@ -3,12 +3,13 @@
 use crate::auth::{seal_provider_password, AdminUser};
 use crate::error::{ApiError, ApiResult};
 use crate::jobs;
-use crate::state::AppState;
+use crate::state::{decrypt_secret, AppState};
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
 use chrono::{DateTime, Utc};
+use nntdrive_nntp::{NntpConfig, Provider, ProviderRole};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::Row;
@@ -333,6 +334,61 @@ pub async fn list_jobs(
 /// Gracefully stops the backend so the container manager restarts it. Used to
 /// apply provider configuration changes without shell access. The response is
 /// sent first; the process shuts down ~400 ms later.
+/// Connects and authenticates to a stored provider without posting. Returns a
+/// clear result so operators can fix host/port/credentials before an upload.
+pub async fn test_provider(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Path(id): Path<Uuid>,
+) -> ApiResult<impl IntoResponse> {
+    let row = sqlx::query(
+        "SELECT name, host, port, tls, username, password_enc, max_connections, role,
+                priority, groups FROM providers WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or(ApiError::NotFound)?;
+    let password = row
+        .get::<Option<Vec<u8>>, _>("password_enc")
+        .and_then(|blob| decrypt_secret(&state.config.secret_key, &blob))
+        .and_then(|bytes| String::from_utf8(bytes).ok());
+    let role = match row.get::<String, _>("role").as_str() {
+        "posting_only" => ProviderRole::PostingOnly,
+        "retrieval_only" => ProviderRole::RetrievalOnly,
+        _ => ProviderRole::Both,
+    };
+    let config = NntpConfig {
+        name: row.get("name"),
+        host: row.get("host"),
+        port: row.get::<i32, _>("port") as u16,
+        tls: row.get("tls"),
+        username: row.get("username"),
+        password,
+        max_connections: row.get::<i32, _>("max_connections").max(1) as usize,
+        role,
+        priority: row.get::<i32, _>("priority") as u8,
+        groups: row.get("groups"),
+        message_id_domain: "nntdrive.local".into(),
+        connect_timeout_secs: 15,
+        io_timeout_secs: 20,
+        retention_days: None,
+        max_retries: 0,
+    };
+    let provider = Provider::new(config).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    match provider.stat("nntdrive-connectivity-probe@invalid").await {
+        Ok(_) => Ok(Json(json!({
+            "ok": true,
+            "message": "connected and authenticated; the test article is not expected to exist",
+            "posting_note": "posting permission is only confirmed by an actual upload"
+        }))),
+        Err(e) => Ok(Json(json!({
+            "ok": false,
+            "message": e.to_string()
+        }))),
+    }
+}
+
 pub async fn restart_backend(
     State(state): State<AppState>,
     _admin: AdminUser,
