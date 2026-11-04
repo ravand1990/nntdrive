@@ -99,9 +99,9 @@ provider when both aws-lc-rs and ring are in the dependency graph.
 |---|---|
 | 1. Working storage engine | **Done and tested** (CLI demo uploads, downloads, decrypts, verifies) |
 | 2. Self-healing storage | **Done and tested** (health, repair, refresh, snapshots via sealed manifests, simulated loss) |
-| 3. Desktop synchronization | **Done for multi-folder bidirectional sync, automatic runs, conflicts and versions; virtual drives remain separate** |
+| 3. Desktop synchronization | **Core done: multi-folder bidirectional sync, automatic 5-min runs while open, conflicts and versions. Remaining: background service, streaming large files, conflict-review UI, virtual drives** |
 | 4. Virtual filesystem | **Not implemented** (WinFsp/FUSE design only) |
-| 5. Mobile clients | **Android app builds and performs encrypted upload/download; iOS unbuilt; no DocumentsProvider/File Provider/photo backup** |
+| 5. Mobile clients | **Android app builds, browses and syncs (same Flutter UI); iOS unbuilt; no DocumentsProvider/File Provider/photo backup or reliable background sync** |
 | 6. Sharing & production readiness | **Partial**: backend, admin dashboard, auth, jobs, Docker, backups, CI done; sharing/link endpoints absent; hardening/audit pending |
 
 ## What is intentionally not claimed
@@ -127,30 +127,41 @@ provider when both aws-lc-rs and ring are in the dependency graph.
 
 ## Immediate next tasks (in order)
 
-1. **Windows packaging**: the build is verified, but add code signing, an
-   installer/updater and test on a clean Windows VM without the SDKs. The FFI
-   DLL must ship next to the executable.
-2. **iOS**: build the Rust static library as an XCFramework, add the File
+1. **Sync hardening & scale**:
+   - stream file content through the `Remote` trait instead of buffering every
+     file in memory (needed for multi-GB files);
+   - run sync in a background service (desktop autostart) instead of only while
+     the UI process is open;
+   - fetch/decrypt changed manifests or cache content hashes so remote renames
+     and “same content on both sides” converge without false conflicts;
+   - treat remote folder renames as moves;
+   - conflict review/merge UI, selective subfolder sync and per-file progress.
+2. **Secure local key storage**: move the password-wrapped keyfile from shared
+   preferences into Keychain (iOS/macOS), Android Keystore, Windows Credential
+   Manager and Secret Service (Linux); keep the recovery kit policy documented.
+3. **Device revocation + AMK epoch rotation**: implement client-side rotation,
+   re-wrap for remaining devices, and retain old epoch keys for old revisions;
+   today the backend only instructs the client to rotate.
+4. **Windows packaging**: code signing, installer/updater, and a clean-VM test
+   without SDKs. The FFI DLL must ship next to the executable. Make the Windows
+   CI job blocking once a hosted runner proves reliable.
+5. **iOS**: build the Rust static library as an XCFramework, add the File
    Provider extension and BGTaskScheduler integration; requires macOS.
-3. **AMK epoch rotation** on device revocation (client command + keyring update);
-   currently the backend only tells the client rotation is required.
-4. **Sharing**: complete folder share endpoints and per-share wrapped keys, link
-   tokens with password/expiry; share the AMK-derived folder key without exposing
-   the AMK.
-5. **Virtual drives**: FUSE (Linux) and WinFsp (Windows) adapters with range
-   reads, write-back cache, offline pinning and safe interrupted writes.
-6. **Mobile integrations**: Android DocumentsProvider + WorkManager/JobScheduler;
-   iOS File Provider extension + BGTaskScheduler with honest background limits.
-7. **Provider management**: the dashboard can add/delete/test providers and
-   restart, but cannot edit an existing provider in place; add PATCH + live
-   reload without restart where possible.
-8. **Sync UX**: conflict review/merge screen, selective subfolder sync, per-file
-   progress, and background sync outside the app process.
-9. **Security review**, fuzzing of article/yEnc parsers, rate limiting at the
-   proxy, password reset policy, audit logging coverage.
-10. **Tests to add**: interrupted upload/download, huge-file memory ceiling
-    measurement, replayed manifest, provider backbone correlation,
-    restore-from-dump automation, Flutter integration tests for add-folder/sync.
+6. **Sharing**: folder-share endpoints with per-share wrapped keys, public link
+   tokens with password/expiry, and revocation/rotation that does not expose the
+   AMK.
+7. **Virtual drives and native mobile integration**: FUSE/WinFsp mounts,
+   Android DocumentsProvider + WorkManager, iOS File Provider + background
+   transfers, photo/video backup.
+8. **Provider & admin operations**: edit providers in place (currently add/delete
+   + restart), live provider reload, quota editor, retention settings and
+   stronger alerts. Add orphaned-chunk garbage collection.
+9. **Security review**: fuzz yEnc/NZB/article parsers, add proxy-level rate
+   limiting guidance, password-reset policy, audit-log coverage and dependency
+   review.
+10. **Test gaps**: interrupted upload/download, multi-GB streaming, replayed
+    manifest, provider backbone correlation, restore-from-dump automation, and
+    Flutter integration tests that actually add a folder and synchronize.
 
 ## Known bugs / rough edges
 
@@ -176,6 +187,12 @@ provider when both aws-lc-rs and ring are in the dependency graph.
   intact (the manifest commits last).
 - Sync conflicts are preserved as files but there is no merge/review dialog yet.
 - Remote folder renames are not detected as moves; they become delete + recreate.
+- The sync `Remote` adapter returns no content hash for remote entries, so
+  same-content convergence and remote-rename detection are limited; only
+  revision changes are detected.
+- Sync folder selection uses the platform directory picker; Android’s picker is
+  more restrictive than desktop, and background work while the app is closed is
+  not scheduled yet.
 - Sync currently keeps one SQLite journal per selected folder under the app
   support directory; uninstalling the app loses the baseline (the next sync may
   re-download or produce conflicts, never data loss).
