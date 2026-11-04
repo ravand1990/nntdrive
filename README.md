@@ -81,7 +81,8 @@ docker compose -f deploy/docker-compose.yml exec backend \
 ```
 
 Then open `http://127.0.0.1:8080/admin`, paste the token, and configure an NNTP
-provider. Provider changes apply after `docker compose restart backend`.
+provider. Providers and users can be edited in place; provider changes apply
+after `docker compose restart backend`.
 
 **Store the recovery code and keyfile offline before uploading anything.** The
 server cannot recover E2EE data without them. See

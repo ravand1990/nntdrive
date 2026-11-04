@@ -86,8 +86,12 @@ pub async fn users(
 
 #[derive(Deserialize)]
 pub struct PatchUser {
+    pub display_name: Option<String>,
     pub disabled: Option<bool>,
     pub quota_bytes: Option<i64>,
+    /// Explicitly removes the quota (sets it back to unlimited).
+    #[serde(default)]
+    pub unlimited_quota: bool,
     pub is_admin: Option<bool>,
 }
 
@@ -102,21 +106,33 @@ pub async fn patch_user(
             "cannot disable your own account".into(),
         ));
     }
+    if id == admin.0.account_id && body.is_admin == Some(false) {
+        return Err(ApiError::BadRequest(
+            "cannot remove your own administrator role".into(),
+        ));
+    }
     if body.quota_bytes.map(|q| q < 0).unwrap_or(false) {
         return Err(ApiError::BadRequest("quota cannot be negative".into()));
     }
+    let display_name = body.display_name.map(|n| n.trim().to_string());
+    if display_name.as_deref() == Some("") {
+        return Err(ApiError::BadRequest("display name cannot be empty".into()));
+    }
     let affected = sqlx::query(
         "UPDATE accounts SET
-            disabled = COALESCE($2, disabled),
-            quota_bytes = COALESCE($3, quota_bytes),
-            is_admin = COALESCE($4, is_admin),
+            display_name = COALESCE($2, display_name),
+            disabled = COALESCE($3, disabled),
+            quota_bytes = CASE WHEN $6 THEN NULL ELSE COALESCE($4, quota_bytes) END,
+            is_admin = COALESCE($5, is_admin),
             updated_at = now()
          WHERE id = $1",
     )
     .bind(id)
+    .bind(&display_name)
     .bind(body.disabled)
     .bind(body.quota_bytes)
     .bind(body.is_admin)
+    .bind(body.unlimited_quota)
     .execute(&state.pool)
     .await?
     .rows_affected();
@@ -264,6 +280,140 @@ pub async fn create_provider(
         StatusCode::CREATED,
         Json(json!({ "id": id, "restart_required": true })),
     ))
+}
+
+#[derive(Deserialize)]
+pub struct PatchProvider {
+    pub name: Option<String>,
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub tls: Option<bool>,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub max_connections: Option<usize>,
+    pub role: Option<String>,
+    pub priority: Option<u8>,
+    pub groups: Option<Vec<String>>,
+    pub retention_days: Option<u32>,
+    pub enabled: Option<bool>,
+}
+
+/// Edits a provider in place. Fields left out keep their current value. A blank
+/// password keeps the stored one; clearing the username clears both.
+pub async fn patch_provider(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<PatchProvider>,
+) -> ApiResult<impl IntoResponse> {
+    let row = sqlx::query(
+        "SELECT name, host, port, tls, username, password_enc, max_connections, role,
+                priority, groups, retention_days, enabled FROM providers WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or(ApiError::NotFound)?;
+
+    let name = body
+        .name
+        .map(|n| n.trim().to_string())
+        .unwrap_or_else(|| row.get("name"));
+    let host = body
+        .host
+        .map(|h| h.trim().to_string())
+        .unwrap_or_else(|| row.get("host"));
+    if name.is_empty() || host.is_empty() {
+        return Err(ApiError::BadRequest("name and host are required".into()));
+    }
+    let role = body.role.unwrap_or_else(|| row.get("role"));
+    if !matches!(role.as_str(), "both" | "posting_only" | "retrieval_only") {
+        return Err(ApiError::BadRequest(
+            "role must be both, posting_only or retrieval_only".into(),
+        ));
+    }
+    let groups = body.groups.unwrap_or_else(|| row.get("groups"));
+    if groups.is_empty() {
+        return Err(ApiError::BadRequest(
+            "at least one group is required".into(),
+        ));
+    }
+    let max_connections = body
+        .max_connections
+        .unwrap_or_else(|| row.get::<i32, _>("max_connections").max(1) as usize);
+    if max_connections == 0 {
+        return Err(ApiError::BadRequest(
+            "max connections must be at least 1".into(),
+        ));
+    }
+    let username_provided = body.username.is_some();
+    let username = match body.username {
+        Some(value) => {
+            let value = value.trim();
+            if value.is_empty() {
+                None
+            } else {
+                Some(value.to_string())
+            }
+        }
+        None => row.get::<Option<String>, _>("username"),
+    };
+    let password_enc = match body
+        .password
+        .as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+    {
+        Some(password) => Some(seal_provider_password(&state, password)),
+        None if username_provided && username.is_none() => None,
+        None => row.get::<Option<Vec<u8>>, _>("password_enc"),
+    };
+    if username.is_some() != password_enc.is_some() {
+        return Err(ApiError::BadRequest(
+            "username and password must be provided together".into(),
+        ));
+    }
+    let port = body.port.map(i32::from).unwrap_or_else(|| row.get("port"));
+    let retention_days = body
+        .retention_days
+        .map(|d| d as i32)
+        .or_else(|| row.get("retention_days"));
+
+    sqlx::query(
+        "UPDATE providers SET name = $2, host = $3, port = $4, tls = $5, username = $6,
+                password_enc = $7, max_connections = $8, role = $9, priority = $10,
+                groups = $11, retention_days = $12, enabled = $13
+         WHERE id = $1",
+    )
+    .bind(id)
+    .bind(&name)
+    .bind(&host)
+    .bind(port)
+    .bind(body.tls.unwrap_or_else(|| row.get("tls")))
+    .bind(&username)
+    .bind(&password_enc)
+    .bind(max_connections as i32)
+    .bind(&role)
+    .bind(
+        body.priority
+            .map(i32::from)
+            .unwrap_or_else(|| row.get("priority")),
+    )
+    .bind(&groups)
+    .bind(retention_days)
+    .bind(body.enabled.unwrap_or_else(|| row.get("enabled")))
+    .execute(&state.pool)
+    .await
+    .map_err(|e| match e.as_database_error() {
+        Some(db) if db.is_unique_violation() => ApiError::Conflict("provider name exists".into()),
+        _ => ApiError::Db(e),
+    })?;
+
+    Ok(Json(json!({
+        "id": id,
+        "status": "updated",
+        "restart_required": true
+    })))
 }
 
 pub async fn delete_provider(

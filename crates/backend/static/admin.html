@@ -13,10 +13,11 @@
   header h1 { font-size:17px; margin:0; font-weight:650; }
   header .spacer { flex:1; }
   main { padding:22px; max-width:1240px; margin:auto; }
-  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:12px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:12px; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; }
   .card .k { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
   .card .v { font-size:22px; font-weight:650; margin-top:6px; }
+  .card .s { color:var(--muted); font-size:12px; margin-top:3px; }
   section { margin-top:26px; }
   h2 { font-size:15px; margin:0 0 10px; font-weight:650; }
   table { width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
@@ -26,17 +27,24 @@
   button { background:var(--accent); color:#fff; border:0; border-radius:7px; padding:8px 13px; font:inherit; cursor:pointer; }
   button.secondary { background:transparent; color:var(--text); border:1px solid var(--line); }
   button.danger { background:var(--bad); }
-  input { background:var(--card); color:var(--text); border:1px solid var(--line); border-radius:7px; padding:8px 10px; font:inherit; width:100%; }
+  button:disabled { opacity:.55; cursor:default; }
+  input,select { background:var(--card); color:var(--text); border:1px solid var(--line); border-radius:7px; padding:8px 10px; font:inherit; width:100%; }
   input[type=checkbox] { width:auto; }
   .row { display:flex; gap:10px; flex-wrap:wrap; }
   .row > * { flex:1; min-width:150px; }
   label { display:block; font-size:12px; color:var(--muted); margin-bottom:4px; }
+  .check { display:flex; align-items:center; gap:7px; color:var(--text); font-size:13px; margin:0; }
   .field { margin-bottom:10px; }
   .muted { color:var(--muted); }
   .bad { color:var(--bad); } .warn { color:var(--warn); } .ok { color:var(--ok); }
   #login { max-width:430px; margin:70px auto; }
   pre { white-space:pre-wrap; word-break:break-word; font-size:12px; }
   .pill { display:inline-block; padding:1px 7px; border-radius:999px; font-size:11px; border:1px solid var(--line); }
+  td button + button { margin-left:6px; }
+  dialog { border:1px solid var(--line); border-radius:12px; background:var(--card); color:var(--text); padding:20px; width:min(660px,92vw); }
+  dialog::backdrop { background:rgba(0,0,0,.45); }
+  dialog h2 { margin-bottom:14px; }
+  .actions { display:flex; justify-content:flex-end; gap:8px; margin-top:16px; }
 </style>
 </head>
 <body>
@@ -59,42 +67,27 @@
 
 <main id="app" hidden>
   <div class="grid" id="cards"></div>
-  <section>
-    <h2>Provider status</h2>
-    <table><thead><tr><th>Provider</th><th>Posts</th><th>Post failures</th><th>Fetches</th><th>Fetch failures</th><th>Uploaded</th><th>Downloaded</th></tr></thead><tbody id="providers"></tbody></table>
-  </section>
+
   <section>
     <h2>Repair queue &amp; recent failures</h2>
     <table><thead><tr><th>Job</th><th>State</th><th>Attempts</th><th>Last error</th><th>Updated</th></tr></thead><tbody id="jobs"></tbody></table>
   </section>
+
   <section>
     <h2>Users</h2>
-    <table><thead><tr><th>Email</th><th>Role</th><th>Devices</th><th>Used</th><th>Quota</th><th>Status</th><th></th></tr></thead><tbody id="users"></tbody></table>
+    <table><thead><tr><th>User</th><th>Role</th><th>Devices</th><th>Used / quota</th><th>Status</th><th></th></tr></thead><tbody id="users"></tbody></table>
   </section>
+
   <section>
     <h2>Usenet providers</h2>
-    <p class="muted">Posting and retrieval can use different hosts/accounts. After adding or changing a provider, use <strong>Restart backend</strong> in Maintenance.</p>
-    <table><thead><tr><th>Name</th><th>Host</th><th>Role</th><th>Priority</th><th>Groups</th><th>Enabled</th><th></th></tr></thead><tbody id="configured"></tbody></table>
-    <div class="card" style="margin-top:12px">
-      <div class="row">
-        <div class="field"><label>Name</label><input id="p_name" placeholder="eweka"></div>
-        <div class="field"><label>Host</label><input id="p_host" placeholder="news.eweka.nl"></div>
-        <div class="field"><label>Port</label><input id="p_port" type="number" value="563"></div>
-      </div>
-      <div class="row">
-        <div class="field"><label>Username</label><input id="p_user" autocomplete="off"></div>
-        <div class="field"><label>Password</label><input id="p_pass" type="password" autocomplete="new-password"></div>
-        <div class="field"><label>Max connections</label><input id="p_conn" type="number" value="8"></div>
-      </div>
-      <div class="row">
-        <div class="field"><label>Groups (comma separated)</label><input id="p_groups" value="alt.binaries.nntdrive"></div>
-        <div class="field"><label>Role</label><input id="p_role" value="both"></div>
-        <div class="field"><label>Priority</label><input id="p_priority" type="number" value="100"></div>
-      </div>
+    <p class="muted">Posting and retrieval can use different hosts/accounts. Edits are saved immediately and applied after <strong>Restart backend</strong> in Maintenance.</p>
+    <table><thead><tr><th>Provider</th><th>Type</th><th>Priority</th><th>Groups</th><th>Traffic</th><th>Enabled</th><th></th></tr></thead><tbody id="configured"></tbody></table>
+    <div class="row" style="margin-top:12px">
       <button id="addprovider">Add provider</button>
       <span id="pmsg" class="muted"></span>
     </div>
   </section>
+
   <section>
     <h2>Maintenance</h2>
     <div class="row">
@@ -107,13 +100,68 @@
   </section>
 </main>
 
+<dialog id="user-dialog">
+  <h2 id="user-title">Edit user</h2>
+  <div class="field"><label for="uf_name">Display name</label><input id="uf_name"></div>
+  <div class="field"><label for="uf_quota">Quota in GiB (leave blank for unlimited)</label><input id="uf_quota" type="number" min="0" step="0.1" placeholder="unlimited"></div>
+  <div class="row">
+    <label class="check"><input id="uf_admin" type="checkbox"> Administrator</label>
+    <label class="check"><input id="uf_disabled" type="checkbox"> Disabled</label>
+  </div>
+  <p id="user-msg" class="bad"></p>
+  <div class="actions">
+    <button class="secondary" data-close>Cancel</button>
+    <button id="user-save">Save</button>
+  </div>
+</dialog>
+
+<dialog id="provider-dialog">
+  <h2 id="provider-title">Add provider</h2>
+  <div class="row">
+    <div class="field"><label for="pf_name">Name</label><input id="pf_name" placeholder="eweka"></div>
+    <div class="field"><label for="pf_host">Host</label><input id="pf_host" placeholder="news.eweka.nl"></div>
+    <div class="field"><label for="pf_port">Port</label><input id="pf_port" type="number" value="563"></div>
+  </div>
+  <div class="row">
+    <div class="field"><label for="pf_role">Provider type</label>
+      <select id="pf_role">
+        <option value="both">Both (post and retrieve)</option>
+        <option value="posting_only">Posting only</option>
+        <option value="retrieval_only">Retrieval only</option>
+      </select>
+    </div>
+    <div class="field"><label for="pf_priority">Priority (lower first)</label><input id="pf_priority" type="number" value="100"></div>
+    <div class="field"><label for="pf_conn">Max connections</label><input id="pf_conn" type="number" value="8"></div>
+  </div>
+  <div class="row">
+    <div class="field"><label for="pf_user">Username</label><input id="pf_user" autocomplete="off"></div>
+    <div class="field"><label for="pf_pass">Password</label><input id="pf_pass" type="password" autocomplete="new-password"></div>
+  </div>
+  <div class="field"><label for="pf_groups">Groups (comma separated)</label><input id="pf_groups" value="alt.binaries.nntdrive"></div>
+  <div class="row">
+    <div class="field"><label for="pf_retention">Retention days (blank = unchanged)</label><input id="pf_retention" type="number" min="1"></div>
+    <label class="check"><input id="pf_tls" type="checkbox" checked> TLS</label>
+    <label class="check"><input id="pf_enabled" type="checkbox" checked> Enabled</label>
+  </div>
+  <p id="provider-msg" class="bad"></p>
+  <div class="actions">
+    <button class="secondary" data-close>Cancel</button>
+    <button id="provider-save">Save</button>
+  </div>
+</dialog>
+
 <script>
 const $ = (id) => document.getElementById(id);
 let token = sessionStorage.getItem('nntdrive_admin_token') || '';
+let userCache = [];
+let providerCache = [];
+let editingUser = null;
+let editingProvider = null;
 
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function bytes(n) { if (n == null) return '—'; const u=['B','KiB','MiB','GiB','TiB']; let i=0,v=Number(n); while(v>=1024&&i<u.length-1){v/=1024;i++;} return v.toFixed(i?1:0)+' '+u[i]; }
 function when(s) { return s ? new Date(s).toLocaleString() : '—'; }
+function roleLabel(role) { return ({both:'Both', posting_only:'Posting only', retrieval_only:'Retrieval only'})[role] || role; }
 
 async function api(path, opts = {}) {
   const res = await fetch('/api/v1' + path, {
@@ -132,6 +180,40 @@ function showLogin(msg = '') {
   $('refresh').hidden = true; $('logout').hidden = true; $('loginerr').textContent = msg;
 }
 
+function openUser(id) {
+  const u = userCache.find(x => x.id === id);
+  if (!u) return;
+  editingUser = u;
+  $('user-title').textContent = 'Edit ' + u.email;
+  $('uf_name').value = u.display_name || '';
+  $('uf_quota').value = u.quota_bytes == null ? '' : (u.quota_bytes / 1073741824).toFixed(2);
+  $('uf_admin').checked = !!u.is_admin;
+  $('uf_disabled').checked = !!u.disabled;
+  $('user-msg').textContent = '';
+  $('user-dialog').showModal();
+}
+
+function openProvider(id) {
+  const p = id ? providerCache.find(x => x.id === id) : null;
+  editingProvider = p || null;
+  $('provider-title').textContent = p ? 'Edit ' + p.name : 'Add provider';
+  $('pf_name').value = p ? p.name : '';
+  $('pf_host').value = p ? p.host : '';
+  $('pf_port').value = p ? p.port : 563;
+  $('pf_role').value = p ? p.role : 'both';
+  $('pf_priority').value = p ? p.priority : 100;
+  $('pf_conn').value = p ? p.max_connections : 8;
+  $('pf_user').value = p && p.username ? p.username : '';
+  $('pf_pass').value = '';
+  $('pf_pass').placeholder = p ? 'leave blank to keep current' : '';
+  $('pf_groups').value = p ? (p.groups || []).join(', ') : 'alt.binaries.nntdrive';
+  $('pf_retention').value = p && p.retention_days != null ? p.retention_days : '';
+  $('pf_tls').checked = p ? !!p.tls : true;
+  $('pf_enabled').checked = p ? !!p.enabled : true;
+  $('provider-msg').textContent = '';
+  $('provider-dialog').showModal();
+}
+
 async function load() {
   const [stats, users, jobs, configured] = await Promise.all([
     api('/admin/stats'), api('/admin/users'), api('/admin/jobs'), api('/admin/providers')
@@ -139,12 +221,66 @@ async function load() {
   $('app').hidden = false; $('login').hidden = true;
   $('refresh').hidden = false; $('logout').hidden = false;
 
-  $('configured').innerHTML = (configured.providers||[]).map(p => `<tr>
-    <td>${esc(p.name)}</td><td>${esc(p.host)}:${p.port}${p.tls?' (TLS)':''}</td>
-    <td>${esc(p.role)}</td><td>${p.priority}</td><td>${esc((p.groups||[]).join(', '))}</td>
-    <td>${p.enabled?'yes':'no'}</td>
-    <td><button class="secondary" data-test="${p.id}" data-name="${esc(p.name)}">Test</button></td>
-    </tr>`).join('') || '<tr><td colspan="7" class="muted">No providers configured.</td></tr>';
+  const cards = [
+    ['Encrypted storage', bytes(stats.logical_bytes), bytes(stats.ciphertext_bytes) + ' ciphertext'],
+    ['Usenet storage', bytes(stats.usenet_bytes), stats.redundancy_overhead.toFixed(2) + '× redundancy'],
+    ['Article integrity', stats.missing_shards + ' missing', stats.corrupt_shards + ' corrupt · ' + stats.shards + ' articles'],
+    ['Local cache', bytes(stats.cache_bytes), 'limit ' + bytes(stats.cache_limit_bytes)],
+  ];
+  $('cards').innerHTML = cards.map(([k,v,s]) => `<div class="card"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div><div class="s">${esc(s)}</div></div>`).join('');
+
+  const statsMap = new Map((stats.providers||[]).map(s => [s.name, s]));
+  const traffic = (s) => {
+    if (!s) return '<span class="muted">no traffic yet</span>';
+    const failed = s.post_failures + s.fetch_failures;
+    return `${bytes(s.bytes_posted)} up · ${bytes(s.bytes_fetched)} down` +
+      (failed ? ` <span class="bad">(${failed} failed)</span>` : '');
+  };
+
+  $('jobs').innerHTML = (jobs.jobs||[]).slice(0,50).map(j => `<tr>
+    <td>${esc(j.kind)}</td><td><span class="pill">${esc(j.state)}</span></td>
+    <td>${j.attempts}/${j.max_attempts}</td><td class="${j.last_error?'bad':'muted'}">${esc(j.last_error||'—')}</td>
+    <td>${when(j.updated_at)}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">Queue is empty.</td></tr>';
+
+  userCache = users.users || [];
+  $('users').innerHTML = userCache.map(u => `<tr>
+    <td><strong>${esc(u.display_name || '—')}</strong><div class="muted">${esc(u.email)}</div></td>
+    <td>${u.is_admin?'admin':'user'}</td><td>${u.devices}</td>
+    <td>${bytes(u.used_bytes)} / ${u.quota_bytes==null?'unlimited':bytes(u.quota_bytes)}</td>
+    <td>${u.disabled?'<span class="bad">disabled</span>':'<span class="ok">active</span>'}</td>
+    <td><button class="secondary" data-edit-user="${u.id}">Edit</button><button class="secondary" data-toggle-user="${u.id}" data-disable="${u.disabled?0:1}">${u.disabled?'Enable':'Disable'}</button></td>
+    </tr>`).join('') || '<tr><td colspan="6" class="muted">No users.</td></tr>';
+
+  $('users').querySelectorAll('button[data-edit-user]').forEach(b => b.onclick = () => openUser(b.dataset.editUser));
+  $('users').querySelectorAll('button[data-toggle-user]').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try {
+      await api('/admin/users/' + b.dataset.toggleUser, { method:'PATCH', body: JSON.stringify({ disabled: b.dataset.disable === '1' })});
+      await load();
+    } catch (e) { alert(e.message); b.disabled = false; }
+  });
+
+  providerCache = configured.providers || [];
+  const providerRows = providerCache.map(p => `<tr>
+    <td><strong>${esc(p.name)}</strong><div class="muted">${esc(p.host)}:${p.port}${p.tls?' (TLS)':''}</div></td>
+    <td>${esc(roleLabel(p.role))}</td><td>${p.priority}</td><td>${esc((p.groups||[]).join(', '))}</td>
+    <td>${traffic(statsMap.get(p.name))}</td>
+    <td>${p.enabled?'<span class="ok">yes</span>':'<span class="muted">no</span>'}</td>
+    <td>
+      <button class="secondary" data-test="${p.id}" data-name="${esc(p.name)}">Test</button>
+      <button class="secondary" data-edit-provider="${p.id}">Edit</button>
+      <button class="secondary" data-delete-provider="${p.id}" data-name="${esc(p.name)}">Delete</button>
+    </td>
+    </tr>`);
+  const runtimeOnly = (stats.providers||[])
+    .filter(s => !providerCache.some(p => p.name === s.name))
+    .map(s => `<tr>
+      <td><strong>${esc(s.name)}</strong><div class="muted">running, not in saved config (restart to remove)</div></td>
+      <td colspan="3" class="muted">—</td><td>${traffic(s)}</td><td class="muted">—</td><td class="muted">—</td>
+      </tr>`);
+  $('configured').innerHTML = providerRows.concat(runtimeOnly).join('') ||
+    '<tr><td colspan="7" class="muted">No providers configured.</td></tr>';
+
   $('configured').querySelectorAll('button[data-test]').forEach(b => b.onclick = async () => {
     b.disabled = true;
     $('pmsg').textContent = `Testing ${b.dataset.name}…`;
@@ -154,44 +290,15 @@ async function load() {
     } catch (e) { $('pmsg').textContent = `${b.dataset.name}: ${e.message}`; }
     b.disabled = false;
   });
-
-  const cards = [
-    ['Users', stats.users + ' (' + stats.active_users + ' active)'],
-    ['Devices', stats.devices],
-    ['Logical storage', bytes(stats.logical_bytes)],
-    ['Usenet volume', bytes(stats.usenet_bytes)],
-    ['Redundancy', stats.redundancy_overhead.toFixed(2) + '×'],
-    ['Local cache', bytes(stats.cache_bytes) + ' / ' + bytes(stats.cache_limit_bytes)],
-    ['Stripes', stats.stripes],
-    ['Articles', stats.shards],
-    ['Missing articles', stats.missing_shards],
-    ['Corrupt articles', stats.corrupt_shards],
-    ['Jobs pending', stats.jobs_pending],
-    ['Jobs failed', stats.jobs_failed],
-  ];
-  $('cards').innerHTML = cards.map(([k,v]) => `<div class="card"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`).join('');
-
-  $('providers').innerHTML = (stats.providers||[]).map(p => `<tr>
-    <td>${esc(p.name)}</td><td>${p.posts}</td><td class="${p.post_failures?'bad':''}">${p.post_failures}</td>
-    <td>${p.fetches}</td><td class="${p.fetch_failures?'bad':''}">${p.fetch_failures}</td>
-    <td>${bytes(p.bytes_posted)}</td><td>${bytes(p.bytes_fetched)}</td></tr>`).join('') ||
-    '<tr><td colspan="7" class="muted">No providers configured.</td></tr>';
-
-  $('jobs').innerHTML = (jobs.jobs||[]).slice(0,50).map(j => `<tr>
-    <td>${esc(j.kind)}</td><td><span class="pill">${esc(j.state)}</span></td>
-    <td>${j.attempts}/${j.max_attempts}</td><td class="${j.last_error?'bad':'muted'}">${esc(j.last_error||'—')}</td>
-    <td>${when(j.updated_at)}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">Queue is empty.</td></tr>';
-
-  $('users').innerHTML = (users.users||[]).map(u => `<tr>
-    <td>${esc(u.email)}</td><td>${u.is_admin?'admin':'user'}</td><td>${u.devices}</td>
-    <td>${bytes(u.used_bytes)}</td><td>${u.quota_bytes==null?'unlimited':bytes(u.quota_bytes)}</td>
-    <td>${u.disabled?'<span class="bad">disabled</span>':'<span class="ok">active</span>'}</td>
-    <td><button class="secondary" data-user="${u.id}" data-disable="${u.disabled?0:1}">${u.disabled?'Enable':'Disable'}</button></td>
-    </tr>`).join('');
-
-  $('users').querySelectorAll('button[data-user]').forEach(b => b.onclick = async () => {
-    await api('/admin/users/' + b.dataset.user, { method:'PATCH', body: JSON.stringify({ disabled: b.dataset.disable === '1' })});
-    load();
+  $('configured').querySelectorAll('button[data-edit-provider]').forEach(b => b.onclick = () => openProvider(b.dataset.editProvider));
+  $('configured').querySelectorAll('button[data-delete-provider]').forEach(b => b.onclick = async () => {
+    if (!confirm(`Delete provider "${b.dataset.name}"? This takes effect after a restart.`)) return;
+    b.disabled = true;
+    try {
+      await api('/admin/providers/' + b.dataset.deleteProvider, { method: 'DELETE' });
+      $('pmsg').textContent = 'Provider deleted. Restart the backend to apply it.';
+      await load();
+    } catch (e) { alert(e.message); b.disabled = false; }
   });
 }
 
@@ -205,18 +312,56 @@ $('signin').onclick = async () => {
 $('logout').onclick = () => { sessionStorage.removeItem('nntdrive_admin_token'); token=''; showLogin(); };
 $('refresh').onclick = () => load().catch(e => alert(e.message));
 
-$('addprovider').onclick = async () => {
+$('addprovider').onclick = () => openProvider();
+document.querySelectorAll('dialog [data-close]').forEach(b => b.onclick = () => b.closest('dialog').close());
+
+$('user-save').onclick = async () => {
+  const quotaText = $('uf_quota').value.trim();
+  const body = {
+    display_name: $('uf_name').value.trim(),
+    quota_bytes: quotaText === '' ? null : Math.round(Number(quotaText) * 1073741824),
+    unlimited_quota: quotaText === '',
+    is_admin: $('uf_admin').checked,
+    disabled: $('uf_disabled').checked,
+  };
+  $('user-save').disabled = true;
   try {
-    const body = {
-      name: $('p_name').value, host: $('p_host').value, port: Number($('p_port').value),
-      tls: true, username: $('p_user').value || null, password: $('p_pass').value || null,
-      max_connections: Number($('p_conn').value), groups: $('p_groups').value.split(',').map(s=>s.trim()).filter(Boolean),
-      role: $('p_role').value, priority: Number($('p_priority').value)
-    };
-    await api('/admin/providers', { method:'POST', body: JSON.stringify(body) });
-    $('pmsg').textContent = 'Saved. Use "Restart backend" in Maintenance to apply it.';
-    $('p_pass').value = '';
-  } catch (e) { $('pmsg').textContent = e.message; }
+    await api('/admin/users/' + editingUser.id, { method:'PATCH', body: JSON.stringify(body) });
+    $('user-dialog').close();
+    await load();
+  } catch (e) { $('user-msg').textContent = e.message; }
+  $('user-save').disabled = false;
+};
+
+$('provider-save').onclick = async () => {
+  const retention = $('pf_retention').value.trim();
+  const body = {
+    name: $('pf_name').value.trim(),
+    host: $('pf_host').value.trim(),
+    port: Number($('pf_port').value),
+    tls: $('pf_tls').checked,
+    username: $('pf_user').value.trim() || null,
+    max_connections: Number($('pf_conn').value),
+    role: $('pf_role').value,
+    priority: Number($('pf_priority').value),
+    groups: $('pf_groups').value.split(',').map(s=>s.trim()).filter(Boolean),
+    retention_days: retention === '' ? null : Number(retention),
+    enabled: $('pf_enabled').checked,
+  };
+  if ($('pf_pass').value) body.password = $('pf_pass').value;
+  $('provider-save').disabled = true;
+  try {
+    if (editingProvider) {
+      await api('/admin/providers/' + editingProvider.id, { method:'PATCH', body: JSON.stringify(body) });
+    } else {
+      body.password = $('pf_pass').value || null;
+      await api('/admin/providers', { method:'POST', body: JSON.stringify(body) });
+    }
+    $('provider-dialog').close();
+    $('pmsg').textContent = 'Saved. Restart the backend to apply provider changes.';
+    await load();
+  } catch (e) { $('provider-msg').textContent = e.message; }
+  $('provider-save').disabled = false;
 };
 
 document.querySelectorAll('button[data-job]').forEach(b => b.onclick = async () => {

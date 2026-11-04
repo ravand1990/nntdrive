@@ -49,7 +49,10 @@ pub fn app(state: state::AppState) -> Router {
             "/admin/providers",
             get(admin::list_providers).post(admin::create_provider),
         )
-        .route("/admin/providers/{id}", delete(admin::delete_provider))
+        .route(
+            "/admin/providers/{id}",
+            patch(admin::patch_provider).delete(admin::delete_provider),
+        )
         .route("/admin/providers/{id}/test", post(admin::test_provider))
         .route("/admin/articles/verify", get(admin::verify_recent_articles))
         .route(

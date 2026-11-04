@@ -4,7 +4,7 @@ Last updated: 2026-11-04. This file is the handoff record for the next agent.
 
 ## Verified working
 
-Everything below is exercised by `cargo test --workspace --all-targets` (85 tests)
+Everything below is exercised by `cargo test --workspace --all-targets` (86 tests)
 against real PostgreSQL and an in-process NNTP server, plus the CLI demo.
 Additional live checks were run against a real Eweka account (upload, download,
 decrypt, verify) and through the Flutter FFI sync layer.
@@ -22,6 +22,7 @@ decrypt, verify) and through the Flutter FFI sync layer.
 | Dart ↔ Rust FFI sync: two local folders, upload/download/edit propagation against the live backend | `clients/flutter/tool/sync_smoke.dart` (verified) |
 | Dart ↔ Rust FFI: account generation, keyfile unlock, name seal/open with wrong-key rejection | `clients/flutter/test/native_test.dart` + `crates/ffi` tests |
 | First-run onboarding: setup status, first admin registration, one-time admin token, recovery code | backend tests + Flutter UI |
+| Admin user/provider management: edit users (name, quota, role, status), provider CRUD with in-place edit, type dropdown, credential retention | `crates/backend/tests/api.rs`, embedded dashboard |
 | Provider test: DNS/TLS/auth probe without posting; admin restart; article verification via retrieval provider | `nntdrive-backend/tests/api.rs`, live Eweka |
 | Multi-folder UI: base + additional folders, 5-minute auto-sync, pause, manual sync, conflict copies, selective-sync exclusions, conflict review panel | `clients/flutter/lib/sync_controller.dart`, `sync_page.dart`; FFI sync smoke |
 | Real Eweka round-trip: post via `post.eweka.nl:563`, retrieve via `news.eweka.nl:563`, decrypt, verify hash | 4 KB live upload; both articles STAT-verified |
@@ -155,9 +156,9 @@ provider when both aws-lc-rs and ring are in the dependency graph.
 7. **Virtual drives and native mobile integration**: FUSE/WinFsp mounts,
    Android DocumentsProvider + WorkManager, iOS File Provider + background
    transfers, photo/video backup.
-8. **Provider & admin operations**: edit providers in place (currently add/delete
-   + restart), live provider reload, quota editor, retention settings and
-   stronger alerts. Add orphaned-chunk garbage collection.
+8. **Provider & admin operations**: live provider reload (edits still require a
+   restart), retention settings UI, stronger alerts and orphaned-chunk garbage
+   collection.
 9. **Security review**: fuzz yEnc/NZB/article parsers, add proxy-level rate
    limiting guidance, password-reset policy, audit-log coverage and dependency
    review.

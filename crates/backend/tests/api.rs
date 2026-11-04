@@ -484,6 +484,164 @@ async fn tenant_isolation_and_encrypted_upload_flow() {
     assert_eq!(body["available"], body["total"], "{body}");
 }
 
+#[tokio::test]
+async fn admins_can_edit_users_and_providers_in_place() {
+    let Some(env) = env().await else { return };
+    let admin = register(&env.state, "admin@example.com").await;
+    let member = register(&env.state, "member@example.com").await;
+
+    let user_path = format!("/api/v1/admin/users/{}", member.account_id);
+    let (s, body) = call(
+        &env.state,
+        req(
+            "PATCH",
+            &user_path,
+            Some(&admin.token),
+            Some(json!({
+                "display_name": "Member One",
+                "quota_bytes": 5 * 1024 * 1024,
+                "is_admin": true
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+
+    let (_, body) = call(
+        &env.state,
+        req("GET", "/api/v1/admin/users", Some(&admin.token), None),
+    )
+    .await;
+    let listed = body["users"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["id"] == member.account_id.to_string())
+        .unwrap();
+    assert_eq!(listed["display_name"], "Member One");
+    assert_eq!(listed["quota_bytes"], 5 * 1024 * 1024);
+    assert_eq!(listed["is_admin"], true);
+
+    // Clearing the quota restores unlimited storage.
+    let (s, _) = call(
+        &env.state,
+        req(
+            "PATCH",
+            &user_path,
+            Some(&admin.token),
+            Some(json!({ "unlimited_quota": true })),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let (_, body) = call(
+        &env.state,
+        req("GET", "/api/v1/admin/users", Some(&admin.token), None),
+    )
+    .await;
+    let listed = body["users"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["id"] == member.account_id.to_string())
+        .unwrap();
+    assert!(listed["quota_bytes"].is_null());
+
+    // An administrator cannot remove their own admin role.
+    let (s, _) = call(
+        &env.state,
+        req(
+            "PATCH",
+            &format!("/api/v1/admin/users/{}", admin.account_id),
+            Some(&admin.token),
+            Some(json!({ "is_admin": false })),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+
+    // Create a provider with credentials, then edit it without resending the
+    // password.
+    let (s, body) = call(
+        &env.state,
+        req(
+            "POST",
+            "/api/v1/admin/providers",
+            Some(&admin.token),
+            Some(json!({
+                "name": "test-provider",
+                "host": "news.example.com",
+                "port": 563,
+                "username": "alice",
+                "password": "secret",
+                "role": "both",
+                "groups": ["alt.binaries.nntdrive"]
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{body}");
+    let provider_id = body["id"].as_str().unwrap().to_string();
+
+    let (s, body) = call(
+        &env.state,
+        req(
+            "PATCH",
+            &format!("/api/v1/admin/providers/{provider_id}"),
+            Some(&admin.token),
+            Some(json!({
+                "host": "news2.example.com",
+                "role": "retrieval_only",
+                "priority": 5,
+                "username": "alice"
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["restart_required"], true);
+
+    let (_, body) = call(
+        &env.state,
+        req("GET", "/api/v1/admin/providers", Some(&admin.token), None),
+    )
+    .await;
+    let listed = body["providers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["id"] == provider_id)
+        .unwrap();
+    assert_eq!(listed["host"], "news2.example.com");
+    assert_eq!(listed["role"], "retrieval_only");
+    assert_eq!(listed["priority"], 5);
+    assert_eq!(listed["username"], "alice");
+
+    // Invalid edits are rejected, and deletion still works.
+    let (s, _) = call(
+        &env.state,
+        req(
+            "PATCH",
+            &format!("/api/v1/admin/providers/{provider_id}"),
+            Some(&admin.token),
+            Some(json!({ "groups": [] })),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let (s, _) = call(
+        &env.state,
+        req(
+            "DELETE",
+            &format!("/api/v1/admin/providers/{provider_id}"),
+            Some(&admin.token),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+}
+
 async fn find_message_id(env: &Env, stripe_id: &str) -> String {
     let id: Uuid = stripe_id.parse().unwrap();
     env.state

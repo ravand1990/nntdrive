@@ -211,8 +211,10 @@ expires after 90 days; revoke it by setting `api_tokens.revoked_at`.
 
 Open `/admin`, paste the token. The dashboard shows users, devices, storage,
 Usenet volume, redundancy overhead, cache usage, article health, jobs, provider
-counters and recent failures. It can disable users, set quotas, add providers and
-enqueue health/refresh jobs.
+configuration, traffic counters and recent failures. Users can be edited
+(display name, quota, admin role, enabled/disabled); providers can be added,
+edited, tested and deleted; health/refresh jobs can be queued. Provider changes
+apply after a backend restart.
 
 ## Quotas
 
