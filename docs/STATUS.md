@@ -180,8 +180,8 @@ provider when both aws-lc-rs and ring are in the dependency graph.
   Add a job that deletes chunks unreferenced by any manifest after a grace period.
 - No AMK rotation command yet; device revocation instructs the client but does
   not perform client-side key rotation automatically.
-- The Docker image was verified with the legacy Docker builder in WSL; BuildKit
-  is used in CI. No multi-arch image is published.
+- The release image is `linux/amd64` only. Native arm runners or a successful
+  QEMU build are needed for `linux/arm64`; no multi-arch manifest is published yet.
 - Client CI builds and tests Linux/Android; Windows/iOS jobs stay non-blocking
   (Windows is verified locally; iOS needs macOS).
 - The app's "upload" of a new file creates the node first; if the upload fails it
