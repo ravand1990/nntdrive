@@ -16,7 +16,7 @@ against real PostgreSQL and an in-process NNTP server, plus the CLI demo.
 | Scanner ignore rules, case collisions, path validation, rename detection, concurrent offline edits, conflict preservation, delete propagation | `nntdrive-sync` tests |
 | Register/login, revoked device, admin authorization, tenant isolation, ciphertext upload, article proxy, dedupe lookup | `nntdrive-backend/tests/api.rs` |
 | Docker image build, Compose stack, healthcheck, admin page, CLI bootstrap, admin API | ✅ verified locally (image built, stack started, `/healthz` 200, admin stats returned) |
-| Flutter client analysis/tests, Linux desktop bundle, Android debug APK | ✅ `flutter analyze` clean, 2 tests pass, both artifacts built |
+| Flutter client analysis/tests, Linux bundle, Android APK (debug + release) | ✅ `flutter analyze` clean, 2 tests pass, Linux release bundle (24 MB) and Android release APK (50 MB, debug-signed) built |
 
 Run it yourself:
 
