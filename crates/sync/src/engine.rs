@@ -32,10 +32,15 @@ pub trait Remote {
     async fn upload(
         &mut self,
         path: &str,
-        content: Vec<u8>,
+        source: &std::path::Path,
         base_revision: Option<Uuid>,
     ) -> Result<RemoteEntry>;
-    async fn fetch(&mut self, path: &str, revision: Uuid) -> Result<Vec<u8>>;
+    async fn download(
+        &mut self,
+        path: &str,
+        revision: Uuid,
+        destination: &std::path::Path,
+    ) -> Result<()>;
     async fn delete(&mut self, path: &str) -> Result<()>;
     async fn mkdir(&mut self, path: &str) -> Result<()>;
     async fn move_path(&mut self, from: &str, to: &str) -> Result<()>;
@@ -195,37 +200,43 @@ impl SyncEngine {
                 base_revision,
             } => {
                 let local = local_path(root, &path)?;
-                let data = tokio::fs::read(&local).await?;
-                let entry = remote.upload(&path, data.clone(), base_revision).await?;
+                let size = tokio::fs::metadata(&local).await?.len();
+                let entry = remote.upload(&path, &local, base_revision).await?;
+                let hash = tokio::task::spawn_blocking({
+                    let local = local.clone();
+                    move || scanner::hash_file(&local)
+                })
+                .await
+                .map_err(|e| SyncError::Remote(format!("hash task failed: {e}")))??;
                 journal
                     .upsert(&BaselineEntry {
                         path,
                         is_dir: false,
-                        size: data.len() as u64,
-                        content_hash: Some(blake3::hash(&data).to_hex().to_string()),
+                        size,
+                        content_hash: Some(hash),
                         revision: entry.revision,
                         deleted: false,
                     })
                     .await?;
                 report.uploaded += 1;
-                report.uploaded_bytes += data.len() as u64;
+                report.uploaded_bytes += size;
             }
             Action::Download { path, revision } => {
                 let rev = revision.ok_or_else(|| SyncError::Remote("missing revision".into()))?;
-                let data = remote.fetch(&path, rev).await?;
-                atomic_write(&local_path(root, &path)?, &data).await?;
+                let dest = local_path(root, &path)?;
+                let (size, hash) = materialize_download(remote, &path, rev, &dest).await?;
                 journal
                     .upsert(&BaselineEntry {
                         path,
                         is_dir: false,
-                        size: data.len() as u64,
-                        content_hash: Some(blake3::hash(&data).to_hex().to_string()),
+                        size,
+                        content_hash: Some(hash),
                         revision: Some(rev),
                         deleted: false,
                     })
                     .await?;
                 report.downloaded += 1;
-                report.downloaded_bytes += data.len() as u64;
+                report.downloaded_bytes += size;
             }
             Action::DeleteRemote {
                 path,
@@ -331,7 +342,6 @@ impl SyncEngine {
             } => {
                 let original = local_path(root, &path)?;
                 let copy = local_path(root, &local_copy)?;
-                let local_data = tokio::fs::read(&original).await?;
                 if copy.exists() {
                     return Err(SyncError::Remote(format!(
                         "conflict copy already exists: {local_copy}"
@@ -342,35 +352,42 @@ impl SyncEngine {
                 tokio::fs::rename(&original, &copy).await?;
                 let rev = remote_revision
                     .ok_or_else(|| SyncError::Remote("conflict without remote revision".into()))?;
-                let remote_data = remote.fetch(&path, rev).await?;
-                atomic_write(&original, &remote_data).await?;
+                let (remote_size, remote_hash) =
+                    materialize_download(remote, &path, rev, &original).await?;
                 journal
                     .upsert(&BaselineEntry {
                         path: path.clone(),
                         is_dir: false,
-                        size: remote_data.len() as u64,
-                        content_hash: Some(blake3::hash(&remote_data).to_hex().to_string()),
+                        size: remote_size,
+                        content_hash: Some(remote_hash),
                         revision: Some(rev),
                         deleted: false,
                     })
                     .await?;
                 // Upload the preserved local version as a distinct file.
-                let entry = remote.upload(&local_copy, local_data.clone(), None).await?;
+                let local_size = tokio::fs::metadata(&copy).await?.len();
+                let entry = remote.upload(&local_copy, &copy, None).await?;
+                let local_hash = tokio::task::spawn_blocking({
+                    let copy = copy.clone();
+                    move || scanner::hash_file(&copy)
+                })
+                .await
+                .map_err(|e| SyncError::Remote(format!("hash task failed: {e}")))??;
                 journal
                     .upsert(&BaselineEntry {
                         path: local_copy,
                         is_dir: false,
-                        size: local_data.len() as u64,
-                        content_hash: Some(blake3::hash(&local_data).to_hex().to_string()),
+                        size: local_size,
+                        content_hash: Some(local_hash),
                         revision: entry.revision,
                         deleted: false,
                     })
                     .await?;
                 report.conflicts += 1;
                 report.uploaded += 1;
-                report.uploaded_bytes += local_data.len() as u64;
+                report.uploaded_bytes += local_size;
                 report.downloaded += 1;
-                report.downloaded_bytes += remote_data.len() as u64;
+                report.downloaded_bytes += remote_size;
             }
         }
         Ok(())
@@ -396,6 +413,46 @@ fn local_path(root: &Path, rel: &str) -> Result<PathBuf> {
     let clean = scanner::validate_relative_path(rel)
         .map_err(|e| SyncError::UnsafePath(format!("{rel}: {e}")))?;
     Ok(root.join(clean))
+}
+
+/// Downloads to a temporary file, hashes it, then atomically replaces the
+/// destination. Anything interrupted leaves the previous local file intact.
+async fn materialize_download<R: Remote>(
+    remote: &mut R,
+    path: &str,
+    revision: Uuid,
+    destination: &Path,
+) -> Result<(u64, String)> {
+    if let Some(parent) = destination.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let tmp = destination.with_extension(format!(
+        "{}.nntdrive-part",
+        destination
+            .extension()
+            .map(|e| e.to_string_lossy().to_string())
+            .unwrap_or_default()
+    ));
+    let _ = tokio::fs::remove_file(&tmp).await;
+    if let Err(e) = remote.download(path, revision, &tmp).await {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return Err(e);
+    }
+    let size = tokio::fs::metadata(&tmp).await?.len();
+    let hash = tokio::task::spawn_blocking({
+        let tmp = tmp.clone();
+        move || scanner::hash_file(&tmp)
+    })
+    .await
+    .map_err(|e| SyncError::Remote(format!("hash task failed: {e}")))??;
+    #[cfg(windows)]
+    {
+        if destination.exists() {
+            let _ = tokio::fs::remove_file(destination).await;
+        }
+    }
+    tokio::fs::rename(&tmp, destination).await?;
+    Ok((size, hash))
 }
 
 /// Writes via a temporary file + rename so an interrupted download never leaves
@@ -459,9 +516,10 @@ mod tests {
         async fn upload(
             &mut self,
             path: &str,
-            content: Vec<u8>,
+            source: &Path,
             _base_revision: Option<Uuid>,
         ) -> Result<RemoteEntry> {
+            let content = tokio::fs::read(source).await?;
             let mut state = self.0.lock().await;
             state.uploads += 1;
             let rev = Uuid::new_v4();
@@ -477,14 +535,25 @@ mod tests {
             })
         }
 
-        async fn fetch(&mut self, path: &str, _revision: Uuid) -> Result<Vec<u8>> {
-            self.0
+        async fn download(
+            &mut self,
+            path: &str,
+            _revision: Uuid,
+            destination: &Path,
+        ) -> Result<()> {
+            let data = self
+                .0
                 .lock()
                 .await
                 .files
                 .get(path)
                 .map(|(d, _)| d.clone())
-                .ok_or_else(|| SyncError::Remote("not found".into()))
+                .ok_or_else(|| SyncError::Remote("not found".into()))?;
+            if let Some(parent) = destination.parent() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+            tokio::fs::write(destination, data).await?;
+            Ok(())
         }
 
         async fn delete(&mut self, path: &str) -> Result<()> {

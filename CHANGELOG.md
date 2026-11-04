@@ -6,6 +6,15 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Features
+
+- Sync now streams file content through the HTTP remote adapter instead of buffering whole files in memory, making large-file sync practical.
+- Remote content hashes are cached locally, enabling remote file-rename detection and same-content convergence.
+
+### Bug fixes
+
+- Sync folder removal now also deletes the remote-hash cache.
+
 ## [0.1.0] - 2026-11-04
 
 ### Features

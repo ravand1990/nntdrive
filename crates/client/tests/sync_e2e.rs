@@ -114,6 +114,22 @@ async fn sync(
         .unwrap()
 }
 
+async fn sync_cached(
+    s: &Stack,
+    root: Uuid,
+    local: &Path,
+    journal: &Path,
+    cache: &Path,
+    device: &str,
+) -> nntdrive_sync::SyncReport {
+    let mut remote = HttpRemote::with_cache(api(s), s.master.clone(), root, cache.to_path_buf());
+    let journal = Journal::open(journal).await.unwrap();
+    SyncEngine::new(device)
+        .run_once(&mut remote, local, &journal, "2026-11-04T120000Z")
+        .await
+        .unwrap()
+}
+
 #[tokio::test]
 async fn two_devices_sync_versions_conflicts_and_deletes() {
     let Some(s) = stack().await else { return };
@@ -221,6 +237,44 @@ async fn multiple_roots_are_independent() {
     let files = api.list_files(Some(root1)).await.unwrap();
     assert_eq!(files.len(), 1);
     assert_eq!(api.list_files(Some(root2)).await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn remote_rename_is_detected_through_cached_hashes() {
+    let Some(s) = stack().await else { return };
+    let api = api(&s);
+    let root = make_root(&s, &api, "RenameRoot").await;
+    let dir = tempfile::tempdir().unwrap();
+    let dir_b = tempfile::tempdir().unwrap();
+    let journals = tempfile::tempdir().unwrap();
+    let ja = journals.path().join("a.sqlite");
+    let jb = journals.path().join("b.sqlite");
+    let ca = journals.path().join("a.hashes.json");
+    let cb = journals.path().join("b.hashes.json");
+
+    tokio::fs::write(dir.path().join("old.txt"), b"rename me")
+        .await
+        .unwrap();
+    sync_cached(&s, root, dir.path(), &ja, &ca, "a").await;
+    sync_cached(&s, root, dir_b.path(), &jb, &cb, "b").await;
+    assert_eq!(
+        tokio::fs::read(dir_b.path().join("old.txt")).await.unwrap(),
+        b"rename me"
+    );
+
+    // Rename the remote file directly (simulating another client).
+    let node = api.list_files(Some(root)).await.unwrap().remove(0);
+    let sealed = s.master.seal_name(node.id, "new.txt").unwrap().to_bytes();
+    api.rename_file(node.id, &b64(&sealed)).await.unwrap();
+
+    let report = sync_cached(&s, root, dir_b.path(), &jb, &cb, "b").await;
+    assert_eq!(report.moved, 1, "{report:?}");
+    assert_eq!(report.downloaded, 0, "{report:?}");
+    assert!(!dir_b.path().join("old.txt").exists());
+    assert_eq!(
+        tokio::fs::read(dir_b.path().join("new.txt")).await.unwrap(),
+        b"rename me"
+    );
 }
 
 fn b64(bytes: &[u8]) -> String {

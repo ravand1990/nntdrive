@@ -4,7 +4,7 @@ Last updated: 2026-11-04. This file is the handoff record for the next agent.
 
 ## Verified working
 
-Everything below is exercised by `cargo test --workspace --all-targets` (82 tests)
+Everything below is exercised by `cargo test --workspace --all-targets` (83 tests)
 against real PostgreSQL and an in-process NNTP server, plus the CLI demo.
 Additional live checks were run against a real Eweka account (upload, download,
 decrypt, verify) and through the Flutter FFI sync layer.
@@ -120,11 +120,12 @@ provider when both aws-lc-rs and ring are in the dependency graph.
 - The client stores the password-wrapped keyfile in shared preferences; it is
   Argon2id-protected. The unused device-identity secret is no longer persisted.
   Move the keyfile to the platform keystore for a hardened build.
-- Sync runs only while the desktop app is open (no background service yet) and
-  each file is buffered in memory by the `Remote` adapter; very large files and
-  true background sync are future work.
+- Sync runs only while the desktop app is open (no background service yet), but
+  files are streamed through the `Remote` adapter rather than held in memory.
+  True background sync remains future work.
 - Empty local folders are synced, but remote folder renames are currently seen
   as delete+recreate (content is preserved; history/path identity is not).
+  Remote **file** renames are detected through the content-hash cache.
 - The live Eweka account required separate retrieval/posting hosts and a valid
   `From` header. Other providers may need different ports or groups; use the
   dashboard Test and Verify actions before bulk uploads.
@@ -132,13 +133,10 @@ provider when both aws-lc-rs and ring are in the dependency graph.
 ## Immediate next tasks (in order)
 
 1. **Sync hardening & scale**:
-   - stream file content through the `Remote` trait instead of buffering every
-     file in memory (needed for multi-GB files);
    - run sync in a background service (desktop autostart) instead of only while
      the UI process is open;
-   - fetch/decrypt changed manifests or cache content hashes so remote renames
-     and “same content on both sides” converge without false conflicts;
-   - treat remote folder renames as moves;
+   - treat remote folder renames as moves (content hash caching already detects
+     remote file renames);
    - conflict review/merge UI, selective subfolder sync and per-file progress.
 2. **Secure local key storage**: move the password-wrapped keyfile from shared
    preferences into Keychain (iOS/macOS), Android Keystore, Windows Credential
@@ -191,9 +189,9 @@ provider when both aws-lc-rs and ring are in the dependency graph.
   intact (the manifest commits last).
 - Sync conflicts are preserved as files but there is no merge/review dialog yet.
 - Remote folder renames are not detected as moves; they become delete + recreate.
-- The sync `Remote` adapter returns no content hash for remote entries, so
-  same-content convergence and remote-rename detection are limited; only
-  revision changes are detected.
+- The sync `Remote` adapter caches remote content hashes on disk; without cached
+  entries it fetches and decrypts manifests (bounded per run), so large first
+  syncs do more network work. Remote folder renames are still not detected.
 - Sync folder selection uses the platform directory picker; Android’s picker is
   more restrictive than desktop, and background work while the app is closed is
   not scheduled yet.

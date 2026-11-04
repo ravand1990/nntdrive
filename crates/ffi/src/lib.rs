@@ -381,7 +381,8 @@ pub unsafe extern "C" fn nntdrive_sync_run(
         }
         let mut api = ApiClient::new(base_url).map_err(|e| e.to_string())?;
         api.set_token(token);
-        let mut remote = nntdrive_client::HttpRemote::new(api, master, root_id);
+        let cache_path = std::path::PathBuf::from(format!("{journal_path}.remote-hashes.json"));
+        let mut remote = nntdrive_client::HttpRemote::with_cache(api, master, root_id, cache_path);
         let journal = runtime()
             .block_on(nntdrive_sync::Journal::open(&journal_path))
             .map_err(|e| e.to_string())?;

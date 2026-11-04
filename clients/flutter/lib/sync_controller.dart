@@ -175,8 +175,11 @@ class SyncController extends ChangeNotifier {
     if (deleteJournal) {
       try {
         final support = await getApplicationSupportDirectory();
-        final file = File(p.join(support.path, 'sync', '${folder.id}.sqlite'));
-        if (file.existsSync()) file.deleteSync();
+        final base = p.join(support.path, 'sync', '${folder.id}.sqlite');
+        for (final suffix in ['', '.remote-hashes.json']) {
+          final file = File('$base$suffix');
+          if (file.existsSync()) file.deleteSync();
+        }
       } catch (_) {}
     }
     await _save();

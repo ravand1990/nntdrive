@@ -134,10 +134,12 @@ last synced content hashes and server revisions.
 Actions are applied through the `Remote` trait. The shipped client implements it
 over the HTTP API (`crates/client/src/sync_remote.rs`): a sync root maps to an
 encrypted remote folder; names are decrypted by walking the tree locally, and
-missing remote folders are created before uploads. The Flutter sync controller
-stores one journal per selected folder, supports a base folder plus additional
-folders, runs every five minutes while the app is open, and exposes manual
-sync/pause. Concurrent edits preserve conflict copies.
+missing remote folders are created before uploads. Uploads and downloads stream
+files to/from disk (no whole-file buffering), and a local cache of remote content
+hashes allows same-content convergence and remote file-rename detection. The
+Flutter sync controller stores one journal per selected folder, supports a base
+folder plus additional folders, runs every five minutes while the app is open,
+and exposes manual sync/pause. Concurrent edits preserve conflict copies.
 
 ## Metadata model
 

@@ -5,11 +5,12 @@
 //! sees opaque node ids and sealed name blobs.
 
 use crate::{download_file, upload_file, ApiClient, ClientError};
-use nntdrive_crypto::MasterKey;
+use nntdrive_crypto::{Envelope, MasterKey};
+use nntdrive_storage::manifest::FileManifest;
 use nntdrive_sync::{Remote, RemoteEntry, SyncError};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -17,6 +18,12 @@ struct Node {
     id: Uuid,
     revision: Option<Uuid>,
     is_dir: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedHash {
+    revision: String,
+    hash: String,
 }
 
 /// Number of files/directories we are willing to walk in one snapshot. Guards
@@ -28,6 +35,8 @@ pub struct HttpRemote {
     master: MasterKey,
     root_id: Uuid,
     nodes: HashMap<String, Node>,
+    cache_path: Option<PathBuf>,
+    hashes: HashMap<String, CachedHash>,
 }
 
 impl HttpRemote {
@@ -37,7 +46,53 @@ impl HttpRemote {
             master,
             root_id,
             nodes: HashMap::new(),
+            cache_path: None,
+            hashes: HashMap::new(),
         }
+    }
+
+    /// Enables a small on-disk cache of remote content hashes. Without it,
+    /// remote entries have no hash and renames are detected as delete+recreate.
+    pub fn with_cache(
+        api: ApiClient,
+        master: MasterKey,
+        root_id: Uuid,
+        cache_path: impl Into<PathBuf>,
+    ) -> Self {
+        let mut this = Self::new(api, master, root_id);
+        this.cache_path = Some(cache_path.into());
+        this
+    }
+
+    async fn load_hash_cache(&mut self) {
+        let Some(path) = &self.cache_path else { return };
+        if let Ok(data) = tokio::fs::read(path).await {
+            match serde_json::from_slice::<HashMap<String, CachedHash>>(&data) {
+                Ok(cache) => self.hashes = cache,
+                Err(e) => tracing::warn!(error = %e, "ignoring malformed sync hash cache"),
+            }
+        }
+    }
+
+    async fn save_hash_cache(&self, cache: &HashMap<String, CachedHash>) {
+        let Some(path) = &self.cache_path else { return };
+        if let Some(parent) = path.parent() {
+            let _ = tokio::fs::create_dir_all(parent).await;
+        }
+        let tmp = path.with_extension("tmp");
+        if let Ok(data) = serde_json::to_vec(cache) {
+            if tokio::fs::write(&tmp, data).await.is_ok() {
+                let _ = tokio::fs::rename(&tmp, path).await;
+            }
+        }
+    }
+
+    async fn content_hash(&self, id: Uuid, revision: Uuid) -> Option<String> {
+        let (sealed, rev) = self.api.manifest(id, Some(revision)).await.ok()?;
+        let envelope = Envelope::from_bytes(&sealed).ok()?;
+        let plain = self.master.open_manifest(id, rev, &envelope).ok()?;
+        let manifest = FileManifest::from_bytes(&plain).ok()?;
+        Some(manifest.content_hash)
     }
 
     fn remote_error(e: impl std::fmt::Display) -> SyncError {
@@ -76,6 +131,7 @@ impl HttpRemote {
     }
 
     async fn snapshot_tree(&mut self) -> Result<Vec<RemoteEntry>, SyncError> {
+        self.load_hash_cache().await;
         self.nodes.clear();
         self.nodes.insert(
             String::new(),
@@ -87,6 +143,8 @@ impl HttpRemote {
         );
         let mut entries = Vec::new();
         let mut stack = vec![(String::new(), self.root_id, 0usize)];
+        let mut new_cache: HashMap<String, CachedHash> = HashMap::new();
+        let mut hash_budget = 2000usize;
         while let Some((parent_path, parent_id, depth)) = stack.pop() {
             if depth > 128 {
                 return Err(Self::remote_error("remote tree is too deep"));
@@ -125,13 +183,45 @@ impl HttpRemote {
                         is_dir: file.is_dir,
                     },
                 );
+                let mut content_hash = None;
+                if !file.is_dir {
+                    if let Some(rev) = file.current_version {
+                        let cached = self
+                            .hashes
+                            .get(&path)
+                            .filter(|c| c.revision == rev.to_string())
+                            .map(|c| c.hash.clone());
+                        if let Some(hash) = cached {
+                            new_cache.insert(
+                                path.clone(),
+                                CachedHash {
+                                    revision: rev.to_string(),
+                                    hash: hash.clone(),
+                                },
+                            );
+                            content_hash = Some(hash);
+                        } else if hash_budget > 0 {
+                            hash_budget -= 1;
+                            if let Some(hash) = self.content_hash(file.id, rev).await {
+                                new_cache.insert(
+                                    path.clone(),
+                                    CachedHash {
+                                        revision: rev.to_string(),
+                                        hash: hash.clone(),
+                                    },
+                                );
+                                content_hash = Some(hash);
+                            }
+                        }
+                    }
+                }
                 entries.push(RemoteEntry {
                     path: path.clone(),
                     revision: file.current_version,
                     parent_revision: None,
                     is_dir: file.is_dir,
                     size: file.size.max(0) as u64,
-                    content_hash: None,
+                    content_hash,
                     deleted: false,
                 });
                 if file.is_dir {
@@ -139,6 +229,8 @@ impl HttpRemote {
                 }
             }
         }
+        self.hashes = new_cache.clone();
+        self.save_hash_cache(&new_cache).await;
         Ok(entries)
     }
 
@@ -184,16 +276,6 @@ impl HttpRemote {
         }
         Ok(parent_id)
     }
-
-    async fn write_temp(&self, content: &[u8]) -> Result<PathBuf, SyncError> {
-        let path = std::env::temp_dir().join(format!("nntdrive-sync-{}", Uuid::new_v4()));
-        let mut file = tokio::fs::File::create(&path)
-            .await
-            .map_err(Self::remote_error)?;
-        file.write_all(content).await.map_err(Self::remote_error)?;
-        file.flush().await.map_err(Self::remote_error)?;
-        Ok(path)
-    }
 }
 
 impl Remote for HttpRemote {
@@ -204,7 +286,7 @@ impl Remote for HttpRemote {
     async fn upload(
         &mut self,
         path: &str,
-        content: Vec<u8>,
+        source: &std::path::Path,
         base_revision: Option<Uuid>,
     ) -> Result<RemoteEntry, SyncError> {
         let parent = Self::parent_path(path).to_string();
@@ -212,7 +294,10 @@ impl Remote for HttpRemote {
         Self::validate_name(&name)?;
         let parent_id = self.ensure_dir(&parent).await?;
         let existing = self.nodes.get(path).cloned();
-        let temp = self.write_temp(&content).await?;
+        let size = tokio::fs::metadata(source)
+            .await
+            .map_err(Self::remote_error)?
+            .len();
 
         let file_id = existing.as_ref().map(|n| n.id).unwrap_or_else(Uuid::new_v4);
         let result = async {
@@ -236,7 +321,7 @@ impl Remote for HttpRemote {
                 file_id,
                 revision,
                 parent_revision,
-                &temp,
+                source,
             )
             .await
             .map_err(Self::remote_error)?;
@@ -244,10 +329,8 @@ impl Remote for HttpRemote {
         }
         .await;
 
-        let _ = tokio::fs::remove_file(&temp).await;
         match result {
             Ok(revision) => {
-                let size = content.len() as u64;
                 self.nodes.insert(
                     path.to_string(),
                     Node {
@@ -276,21 +359,28 @@ impl Remote for HttpRemote {
         }
     }
 
-    async fn fetch(&mut self, path: &str, revision: Uuid) -> Result<Vec<u8>, SyncError> {
+    async fn download(
+        &mut self,
+        path: &str,
+        revision: Uuid,
+        destination: &std::path::Path,
+    ) -> Result<(), SyncError> {
         let node = self.nodes.get(path).cloned().ok_or_else(|| {
             Self::remote_error(format!("remote file {path} is not in the snapshot"))
         })?;
         if node.is_dir {
             return Err(Self::remote_error(format!("{path} is a folder")));
         }
-        let temp = std::env::temp_dir().join(format!("nntdrive-sync-dl-{}", Uuid::new_v4()));
-        let result = download_file(&self.api, &self.master, node.id, Some(revision), &temp).await;
-        let data = match result {
-            Ok(_) => tokio::fs::read(&temp).await.map_err(Self::remote_error),
-            Err(e) => Err(Self::remote_error(e)),
-        };
-        let _ = tokio::fs::remove_file(&temp).await;
-        data
+        download_file(
+            &self.api,
+            &self.master,
+            node.id,
+            Some(revision),
+            destination,
+        )
+        .await
+        .map_err(Self::remote_error)?;
+        Ok(())
     }
 
     async fn delete(&mut self, path: &str) -> Result<(), SyncError> {
