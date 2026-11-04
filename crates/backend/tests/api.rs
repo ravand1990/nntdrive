@@ -467,6 +467,21 @@ async fn tenant_isolation_and_encrypted_upload_flow() {
     assert!(body["users"].as_array().unwrap().iter().any(|u| {
         u["id"] == alice.account_id.to_string() && u["used_bytes"].as_i64().unwrap_or(0) > 0
     }));
+
+    // Independently verify recent articles against the retrieval provider.
+    let (s, body) = call(
+        &env.state,
+        req(
+            "GET",
+            "/api/v1/admin/articles/verify",
+            Some(&alice.token),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert!(body["total"].as_u64().unwrap_or(0) > 0);
+    assert_eq!(body["available"], body["total"], "{body}");
 }
 
 async fn find_message_id(env: &Env, stripe_id: &str) -> String {

@@ -334,6 +334,49 @@ pub async fn list_jobs(
 /// Gracefully stops the backend so the container manager restarts it. Used to
 /// apply provider configuration changes without shell access. The response is
 /// sent first; the process shuts down ~400 ms later.
+/// Verifies recently posted articles are retrievable from the configured
+/// retrieval providers. This is a real NNTP STAT, not a database read.
+pub async fn verify_recent_articles(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+) -> ApiResult<impl IntoResponse> {
+    let rows = sqlx::query(
+        "SELECT message_id, provider, status, size, posted_at FROM shards
+         ORDER BY posted_at DESC LIMIT 20",
+    )
+    .fetch_all(&state.pool)
+    .await?;
+    let nntp = state.storage.nntp();
+    let mut items = Vec::with_capacity(rows.len());
+    let mut available = 0usize;
+    let mut provider_names: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for row in rows {
+        let message_id: String = row.get("message_id");
+        let found_on = nntp.available_on(&message_id).await;
+        if !found_on.is_empty() {
+            available += 1;
+            provider_names.extend(found_on.iter().cloned());
+        }
+        items.push(json!({
+            "message_id": message_id,
+            "posted_by_provider": row.get::<Option<String>, _>("provider"),
+            "db_status": row.get::<String, _>("status"),
+            "size": row.get::<i64, _>("size"),
+            "posted_at": row.get::<DateTime<Utc>, _>("posted_at"),
+            "available_on": found_on,
+        }));
+    }
+    let total = items.len();
+    Ok(Json(json!({
+        "total": total,
+        "available": available,
+        "missing": total - available,
+        "all_available": total > 0 && available == total,
+        "providers": provider_names.into_iter().collect::<Vec<_>>(),
+        "items": items,
+    })))
+}
+
 /// Connects and authenticates to a stored provider without posting. Returns a
 /// clear result so operators can fix host/port/credentials before an upload.
 pub async fn test_provider(

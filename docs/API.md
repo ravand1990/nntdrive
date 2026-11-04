@@ -91,6 +91,8 @@ Requires `accounts.is_admin`.
 | DELETE | `/admin/providers/{id}` | remove (applies on restart) |
 | GET/POST | `/admin/jobs` | list / enqueue `{kind,payload}` |
 | POST | `/admin/restart` | gracefully stop the backend so Compose/systemd restarts it (applies provider changes) |
+| GET | `/admin/articles/verify` | STAT the 20 newest articles through the retrieval providers; returns per-article availability |
+| POST | `/admin/providers/{id}/test` | DNS/TLS/auth check for a stored provider (no posting) |
 
 The embedded dashboard is `GET /admin`.
 

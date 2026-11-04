@@ -100,6 +100,7 @@
     <div class="row">
       <button class="secondary" data-job="health_sweep">Run health sweep</button>
       <button class="secondary" data-job="refresh_sweep">Run retention refresh</button>
+      <button class="secondary" id="verify-articles">Verify recent articles</button>
       <button class="secondary danger" id="restart">Restart backend</button>
     </div>
     <p id="jobmsg" class="muted">Restarting applies new provider settings. Active transfers will be interrupted.</p>
@@ -222,6 +223,21 @@ document.querySelectorAll('button[data-job]').forEach(b => b.onclick = async () 
   try { await api('/admin/jobs', { method:'POST', body: JSON.stringify({ kind: b.dataset.job, payload: {} })}); $('jobmsg').textContent = 'Job queued.'; load(); }
   catch (e) { $('jobmsg').textContent = e.message; }
 });
+
+$('verify-articles').onclick = async () => {
+  const btn = $('verify-articles');
+  btn.disabled = true;
+  $('jobmsg').textContent = 'Checking the latest articles against the retrieval provider…';
+  try {
+    const r = await api('/admin/articles/verify');
+    $('jobmsg').textContent = r.total === 0
+      ? 'No articles have been posted yet.'
+      : `${r.available}/${r.total} articles retrievable` +
+        (r.providers.length ? ' via ' + r.providers.join(', ') : '') +
+        (r.missing ? ` — ${r.missing} missing!` : ' — all verified.');
+  } catch (e) { $('jobmsg').textContent = 'Verification failed: ' + e.message; }
+  btn.disabled = false;
+};
 
 $('restart').onclick = async () => {
   if (!confirm('Restart the backend now? Active uploads/downloads will be interrupted.')) return;

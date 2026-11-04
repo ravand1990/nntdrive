@@ -173,6 +173,43 @@ directly in PostgreSQL. The cache has a separate limit.
   when served).
 - The dashboard shows actual bytes used.
 
+## Verifying that an upload really reached Usenet
+
+Three independent levels:
+
+1. **Dashboard** — Maintenance → **Verify recent articles**. The backend performs
+   real NNTP `STAT` calls through the retrieval provider (not a database read)
+   and reports `available/total`, the providers that have each article, and any
+   missing Message-IDs.
+2. **Provider check** — Usenet providers → **Test** checks DNS, TLS and
+   authentication for a configured provider. It does not prove posting
+   permission (only an actual upload does that).
+3. **Outside NNTDrive** — fetch the article directly from the provider using its
+   Message-ID. This is the strongest check because it does not trust the backend.
+
+Get recent Message-IDs and shard hashes:
+
+```sql
+SELECT s.message_id, s.sha256, s.provider, s.posted_at, s.size
+FROM shards s ORDER BY s.posted_at DESC LIMIT 10;
+```
+
+Then run the standalone checker (Python 3, no dependencies). It prompts for the
+NNTP password, authenticates directly with the provider, downloads the article,
+decodes yEnc, verifies its CRC and prints the SHA-256:
+
+```powershell
+python scripts\verify-article.py --user YOUR_EWEKA_USER `
+  --message-id 39d1a9f51a0ab5f4.1793803145088948@nntdrive.local `
+  --expect-sha256 THE_SHA256_FROM_THE_QUERY
+```
+
+Use `--host post.eweka.nl` to check the posting server instead of the default
+retrieval host. If the SHA-256 matches and the provider returns the article,
+the upload is genuinely on Usenet. You can also import an `.nzb` into an
+independent downloader. A successful provider `STAT` proves existence only;
+`BODY` + hash proves the content.
+
 ## Background jobs
 
 - `health_sweep`: STAT all articles in batches, mark missing/corrupt, enqueue

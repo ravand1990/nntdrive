@@ -51,6 +51,7 @@ pub fn app(state: state::AppState) -> Router {
         )
         .route("/admin/providers/{id}", delete(admin::delete_provider))
         .route("/admin/providers/{id}/test", post(admin::test_provider))
+        .route("/admin/articles/verify", get(admin::verify_recent_articles))
         .route(
             "/admin/jobs",
             get(admin::list_jobs).post(admin::enqueue_job),
