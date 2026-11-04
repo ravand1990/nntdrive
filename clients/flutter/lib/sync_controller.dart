@@ -26,7 +26,8 @@ class SyncFolderConfig {
     this.lastSync,
     this.lastError,
     this.lastReport,
-  });
+    List<String>? excluded,
+  }) : excluded = excluded ?? [];
 
   final String id;
   String name;
@@ -36,6 +37,10 @@ class SyncFolderConfig {
   String? lastSync;
   String? lastError;
   Map<String, dynamic>? lastReport;
+  /// Relative local paths excluded from synchronization.
+  List<String> excluded;
+  /// Discovered conflict copies under this root (computed, not persisted).
+  List<String> conflictFiles = [];
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -46,6 +51,7 @@ class SyncFolderConfig {
         'lastSync': lastSync,
         'lastError': lastError,
         'lastReport': lastReport,
+        'excluded': excluded,
       };
 
   static SyncFolderConfig fromJson(Map<String, dynamic> j) => SyncFolderConfig(
@@ -57,6 +63,7 @@ class SyncFolderConfig {
         lastSync: j['lastSync'] as String?,
         lastError: j['lastError'] as String?,
         lastReport: j['lastReport'] as Map<String, dynamic>?,
+        excluded: (j['excluded'] as List?)?.map((e) => e.toString()).toList(),
       );
 
   int get uploaded => (lastReport?['uploaded'] as int?) ?? 0;
@@ -105,6 +112,7 @@ class SyncController extends ChangeNotifier {
       }
     }
     notifyListeners();
+    await scanConflicts();
   }
 
   Future<void> _save() async {
@@ -191,6 +199,46 @@ class SyncController extends ChangeNotifier {
     if (enabled) await syncFolder(folder);
   }
 
+  Future<void> setExcluded(SyncFolderConfig folder, List<String> excluded) async {
+    folder.excluded = excluded
+        .map((e) => e.trim().replaceAll('\\', '/').replaceAll(RegExp(r'^/+|/+$'), ''))
+        .where((e) => e.isNotEmpty)
+        .toSet()
+        .toList();
+    await _save();
+    await syncFolder(folder);
+  }
+
+  /// Finds conflict copies created by the sync engine inside selected folders.
+  Future<void> scanConflicts() async {
+    for (final folder in folders) {
+      folder.conflictFiles.clear();
+      if (!Directory(folder.localPath).existsSync()) continue;
+      try {
+        await for (final entity in Directory(folder.localPath)
+            .list(recursive: true, followLinks: false)) {
+          if (entity is! File) continue;
+          if (!p.basename(entity.path).contains(' (conflict ')) continue;
+          final rel = p
+              .relative(entity.path, from: folder.localPath)
+              .replaceAll('\\', '/');
+          if (folder.excluded.any((ex) =>
+              rel == ex || rel.startsWith('$ex/'))) {
+            continue;
+          }
+          folder.conflictFiles.add(rel);
+          if (folder.conflictFiles.length >= 500) break;
+        }
+      } catch (_) {
+        // Unreadable folders are reported by sync itself.
+      }
+    }
+    notifyListeners();
+  }
+
+  int get conflictCount =>
+      folders.fold(0, (sum, folder) => sum + folder.conflictFiles.length);
+
   Future<void> setPaused(bool value) async {
     paused = value;
     await _save();
@@ -255,6 +303,7 @@ class SyncController extends ChangeNotifier {
         localPath: folder.localPath,
         journalPath: journal,
         deviceName: Platform.localHostname,
+        excludedJson: jsonEncode(folder.excluded),
       );
       folder.lastReport = report;
       folder.lastSync = DateTime.now().toIso8601String();
@@ -273,6 +322,7 @@ class SyncController extends ChangeNotifier {
     } finally {
       _running.remove(folder.id);
       await _save();
+      await scanConflicts();
     }
   }
 

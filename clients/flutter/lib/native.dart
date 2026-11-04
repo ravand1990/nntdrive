@@ -37,10 +37,10 @@ typedef _FreeNative = Void Function(Pointer<Utf8>);
 typedef _FreeDart = void Function(Pointer<Utf8>);
 typedef _VersionNative = Uint32 Function();
 typedef _VersionDart = int Function();
-typedef _SyncNative = Pointer<Utf8> Function(Uint64, Pointer<Utf8>, Pointer<Utf8>,
-    Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>);
-typedef _SyncDart = Pointer<Utf8> Function(int, Pointer<Utf8>, Pointer<Utf8>,
-    Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>);
+typedef _SyncExNative = Pointer<Utf8> Function(Uint64, Pointer<Utf8>, Pointer<Utf8>,
+    Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>);
+typedef _SyncExDart = Pointer<Utf8> Function(int, Pointer<Utf8>, Pointer<Utf8>,
+    Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>);
 
 class NativeBridge {
   NativeBridge._(this._lib) {
@@ -240,13 +240,21 @@ class NativeBridge {
     required String localPath,
     required String journalPath,
     required String deviceName,
+    String excludedJson = '[]',
   }) {
-    final f = _lib.lookupFunction<_SyncNative, _SyncDart>('nntdrive_sync_run');
-    final args = [baseUrl, token, remoteRootId, localPath, journalPath, deviceName]
-        .map(_cstr)
-        .toList();
+    final f = _lib.lookupFunction<_SyncExNative, _SyncExDart>('nntdrive_sync_run_ex');
+    final args = [
+      baseUrl,
+      token,
+      remoteRootId,
+      localPath,
+      journalPath,
+      deviceName,
+      excludedJson,
+    ].map(_cstr).toList();
     try {
-      return _decode(f(handle, args[0], args[1], args[2], args[3], args[4], args[5]));
+      return _decode(
+          f(handle, args[0], args[1], args[2], args[3], args[4], args[5], args[6]));
     } finally {
       for (final a in args) {
         malloc.free(a);
@@ -262,6 +270,7 @@ class NativeBridge {
     required String localPath,
     required String journalPath,
     required String deviceName,
+    String excludedJson = '[]',
   }) {
     final args = <String, dynamic>{
       'handle': handle,
@@ -271,6 +280,7 @@ class NativeBridge {
       'localPath': localPath,
       'journalPath': journalPath,
       'deviceName': deviceName,
+      'excludedJson': excludedJson,
     };
     return Isolate.run(() {
       final a = args;
@@ -282,6 +292,7 @@ class NativeBridge {
         localPath: a['localPath'] as String,
         journalPath: a['journalPath'] as String,
         deviceName: a['deviceName'] as String,
+        excludedJson: a['excludedJson'] as String,
       );
     });
   }

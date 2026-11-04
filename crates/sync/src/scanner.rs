@@ -37,6 +37,18 @@ pub struct ScanOptions {
     pub include_hidden: bool,
     /// Extra lowercase suffixes to ignore (in addition to the built-ins).
     pub ignore_suffixes: Vec<String>,
+    /// Relative paths (folders or files) excluded from synchronization.
+    pub excluded_paths: Vec<String>,
+}
+
+impl ScanOptions {
+    pub fn is_excluded(&self, rel: &str) -> bool {
+        let rel = rel.trim_matches('/');
+        self.excluded_paths.iter().any(|excluded| {
+            let excluded = excluded.trim().trim_matches('/').replace('\\', "/");
+            !excluded.is_empty() && (rel == excluded || rel.starts_with(&format!("{excluded}/")))
+        })
+    }
 }
 
 pub fn is_ignored_name(name: &str, opts: &ScanOptions) -> bool {
@@ -119,6 +131,9 @@ fn walk(
         }
         let path = entry.path();
         let rel = relative(root, &path);
+        if opts.is_excluded(&rel) {
+            continue;
+        }
         let meta = match fs::symlink_metadata(&path) {
             Ok(m) => m,
             Err(e) => {
@@ -297,6 +312,28 @@ mod tests {
         assert!(!paths.iter().any(|p| p.contains("$report")));
         assert!(!paths.iter().any(|p| p.contains(".hidden")));
         assert!(!paths.iter().any(|p| p.contains(".nntdrive")));
+    }
+
+    #[test]
+    fn excluded_paths_skip_files_and_entire_subtrees() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::create_dir_all(root.join("keep/nested")).unwrap();
+        fs::create_dir_all(root.join("skip/deeper")).unwrap();
+        fs::write(root.join("keep/nested/ok.txt"), b"ok").unwrap();
+        fs::write(root.join("skip/deeper/no.txt"), b"no").unwrap();
+        fs::write(root.join("skip/file.txt"), b"no").unwrap();
+        fs::write(root.join("top.txt"), b"top").unwrap();
+
+        let opts = ScanOptions {
+            excluded_paths: vec!["skip/".into(), "top.txt".into()],
+            ..ScanOptions::default()
+        };
+        let res = scan(root, &opts, &HashMap::new()).unwrap();
+        let paths: Vec<&str> = res.entries.iter().map(|e| e.path.as_str()).collect();
+        assert!(paths.contains(&"keep/nested/ok.txt"));
+        assert!(!paths.contains(&"top.txt"));
+        assert!(!paths.iter().any(|p| p.starts_with("skip")));
     }
 
     #[test]

@@ -10,6 +10,8 @@ release workflow refuses to publish if the entry is missing.
 
 - Sync now streams file content through the HTTP remote adapter instead of buffering whole files in memory, making large-file sync practical.
 - Remote content hashes are cached locally, enabling remote file-rename detection and same-content convergence.
+- Selective sync: exclude subfolders per sync root; exclusions apply to local scanning and the remote snapshot, so excluded content is neither uploaded nor downloaded.
+- Conflict review: the sync screen lists conflict copies with a badge and count, and can reveal each one in the file manager.
 
 ### Bug fixes
 

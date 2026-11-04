@@ -130,6 +130,23 @@ async fn sync_cached(
         .unwrap()
 }
 
+async fn sync_excluded(
+    s: &Stack,
+    root: Uuid,
+    local: &Path,
+    journal: &Path,
+    device: &str,
+    excluded: Vec<String>,
+) -> nntdrive_sync::SyncReport {
+    let mut remote = HttpRemote::new(api(s), s.master.clone(), root);
+    let journal = Journal::open(journal).await.unwrap();
+    SyncEngine::new(device)
+        .with_exclusions(excluded)
+        .run_once(&mut remote, local, &journal, "2026-11-04T120000Z")
+        .await
+        .unwrap()
+}
+
 #[tokio::test]
 async fn two_devices_sync_versions_conflicts_and_deletes() {
     let Some(s) = stack().await else { return };
@@ -275,6 +292,39 @@ async fn remote_rename_is_detected_through_cached_hashes() {
         tokio::fs::read(dir_b.path().join("new.txt")).await.unwrap(),
         b"rename me"
     );
+}
+
+#[tokio::test]
+async fn excluded_paths_are_skipped_in_both_directions() {
+    let Some(s) = stack().await else { return };
+    let root = make_root(&s, &api(&s), "SelectiveRoot").await;
+    let dir_a = tempfile::tempdir().unwrap();
+    let dir_b = tempfile::tempdir().unwrap();
+    let journals = tempfile::tempdir().unwrap();
+    let ja = journals.path().join("a.sqlite");
+    let jb = journals.path().join("b.sqlite");
+    std::fs::create_dir_all(dir_a.path().join("keep")).unwrap();
+    std::fs::create_dir_all(dir_a.path().join("skip")).unwrap();
+    std::fs::write(dir_a.path().join("keep/a.txt"), b"a").unwrap();
+    std::fs::write(dir_a.path().join("skip/local.txt"), b"local").unwrap();
+
+    let report = sync_excluded(&s, root, dir_a.path(), &ja, "a", vec!["skip".into()]).await;
+    assert_eq!(report.uploaded, 1, "{report:?}");
+    assert!(dir_a.path().join("skip/local.txt").exists());
+
+    std::fs::create_dir_all(dir_b.path().join("skip")).unwrap();
+    std::fs::write(dir_b.path().join("skip/b.txt"), b"remote").unwrap();
+    let report = sync(&s, root, dir_b.path(), &jb, "b").await;
+    assert_eq!(report.uploaded, 1, "{report:?}");
+    assert!(dir_b.path().join("keep/a.txt").exists());
+
+    let report = sync_excluded(&s, root, dir_a.path(), &ja, "a", vec!["skip".into()]).await;
+    assert_eq!(report.downloaded, 0, "{report:?}");
+    assert!(!dir_a.path().join("skip/b.txt").exists());
+    assert!(dir_a.path().join("skip/local.txt").exists());
+
+    let report = sync(&s, root, dir_b.path(), &jb, "b").await;
+    assert!(!dir_b.path().join("skip/local.txt").exists(), "{report:?}");
 }
 
 fn b64(bytes: &[u8]) -> String {

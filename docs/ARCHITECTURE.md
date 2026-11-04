@@ -139,7 +139,9 @@ files to/from disk (no whole-file buffering), and a local cache of remote conten
 hashes allows same-content convergence and remote file-rename detection. The
 Flutter sync controller stores one journal per selected folder, supports a base
 folder plus additional folders, runs every five minutes while the app is open,
-and exposes manual sync/pause. Concurrent edits preserve conflict copies.
+and exposes manual sync/pause. Per-folder exclusions keep chosen subtrees out of
+both scanning and the remote snapshot; conflict copies are listed in a review
+panel. Concurrent edits preserve conflict copies.
 
 ## Metadata model
 

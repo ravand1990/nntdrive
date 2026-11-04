@@ -64,6 +64,8 @@ pub struct SyncReport {
 pub struct SyncEngine {
     pub device_name: String,
     pub scan_options: ScanOptions,
+    /// Relative paths excluded from syncing (selective sync).
+    pub excluded_paths: Vec<String>,
 }
 
 impl SyncEngine {
@@ -71,7 +73,19 @@ impl SyncEngine {
         Self {
             device_name: device_name.into(),
             scan_options: ScanOptions::default(),
+            excluded_paths: Vec::new(),
         }
+    }
+
+    pub fn with_exclusions(mut self, paths: Vec<String>) -> Self {
+        self.excluded_paths = paths;
+        self
+    }
+
+    fn is_excluded(&self, path: &str) -> bool {
+        let mut opts = self.scan_options.clone();
+        opts.excluded_paths = self.excluded_paths.clone();
+        opts.is_excluded(path)
     }
 
     /// Scans, reconciles and applies changes. `now` is a human-readable stamp
@@ -103,13 +117,18 @@ impl SyncEngine {
             .collect();
         let root = root.to_path_buf();
         let scan_root = root.clone();
-        let opts = self.scan_options.clone();
+        let mut opts = self.scan_options.clone();
+        opts.excluded_paths = self.excluded_paths.clone();
         let scan = tokio::task::spawn_blocking(move || scanner::scan(&scan_root, &opts, &previous))
             .await
             .map_err(|e| SyncError::Remote(format!("scan task failed: {e}")))??;
 
         let local_changes = reconcile::detect_local(&baseline, &scan.entries);
         let remote_entries = remote.snapshot().await?;
+        let remote_entries: Vec<_> = remote_entries
+            .into_iter()
+            .filter(|e| !self.is_excluded(&e.path))
+            .collect();
         let remote_changes = reconcile::detect_remote(&baseline, &remote_entries);
         let actions = reconcile::reconcile(
             &baseline,

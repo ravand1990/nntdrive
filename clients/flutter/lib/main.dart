@@ -1140,7 +1140,8 @@ class _FilesPageState extends State<FilesPage> {
               subtitle: Text(
                 _sync.folders.isEmpty
                     ? 'No folders selected'
-                    : '${_sync.folders.length} folder(s)${_sync.paused ? ' · paused' : ''}',
+                    : '${_sync.folders.length} folder(s)${_sync.paused ? ' · paused' : ''}'
+                        '${_sync.conflictCount > 0 ? ' · ${_sync.conflictCount} conflict(s)' : ''}',
               ),
               onTap: () {
                 Navigator.pop(context);
@@ -1241,7 +1242,8 @@ class _FilesPageState extends State<FilesPage> {
             onPressed: _openSync,
             tooltip: 'Sync folders',
             icon: Badge(
-              isLabelVisible: _sync.folders.any((f) => f.hasErrors),
+              isLabelVisible: _sync.conflictCount > 0 || _sync.folders.any((f) => f.hasErrors),
+              label: _sync.conflictCount > 0 ? Text('${_sync.conflictCount}') : null,
               child: _sync.syncing
                   ? const SizedBox(
                       width: 20,

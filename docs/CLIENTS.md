@@ -27,7 +27,9 @@ Dart never implements crypto; it passes UTF-8 JSON to the native core.
   per-revision download, delete, favorites.
 - Multi-folder bidirectional sync: select a base folder plus additional folders,
   automatic runs every 5 minutes while the app is open, pause/resume, per-folder
-  and global “Sync now”, conflict copies preserved, local plaintext by default.
+  and global “Sync now”, conflict copies preserved, selective sync per folder
+  (excluded subtrees are ignored on both sides), conflict review panel, local
+  plaintext by default.
 - Device list/revocation, quota display, light/dark/system theme.
 - Server URL + TLS backend support.
 
@@ -196,10 +198,12 @@ iOS platform constraints:
 - Scan on startup, on filesystem notifications (desktop), and periodically.
 - `pause/resume` only pauses the scheduler; in-flight transfers complete or
   cancel safely.
-- Conflict copies are visible in the file list after decryption; the UI should
-  offer "keep mine", "keep theirs", "keep both" but must not silently discard.
-- Selective sync is a per-folder include list stored in the journal; excluded
-  folders appear as placeholders in the virtual drive.
+- Conflict copies are preserved under `name (conflict device timestamp).ext`.
+  The sync screen lists them and can reveal each file in the OS file manager;
+  explicit keep-mine/keep-theirs/keep-both merge actions are still future work.
+- Selective sync is a per-folder exclusion list stored with the client config.
+  Excluded folders are skipped while scanning local files and filtering the
+  remote snapshot; they are not deleted on either side.
 
 ## Environment limitations to document in the UI
 

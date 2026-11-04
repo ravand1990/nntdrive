@@ -4,7 +4,7 @@ Last updated: 2026-11-04. This file is the handoff record for the next agent.
 
 ## Verified working
 
-Everything below is exercised by `cargo test --workspace --all-targets` (83 tests)
+Everything below is exercised by `cargo test --workspace --all-targets` (85 tests)
 against real PostgreSQL and an in-process NNTP server, plus the CLI demo.
 Additional live checks were run against a real Eweka account (upload, download,
 decrypt, verify) and through the Flutter FFI sync layer.
@@ -18,12 +18,12 @@ decrypt, verify) and through the Flutter FFI sync layer.
 | Scanner ignore rules, case collisions, path validation, rename detection, concurrent offline edits, conflict preservation, delete propagation | `nntdrive-sync` tests |
 | Register/login/logout, revoked device, admin authorization, tenant isolation, ciphertext upload, article proxy, dedupe lookup, shard locations | `nntdrive-backend/tests/api.rs` |
 | Real client SDK: register → create node → encrypted upload → manifest → download → decrypt → verify; dedupe; unauthorized access | `crates/client/tests/e2e.rs` |
-| Two-device sync: create/modify/delete propagation, conflict copies, independent multiple roots | `crates/client/tests/sync_e2e.rs` (real API + mock NNTP) |
+| Two-device sync: create/modify/delete propagation, conflict copies, independent multiple roots, selective-sync exclusions in both directions, remote file-rename detection via cached hashes | `crates/client/tests/sync_e2e.rs` (real API + mock NNTP) |
 | Dart ↔ Rust FFI sync: two local folders, upload/download/edit propagation against the live backend | `clients/flutter/tool/sync_smoke.dart` (verified) |
 | Dart ↔ Rust FFI: account generation, keyfile unlock, name seal/open with wrong-key rejection | `clients/flutter/test/native_test.dart` + `crates/ffi` tests |
 | First-run onboarding: setup status, first admin registration, one-time admin token, recovery code | backend tests + Flutter UI |
 | Provider test: DNS/TLS/auth probe without posting; admin restart; article verification via retrieval provider | `nntdrive-backend/tests/api.rs`, live Eweka |
-| Multi-folder UI: base + additional folders, 5-minute auto-sync, pause, manual sync, conflict copies | `clients/flutter/lib/sync_controller.dart`, `sync_page.dart`; FFI sync smoke |
+| Multi-folder UI: base + additional folders, 5-minute auto-sync, pause, manual sync, conflict copies, selective-sync exclusions, conflict review panel | `clients/flutter/lib/sync_controller.dart`, `sync_page.dart`; FFI sync smoke |
 | Real Eweka round-trip: post via `post.eweka.nl:563`, retrieve via `news.eweka.nl:563`, decrypt, verify hash | 4 KB live upload; both articles STAT-verified |
 | Live deployment: dev Compose stack with mock NNTP; register/upload/download through the API | `crates/client/examples/smoke.rs` (verified) |
 | Docker image build, Compose stack, healthcheck, admin page, CLI bootstrap, admin API | ✅ verified locally (image built, stack started, `/healthz` 200, admin stats returned) |
@@ -137,7 +137,7 @@ provider when both aws-lc-rs and ring are in the dependency graph.
      the UI process is open;
    - treat remote folder renames as moves (content hash caching already detects
      remote file renames);
-   - conflict review/merge UI, selective subfolder sync and per-file progress.
+   - per-file progress and explicit conflict keep-mine/keep-theirs actions.
 2. **Secure local key storage**: move the password-wrapped keyfile from shared
    preferences into Keychain (iOS/macOS), Android Keystore, Windows Credential
    Manager and Secret Service (Linux); keep the recovery kit policy documented.

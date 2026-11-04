@@ -1,5 +1,8 @@
+import 'dart:io';
+
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
 
 import 'sync_controller.dart';
 
@@ -57,8 +60,7 @@ class _SyncPageState extends State<SyncPage> {
     _toast(c.lastStatus ?? 'Sync finished.');
   }
 
-  Future<void> _remove(SyncFolderConfig folder) async {
-    final ok = await showDialog<bool>(
+  Future<void> _remove(SyncFolderConfig folder) async {    final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Remove sync folder?'),
@@ -80,6 +82,136 @@ class _SyncPageState extends State<SyncPage> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
+  Future<void> _selectiveSync(SyncFolderConfig folder) async {
+    final excluded = List<String>.from(folder.excluded);
+    final result = await showDialog<List<String>>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text('Selective sync — ${folder.name}'),
+          content: SizedBox(
+            width: 520,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Excluded folders stop synchronizing. Existing local and remote files are kept; '
+                  'changes on either side are ignored until you include the folder again.',
+                ),
+                const SizedBox(height: 12),
+                if (excluded.isEmpty)
+                  const Text('Everything in this folder is synchronized.')
+                else
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: excluded
+                        .map((path) => InputChip(
+                              label: Text(path),
+                              onDeleted: () => setDialogState(() => excluded.remove(path)),
+                            ))
+                        .toList(),
+                  ),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    try {
+                      final picked = await getDirectoryPath(
+                        initialDirectory: folder.localPath,
+                        confirmButtonText: 'Exclude this folder',
+                      );
+                      if (picked == null) return;
+                      final rel = p
+                          .relative(picked, from: folder.localPath)
+                          .replaceAll('\\', '/');
+                      if (rel == '.' || rel.startsWith('../') || p.isAbsolute(rel)) {
+                        _toast('Choose a subfolder inside ${folder.localPath}.');
+                        return;
+                      }
+                      if (!excluded.contains(rel)) {
+                        setDialogState(() => excluded.add(rel));
+                      }
+                    } catch (e) {
+                      _toast('Folder picker failed: $e');
+                    }
+                  },
+                  icon: const Icon(Icons.folder_off_outlined),
+                  label: const Text('Exclude a subfolder'),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, excluded),
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result != null) {
+      await c.setExcluded(folder, result);
+      if (mounted) _toast('Selective sync updated.');
+    }
+  }
+
+  Future<void> _reveal(String absolutePath) async {
+    try {
+      if (Platform.isWindows) {
+        await Process.run('explorer', ['/select,', absolutePath]);
+      } else if (Platform.isMacOS) {
+        await Process.run('open', ['-R', absolutePath]);
+      } else {
+        await Process.run('xdg-open', [p.dirname(absolutePath)]);
+      }
+    } catch (e) {
+      _toast('Could not open file manager: $e');
+    }
+  }
+
+  Future<void> _showConflicts() async {
+    final conflicts = <(SyncFolderConfig, String)>[
+      for (final folder in c.folders)
+        for (final path in folder.conflictFiles) (folder, path)
+    ];
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Conflicts (${conflicts.length})'),
+        content: SizedBox(
+          width: 620,
+          child: conflicts.isEmpty
+              ? const Text('No conflict copies found.')
+              : ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: conflicts.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (context, i) {
+                    final (folder, path) = conflicts[i];
+                    final absolute = p.join(folder.localPath, path);
+                    return ListTile(
+                      dense: true,
+                      title: Text(path),
+                      subtitle: Text('${folder.name} · conflict copy'),
+                      trailing: TextButton.icon(
+                        onPressed: () => _reveal(absolute),
+                        icon: const Icon(Icons.folder_open, size: 18),
+                        label: const Text('Show'),
+                      ),
+                    );
+                  },
+                ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -87,6 +219,15 @@ class _SyncPageState extends State<SyncPage> {
       appBar: AppBar(
         title: const Text('Sync folders'),
         actions: [
+          if (c.conflictCount > 0)
+            IconButton(
+              tooltip: 'Review ${c.conflictCount} conflict copy(ies)',
+              onPressed: _showConflicts,
+              icon: Badge(
+                label: Text('${c.conflictCount}'),
+                child: const Icon(Icons.warning_amber_outlined),
+              ),
+            ),
           IconButton(
             tooltip: 'Sync all now',
             onPressed: c.syncing ? null : _syncAll,
@@ -141,6 +282,23 @@ class _SyncPageState extends State<SyncPage> {
             ),
           ),
           const SizedBox(height: 12),
+          if (c.conflictCount > 0) ...[
+            Card(
+              color: theme.colorScheme.errorContainer,
+              child: ListTile(
+                leading: const Icon(Icons.warning_amber_outlined),
+                title: Text('${c.conflictCount} conflict copy(ies) need review'),
+                subtitle: const Text(
+                  'Both versions were kept. Open a copy, merge or delete it, then run sync to propagate your choice.',
+                ),
+                trailing: TextButton(
+                  onPressed: _showConflicts,
+                  child: const Text('Review'),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
           if (c.folders.isEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 40),
@@ -234,10 +392,14 @@ class _SyncPageState extends State<SyncPage> {
                 PopupMenuButton<String>(
                   onSelected: (value) {
                     if (value == 'sync') c.syncFolder(folder);
+                    if (value == 'selective') _selectiveSync(folder);
+                    if (value == 'conflicts') _showConflicts();
                     if (value == 'remove') _remove(folder);
                   },
                   itemBuilder: (context) => const [
                     PopupMenuItem(value: 'sync', child: Text('Sync now')),
+                    PopupMenuItem(value: 'selective', child: Text('Selective sync…')),
+                    PopupMenuItem(value: 'conflicts', child: Text('Review conflicts…')),
                     PopupMenuItem(value: 'remove', child: Text('Remove')),
                   ],
                 ),
