@@ -1,0 +1,171 @@
+# Operations
+
+## Deployment
+
+### Docker Compose (recommended)
+
+```bash
+cp deploy/.env.example deploy/.env
+# set POSTGRES_PASSWORD and NNTDRIVE_SECRET_KEY
+docker compose -f deploy/docker-compose.yml up -d --build
+```
+
+TLS: add `--profile tls` and set `NNTDRIVE_DOMAIN`. Caddy terminates TLS and
+proxies to the backend. Keep the backend port bound to `127.0.0.1` when a proxy
+is in front.
+
+### Bare metal / VM
+
+Build `nntdrive-backend`, provide PostgreSQL 14+, set env vars, and run under
+systemd. Example unit:
+
+```ini
+[Unit]
+Description=NNTDrive backend
+After=network-online.target postgresql.service
+
+[Service]
+User=nntdrive
+EnvironmentFile=/etc/nntdrive/backend.env
+ExecStart=/usr/local/bin/nntdrive-backend
+Restart=on-failure
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/nntdrive
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+## Configuration
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DATABASE_URL` | required | PostgreSQL connection string |
+| `DATABASE_MAX_CONNECTIONS` | 20 | Pool size |
+| `NNTDRIVE_BIND` | `0.0.0.0:8080` | Listen address |
+| `NNTDRIVE_CACHE_DIR` | `./cache` | Encrypted shard cache |
+| `NNTDRIVE_CACHE_LIMIT_BYTES` | 10 GiB | Cache eviction threshold (LRU) |
+| `NNTDRIVE_ALLOW_REGISTRATION` | `false` | Open sign-up (first account is admin) |
+| `NNTDRIVE_SECRET_KEY` | random per boot | Base64 32 bytes; encrypts provider passwords |
+| `NNTDRIVE_DEFAULT_QUOTA_BYTES` | unlimited | Initial per-user quota |
+| `NNTDRIVE_NNTP_PROVIDERS` | — | JSON array of providers (seed if DB has none) |
+| `NNTDRIVE_STORAGE_CONFIG` | defaults | JSON `StorageConfig` (redundancy, shard size, chunk sizes, verification) |
+| `NNTDRIVE_HEALTH_INTERVAL_SECS` | 21600 | Health sweep cadence |
+| `NNTDRIVE_REFRESH_DAYS` | 180 | Refresh articles older than this |
+| `NNTDRIVE_REFRESH_INTERVAL_SECS` | 86400 | Refresh sweep cadence |
+| `RUST_LOG` | `info,sqlx=warn` | Log filter |
+| `LOG_FORMAT` | text | `json` for structured logs |
+
+Defaults: Argon2id content, 30 % parity (k=10, m=3), 512 KiB shards, 1 MiB
+average chunks, zstd level 3, read-back verification after posting.
+
+## NNTP providers
+
+Use one or more providers. `role` is `both`, `posting_only`, or `retrieval_only`;
+`priority` is lower-first. Multiple posting providers are tried in order; fetch
+tries all retrieval-capable providers.
+
+```bash
+cp deploy/providers.example.json /tmp/providers.json
+# fill credentials, then set NNTDRIVE_NNTP_PROVIDERS="$(cat /tmp/providers.json)"
+```
+
+Or add a provider in the admin dashboard. New providers are stored (password
+encrypted) and applied on the next restart. Test posting with a small demo/upload
+before trusting the provider with important data.
+
+Eweka: use `news.eweka.nl:563` with TLS. Posting must be enabled on the plan.
+Retention and posting limits are contractual and can change; NNTDrive does not
+assume unlimited upload or indefinite retention.
+
+## First account and admin token
+
+```bash
+docker compose -f deploy/docker-compose.yml exec backend \
+  nntdrive --database-url "$DATABASE_URL" account-create --email admin@example.com \
+  --password 'strong passphrase' --keyfile-out /tmp/admin.keyfile.json
+# copy the keyfile and recovery kit out, then delete them from the container
+docker compose ... exec backend nntdrive --database-url "$DATABASE_URL" \
+  token-create --account <uuid> --label admin
+```
+
+Open `/admin`, paste the token. The dashboard shows users, devices, storage,
+Usenet volume, redundancy overhead, cache usage, article health, jobs, provider
+counters and recent failures. It can disable users, set quotas, add providers and
+enqueue health/refresh jobs.
+
+## Quotas
+
+`accounts.quota_bytes` is enforced against the sum of distinct plaintext chunk
+lengths. Deduplicated chunks count once per account. Set via the admin API or
+directly in PostgreSQL. The cache has a separate limit.
+
+## Cache
+
+- Only encrypted shards are cached, keyed by the SHA-256 of the Message-ID.
+- Eviction is oldest-file-first when the limit is exceeded.
+- The cache is disposable: deleting it never loses committed data.
+- Uncommitted uploads are never written to the cache (articles are cached only
+  when served).
+- The dashboard shows actual bytes used.
+
+## Background jobs
+
+- `health_sweep`: STAT all articles in batches, mark missing/corrupt, enqueue
+  repairs for degraded stripes.
+- `repair_stripe`: reconstruct and repost missing shards, verify read-back, then
+  swap metadata atomically.
+- `refresh_sweep`: repost aging stripes before retention expiry, verify, then
+  swap.
+- Jobs survive restart in PostgreSQL; a crash mid-job causes a retry with
+  backoff. Jobs are idempotent where possible.
+
+Watch `jobs_failed`, `missing_shards`, `corrupt_shards` and per-provider failures
+on the dashboard. Alert when unrecoverable stripes appear; erasure coding cannot
+fix those.
+
+## Backups
+
+```bash
+scripts/backup.sh /secure/offhost/nntdrive-$(date -u +%Y%m%d)
+```
+
+This writes a custom-format dump, `checkpoint.json` and `SHA256SUMS`. Store the
+dump off-host. The recovery kit and code must be stored **separately**. Verify
+restores periodically in a staging stack.
+
+`scripts/restore.sh <dir> --yes` restores destructively and stops the backend
+first.
+
+## Upgrades
+
+1. Run `scripts/backup.sh`.
+2. Read the release notes and the migration list.
+3. `docker compose build && docker compose up -d` (migrations run at startup).
+4. Check `/healthz`, the admin dashboard and a download.
+5. Keep the previous image tag for rollback. Database migrations are additive in
+   this release, but a downgrade may still be incompatible with newer rows.
+
+## Scaling
+
+- PostgreSQL is the coordination point; the job queue supports multiple backend
+  replicas using `SKIP LOCKED`.
+- Article fetch/post concurrency is bounded per provider; raise
+  `max_connections` only within the provider's plan.
+- The cache is per-backend replica and not shared.
+- SSE events are read from PostgreSQL, so multiple replicas serve consistent
+  cursors.
+
+## Troubleshooting
+
+| Symptom | Check |
+|---|---|
+| Uploads fail with `provider_error` | Credentials, posting permission, group, connection limits; logs redact passwords |
+| `article not visible after upload` | Provider propagation delay; durability threshold may fail the chunk |
+| Downloads fail as unrecoverable | Missing shards exceed parity; check health sweep output and provider retention |
+| Admin login 401 | Token revoked/expired; mint a new one with `token-create` |
+| 500 after upgrade | Check migration logs; DB user permissions for DDL |
+| Cache grows past limit | Check `NNTDRIVE_CACHE_LIMIT_BYTES`; eviction runs on insert |

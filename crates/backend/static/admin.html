@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NNTDrive Administration</title>
+<style>
+  :root { color-scheme: light dark; --bg:#f6f7f9; --card:#fff; --text:#17181c; --muted:#5d6470; --line:#dfe3e8; --accent:#0b6bcb; --warn:#b45309; --bad:#b91c1c; --ok:#15803d; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#101216; --card:#181b21; --text:#eef1f6; --muted:#9aa3b2; --line:#2a2f38; --accent:#5aa9ff; --warn:#fbbf24; --bad:#f87171; --ok:#4ade80; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,Segoe UI,Roboto,sans-serif; }
+  header { display:flex; gap:16px; align-items:center; padding:14px 22px; border-bottom:1px solid var(--line); background:var(--card); position:sticky; top:0; z-index:2; }
+  header h1 { font-size:17px; margin:0; font-weight:650; }
+  header .spacer { flex:1; }
+  main { padding:22px; max-width:1240px; margin:auto; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; }
+  .card .k { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+  .card .v { font-size:22px; font-weight:650; margin-top:6px; }
+  section { margin-top:26px; }
+  h2 { font-size:15px; margin:0 0 10px; font-weight:650; }
+  table { width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  th,td { text-align:left; padding:9px 11px; border-bottom:1px solid var(--line); font-size:13px; vertical-align:top; }
+  th { color:var(--muted); font-weight:600; font-size:12px; }
+  tr:last-child td { border-bottom:0; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:7px; padding:8px 13px; font:inherit; cursor:pointer; }
+  button.secondary { background:transparent; color:var(--text); border:1px solid var(--line); }
+  button.danger { background:var(--bad); }
+  input { background:var(--card); color:var(--text); border:1px solid var(--line); border-radius:7px; padding:8px 10px; font:inherit; width:100%; }
+  input[type=checkbox] { width:auto; }
+  .row { display:flex; gap:10px; flex-wrap:wrap; }
+  .row > * { flex:1; min-width:150px; }
+  label { display:block; font-size:12px; color:var(--muted); margin-bottom:4px; }
+  .field { margin-bottom:10px; }
+  .muted { color:var(--muted); }
+  .bad { color:var(--bad); } .warn { color:var(--warn); } .ok { color:var(--ok); }
+  #login { max-width:430px; margin:70px auto; }
+  pre { white-space:pre-wrap; word-break:break-word; font-size:12px; }
+  .pill { display:inline-block; padding:1px 7px; border-radius:999px; font-size:11px; border:1px solid var(--line); }
+</style>
+</head>
+<body>
+<header>
+  <h1>NNTDrive</h1>
+  <span class="muted">administration</span>
+  <span class="spacer"></span>
+  <span id="who" class="muted"></span>
+  <button class="secondary" id="refresh" hidden>Refresh</button>
+  <button class="secondary" id="logout" hidden>Sign out</button>
+</header>
+
+<div id="login" class="card" hidden>
+  <h2>Administrator sign-in</h2>
+  <p class="muted">Paste an API token from an administrator account. The token is kept in this tab only.</p>
+  <div class="field"><label for="token">API token</label><input id="token" type="password" autocomplete="off"></div>
+  <button id="signin">Sign in</button>
+  <p id="loginerr" class="bad"></p>
+</div>
+
+<main id="app" hidden>
+  <div class="grid" id="cards"></div>
+  <section>
+    <h2>Provider status</h2>
+    <table><thead><tr><th>Provider</th><th>Posts</th><th>Post failures</th><th>Fetches</th><th>Fetch failures</th><th>Uploaded</th><th>Downloaded</th></tr></thead><tbody id="providers"></tbody></table>
+  </section>
+  <section>
+    <h2>Repair queue &amp; recent failures</h2>
+    <table><thead><tr><th>Job</th><th>State</th><th>Attempts</th><th>Last error</th><th>Updated</th></tr></thead><tbody id="jobs"></tbody></table>
+  </section>
+  <section>
+    <h2>Users</h2>
+    <table><thead><tr><th>Email</th><th>Role</th><th>Devices</th><th>Used</th><th>Quota</th><th>Status</th><th></th></tr></thead><tbody id="users"></tbody></table>
+  </section>
+  <section>
+    <h2>Usenet providers</h2>
+    <p class="muted">New providers are stored encrypted and applied after a backend restart. Never enter credentials for an account that does not permit posting if you rely on uploads.</p>
+    <div class="card">
+      <div class="row">
+        <div class="field"><label>Name</label><input id="p_name" placeholder="eweka"></div>
+        <div class="field"><label>Host</label><input id="p_host" placeholder="news.eweka.nl"></div>
+        <div class="field"><label>Port</label><input id="p_port" type="number" value="563"></div>
+      </div>
+      <div class="row">
+        <div class="field"><label>Username</label><input id="p_user" autocomplete="off"></div>
+        <div class="field"><label>Password</label><input id="p_pass" type="password" autocomplete="new-password"></div>
+        <div class="field"><label>Max connections</label><input id="p_conn" type="number" value="8"></div>
+      </div>
+      <div class="row">
+        <div class="field"><label>Groups (comma separated)</label><input id="p_groups" value="alt.binaries.nntdrive"></div>
+        <div class="field"><label>Role</label><input id="p_role" value="both"></div>
+        <div class="field"><label>Priority</label><input id="p_priority" type="number" value="100"></div>
+      </div>
+      <button id="addprovider">Add provider</button>
+      <span id="pmsg" class="muted"></span>
+    </div>
+  </section>
+  <section>
+    <h2>Maintenance</h2>
+    <div class="row">
+      <button class="secondary" data-job="health_sweep">Run health sweep</button>
+      <button class="secondary" data-job="refresh_sweep">Run retention refresh</button>
+    </div>
+    <p id="jobmsg" class="muted"></p>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let token = sessionStorage.getItem('nntdrive_admin_token') || '';
+
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function bytes(n) { if (n == null) return '—'; const u=['B','KiB','MiB','GiB','TiB']; let i=0,v=Number(n); while(v>=1024&&i<u.length-1){v/=1024;i++;} return v.toFixed(i?1:0)+' '+u[i]; }
+function when(s) { return s ? new Date(s).toLocaleString() : '—'; }
+
+async function api(path, opts = {}) {
+  const res = await fetch('/api/v1' + path, {
+    ...opts,
+    headers: { 'content-type': 'application/json', 'authorization': 'Bearer ' + token, ...(opts.headers||{}) }
+  });
+  if (res.status === 401) { showLogin('Session expired. Sign in again.'); throw new Error('unauthorized'); }
+  const ct = res.headers.get('content-type') || '';
+  const body = ct.includes('json') ? await res.json() : await res.text();
+  if (!res.ok) throw new Error(body.message || body.error || res.statusText);
+  return body;
+}
+
+function showLogin(msg = '') {
+  $('login').hidden = false; $('app').hidden = true; $('who').textContent = '';
+  $('refresh').hidden = true; $('logout').hidden = true; $('loginerr').textContent = msg;
+}
+
+async function load() {
+  const [stats, users, jobs, providers] = await Promise.all([
+    api('/admin/stats'), api('/admin/users'), api('/admin/jobs'), api('/admin/providers')
+  ]);
+  $('app').hidden = false; $('login').hidden = true;
+  $('refresh').hidden = false; $('logout').hidden = false;
+
+  const cards = [
+    ['Users', stats.users + ' (' + stats.active_users + ' active)'],
+    ['Devices', stats.devices],
+    ['Logical storage', bytes(stats.logical_bytes)],
+    ['Usenet volume', bytes(stats.usenet_bytes)],
+    ['Redundancy', stats.redundancy_overhead.toFixed(2) + '×'],
+    ['Local cache', bytes(stats.cache_bytes) + ' / ' + bytes(stats.cache_limit_bytes)],
+    ['Stripes', stats.stripes],
+    ['Articles', stats.shards],
+    ['Missing articles', stats.missing_shards],
+    ['Corrupt articles', stats.corrupt_shards],
+    ['Jobs pending', stats.jobs_pending],
+    ['Jobs failed', stats.jobs_failed],
+  ];
+  $('cards').innerHTML = cards.map(([k,v]) => `<div class="card"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`).join('');
+
+  $('providers').innerHTML = (stats.providers||[]).map(p => `<tr>
+    <td>${esc(p.name)}</td><td>${p.posts}</td><td class="${p.post_failures?'bad':''}">${p.post_failures}</td>
+    <td>${p.fetches}</td><td class="${p.fetch_failures?'bad':''}">${p.fetch_failures}</td>
+    <td>${bytes(p.bytes_posted)}</td><td>${bytes(p.bytes_fetched)}</td></tr>`).join('') ||
+    '<tr><td colspan="7" class="muted">No providers configured.</td></tr>';
+
+  $('jobs').innerHTML = (jobs.jobs||[]).slice(0,50).map(j => `<tr>
+    <td>${esc(j.kind)}</td><td><span class="pill">${esc(j.state)}</span></td>
+    <td>${j.attempts}/${j.max_attempts}</td><td class="${j.last_error?'bad':'muted'}">${esc(j.last_error||'—')}</td>
+    <td>${when(j.updated_at)}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">Queue is empty.</td></tr>';
+
+  $('users').innerHTML = (users.users||[]).map(u => `<tr>
+    <td>${esc(u.email)}</td><td>${u.is_admin?'admin':'user'}</td><td>${u.devices}</td>
+    <td>${bytes(u.used_bytes)}</td><td>${u.quota_bytes==null?'unlimited':bytes(u.quota_bytes)}</td>
+    <td>${u.disabled?'<span class="bad">disabled</span>':'<span class="ok">active</span>'}</td>
+    <td><button class="secondary" data-user="${u.id}" data-disable="${u.disabled?0:1}">${u.disabled?'Enable':'Disable'}</button></td>
+    </tr>`).join('');
+
+  $('users').querySelectorAll('button[data-user]').forEach(b => b.onclick = async () => {
+    await api('/admin/users/' + b.dataset.user, { method:'PATCH', body: JSON.stringify({ disabled: b.dataset.disable === '1' })});
+    load();
+  });
+}
+
+$('signin').onclick = async () => {
+  token = $('token').value.trim();
+  if (!token) return;
+  sessionStorage.setItem('nntdrive_admin_token', token);
+  try { await load(); $('who').textContent = 'admin'; }
+  catch (e) { showLogin(e.message); }
+};
+$('logout').onclick = () => { sessionStorage.removeItem('nntdrive_admin_token'); token=''; showLogin(); };
+$('refresh').onclick = () => load().catch(e => alert(e.message));
+
+$('addprovider').onclick = async () => {
+  try {
+    const body = {
+      name: $('p_name').value, host: $('p_host').value, port: Number($('p_port').value),
+      tls: true, username: $('p_user').value || null, password: $('p_pass').value || null,
+      max_connections: Number($('p_conn').value), groups: $('p_groups').value.split(',').map(s=>s.trim()).filter(Boolean),
+      role: $('p_role').value, priority: Number($('p_priority').value)
+    };
+    await api('/admin/providers', { method:'POST', body: JSON.stringify(body) });
+    $('pmsg').textContent = 'Saved. Restart the backend to apply.';
+    $('p_pass').value = '';
+  } catch (e) { $('pmsg').textContent = e.message; }
+};
+
+document.querySelectorAll('button[data-job]').forEach(b => b.onclick = async () => {
+  try { await api('/admin/jobs', { method:'POST', body: JSON.stringify({ kind: b.dataset.job, payload: {} })}); $('jobmsg').textContent = 'Job queued.'; load(); }
+  catch (e) { $('jobmsg').textContent = e.message; }
+});
+
+if (token) load().catch(e => showLogin(e.message)); else showLogin();
+setInterval(() => { if (token && !$('app').hidden) load().catch(()=>{}); }, 20000);
+</script>
+</body>
+</html>

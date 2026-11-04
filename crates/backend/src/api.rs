@@ -1,0 +1,692 @@
+//! File namespace, ciphertext chunk upload, article proxy and sync events.
+
+use crate::auth::Auth;
+use crate::error::{b64, sha256, unb64, ApiError, ApiResult};
+use crate::state::AppState;
+use axum::extract::{Path, Query, State};
+use axum::http::{header, StatusCode};
+use axum::response::{sse::Event, IntoResponse, Sse};
+use axum::Json;
+use chrono::{DateTime, Utc};
+use serde::Deserialize;
+use serde_json::{json, Value};
+use sqlx::Row;
+use std::convert::Infallible;
+use std::time::Duration;
+use uuid::Uuid;
+
+#[derive(Deserialize)]
+pub struct ListQuery {
+    pub parent_id: Option<Uuid>,
+}
+
+pub async fn list_files(
+    State(state): State<AppState>,
+    auth: Auth,
+    Query(q): Query<ListQuery>,
+) -> ApiResult<impl IntoResponse> {
+    let rows = sqlx::query(
+        "SELECT id, parent_id, name_enc, is_dir, size, favorite, revision, current_version,
+                created_at, updated_at, deleted
+         FROM files
+         WHERE account_id = $1 AND deleted = FALSE
+           AND (($2::uuid IS NULL AND parent_id IS NULL) OR parent_id = $2)
+         ORDER BY is_dir DESC, name_enc",
+    )
+    .bind(auth.account_id)
+    .bind(q.parent_id)
+    .fetch_all(&state.pool)
+    .await?;
+    let files: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            json!({
+                "id": r.get::<Uuid, _>("id"),
+                "parent_id": r.get::<Option<Uuid>, _>("parent_id"),
+                "name_enc": b64(&r.get::<Vec<u8>, _>("name_enc")),
+                "is_dir": r.get::<bool, _>("is_dir"),
+                "size": r.get::<i64, _>("size"),
+                "favorite": r.get::<bool, _>("favorite"),
+                "revision": r.get::<i64, _>("revision"),
+                "current_version": r.get::<Option<Uuid>, _>("current_version"),
+                "created_at": r.get::<DateTime<Utc>, _>("created_at"),
+                "updated_at": r.get::<DateTime<Utc>, _>("updated_at"),
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "files": files })))
+}
+
+#[derive(Deserialize)]
+pub struct CreateFile {
+    pub id: Uuid,
+    pub parent_id: Option<Uuid>,
+    pub name_enc: String,
+    #[serde(default)]
+    pub is_dir: bool,
+}
+
+pub async fn create_file(
+    State(state): State<AppState>,
+    auth: Auth,
+    Json(body): Json<CreateFile>,
+) -> ApiResult<impl IntoResponse> {
+    let name_enc = unb64(&body.name_enc)?;
+    if name_enc.is_empty() || name_enc.len() > 8192 {
+        return Err(ApiError::BadRequest(
+            "name_enc must be 1..8192 bytes".into(),
+        ));
+    }
+    let mut tx = state.pool.begin().await?;
+    if let Some(parent) = body.parent_id {
+        let exists: Option<bool> = sqlx::query_scalar(
+            "SELECT is_dir FROM files WHERE account_id = $1 AND id = $2 AND deleted = FALSE",
+        )
+        .bind(auth.account_id)
+        .bind(parent)
+        .fetch_optional(&mut *tx)
+        .await?;
+        match exists {
+            Some(true) => {}
+            Some(false) => return Err(ApiError::BadRequest("parent is not a folder".into())),
+            None => return Err(ApiError::NotFound),
+        }
+    }
+    sqlx::query(
+        "INSERT INTO files (id, account_id, parent_id, name_enc, is_dir)
+         VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(body.id)
+    .bind(auth.account_id)
+    .bind(body.parent_id)
+    .bind(&name_enc)
+    .bind(body.is_dir)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| match e.as_database_error() {
+        Some(db) if db.is_unique_violation() => ApiError::Conflict("file id already exists".into()),
+        _ => ApiError::Db(e),
+    })?;
+    append_event(
+        &mut tx,
+        auth.account_id,
+        auth.device_id,
+        body.id,
+        None,
+        "create",
+        json!({ "is_dir": body.is_dir }),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok((StatusCode::CREATED, Json(json!({ "id": body.id }))))
+}
+
+#[derive(Deserialize)]
+pub struct MoveFile {
+    pub parent_id: Option<Uuid>,
+}
+
+pub async fn move_file(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+    Json(body): Json<MoveFile>,
+) -> ApiResult<impl IntoResponse> {
+    ensure_file(&state, auth.account_id, id).await?;
+    if let Some(parent) = body.parent_id {
+        if parent == id {
+            return Err(ApiError::BadRequest(
+                "a folder cannot contain itself".into(),
+            ));
+        }
+        let is_dir: Option<bool> = sqlx::query_scalar(
+            "SELECT is_dir FROM files WHERE account_id = $1 AND id = $2 AND deleted = FALSE",
+        )
+        .bind(auth.account_id)
+        .bind(parent)
+        .fetch_optional(&state.pool)
+        .await?;
+        if is_dir != Some(true) {
+            return Err(ApiError::BadRequest("parent is not a folder".into()));
+        }
+        // Reject cycles using a recursive ancestor walk.
+        let cycle: Option<i32> = sqlx::query_scalar(
+            "WITH RECURSIVE ancestors AS (
+                 SELECT id, parent_id FROM files WHERE account_id = $1 AND id = $2
+                 UNION ALL
+                 SELECT f.id, f.parent_id FROM files f
+                 JOIN ancestors a ON f.id = a.parent_id
+                 WHERE f.account_id = $1
+             )
+             SELECT 1 FROM ancestors WHERE id = $3 LIMIT 1",
+        )
+        .bind(auth.account_id)
+        .bind(parent)
+        .bind(id)
+        .fetch_optional(&state.pool)
+        .await?;
+        if cycle.is_some() {
+            return Err(ApiError::BadRequest("move would create a cycle".into()));
+        }
+    }
+    let mut tx = state.pool.begin().await?;
+    sqlx::query(
+        "UPDATE files SET parent_id = $3, updated_at = now(), revision = revision + 1
+         WHERE account_id = $1 AND id = $2",
+    )
+    .bind(auth.account_id)
+    .bind(id)
+    .bind(body.parent_id)
+    .execute(&mut *tx)
+    .await?;
+    append_event(
+        &mut tx,
+        auth.account_id,
+        auth.device_id,
+        id,
+        None,
+        "move",
+        json!({}),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(Json(json!({ "status": "moved" })))
+}
+
+#[derive(Deserialize)]
+pub struct PatchFile {
+    pub name_enc: Option<String>,
+    pub favorite: Option<bool>,
+    pub deleted: Option<bool>,
+}
+
+pub async fn patch_file(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+    Json(body): Json<PatchFile>,
+) -> ApiResult<impl IntoResponse> {
+    ensure_file(&state, auth.account_id, id).await?;
+    let name_enc = match &body.name_enc {
+        Some(s) => {
+            let v = unb64(s)?;
+            if v.is_empty() || v.len() > 8192 {
+                return Err(ApiError::BadRequest("invalid name".into()));
+            }
+            Some(v)
+        }
+        None => None,
+    };
+    let mut tx = state.pool.begin().await?;
+    if let Some(name) = &name_enc {
+        sqlx::query(
+            "UPDATE files SET name_enc = $3, updated_at = now(), revision = revision + 1
+             WHERE account_id = $1 AND id = $2",
+        )
+        .bind(auth.account_id)
+        .bind(id)
+        .bind(name)
+        .execute(&mut *tx)
+        .await?;
+    }
+    if let Some(fav) = body.favorite {
+        sqlx::query(
+            "UPDATE files SET favorite = $3, updated_at = now() WHERE account_id = $1 AND id = $2",
+        )
+        .bind(auth.account_id)
+        .bind(id)
+        .bind(fav)
+        .execute(&mut *tx)
+        .await?;
+    }
+    if body.deleted == Some(true) {
+        sqlx::query(
+            "UPDATE files SET deleted = TRUE, updated_at = now(), revision = revision + 1
+             WHERE account_id = $1 AND id = $2",
+        )
+        .bind(auth.account_id)
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+        append_event(
+            &mut tx,
+            auth.account_id,
+            auth.device_id,
+            id,
+            None,
+            "delete",
+            json!({}),
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(Json(json!({ "status": "updated" })))
+}
+
+#[derive(Deserialize)]
+pub struct CommitVersion {
+    pub revision_id: Uuid,
+    pub parent_revision: Option<Uuid>,
+    pub base_revision: Option<Uuid>,
+    pub size: i64,
+    pub sealed_manifest: String,
+}
+
+pub async fn commit_version(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+    Json(body): Json<CommitVersion>,
+) -> ApiResult<impl IntoResponse> {
+    let file = load_file(&state, auth.account_id, id).await?;
+    if file.0 {
+        return Err(ApiError::BadRequest(
+            "cannot store content for a folder".into(),
+        ));
+    }
+    if body.size < 0 || body.size > 1 << 44 {
+        return Err(ApiError::BadRequest("invalid size".into()));
+    }
+    if body.base_revision != file.1 && body.base_revision.is_some() {
+        return Err(ApiError::Conflict(
+            "file changed since the edit started".into(),
+        ));
+    }
+    let sealed = unb64(&body.sealed_manifest)?;
+    if sealed.is_empty() || sealed.len() > 16 * 1024 * 1024 {
+        return Err(ApiError::BadRequest("invalid sealed manifest size".into()));
+    }
+    if sealed[0] != 1 {
+        return Err(ApiError::BadRequest(
+            "unsupported manifest envelope version".into(),
+        ));
+    }
+    // Minimal structural envelope check; content remains opaque.
+    if sealed.len() < 42 {
+        return Err(ApiError::BadRequest("truncated sealed manifest".into()));
+    }
+    state
+        .check_quota(auth.account_id, body.size.max(0) as u64)
+        .await?;
+    let manifest = nntdrive_storage::FileManifest {
+        version: nntdrive_storage::MANIFEST_VERSION,
+        file_id: id,
+        revision_id: body.revision_id,
+        size: body.size as u64,
+        content_hash: String::new(),
+        created_at: Utc::now(),
+        chunks: Vec::new(),
+    };
+    // `insert_version` in the store only consumes identity, size and timestamp
+    // from this value; the authoritative data is the sealed manifest.
+    state
+        .store
+        .insert_version(
+            auth.account_id,
+            id,
+            &manifest,
+            &sealed,
+            auth.device_id,
+            body.parent_revision,
+        )
+        .await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({ "revision_id": body.revision_id })),
+    ))
+}
+
+pub async fn list_versions(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+) -> ApiResult<impl IntoResponse> {
+    ensure_file(&state, auth.account_id, id).await?;
+    let rows = sqlx::query(
+        "SELECT revision_id, parent_revision, size, created_at, deleted
+         FROM file_versions WHERE account_id = $1 AND file_id = $2
+         ORDER BY created_at DESC LIMIT 200",
+    )
+    .bind(auth.account_id)
+    .bind(id)
+    .fetch_all(&state.pool)
+    .await?;
+    let versions: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            json!({
+                "revision_id": r.get::<Uuid, _>("revision_id"),
+                "parent_revision": r.get::<Option<Uuid>, _>("parent_revision"),
+                "size": r.get::<i64, _>("size"),
+                "created_at": r.get::<DateTime<Utc>, _>("created_at"),
+                "deleted": r.get::<bool, _>("deleted"),
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "versions": versions })))
+}
+
+#[derive(Deserialize)]
+pub struct RevisionQuery {
+    pub revision: Option<Uuid>,
+}
+
+pub async fn get_manifest(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+    Query(q): Query<RevisionQuery>,
+) -> ApiResult<impl IntoResponse> {
+    ensure_file(&state, auth.account_id, id).await?;
+    let version = state.store.version(auth.account_id, id, q.revision).await?;
+    let mut resp = (StatusCode::OK, version.manifest).into_response();
+    resp.headers_mut().insert(
+        "x-nntdrive-revision",
+        version.revision_id.to_string().parse().unwrap(),
+    );
+    Ok(resp)
+}
+
+#[derive(Deserialize)]
+pub struct ChunkLookup {
+    pub hash: String,
+    pub len: u64,
+}
+
+pub async fn lookup_chunk(
+    State(state): State<AppState>,
+    auth: Auth,
+    Query(q): Query<ChunkLookup>,
+) -> ApiResult<impl IntoResponse> {
+    let hash =
+        hex_decode(&q.hash).ok_or_else(|| ApiError::BadRequest("hash must be hex".into()))?;
+    if hash.len() != 32 {
+        return Err(ApiError::BadRequest("hash must be 32 bytes".into()));
+    }
+    match state
+        .store
+        .find_chunk(auth.account_id, &hash, q.len)
+        .await?
+    {
+        Some(chunk) => {
+            let entry = state
+                .store
+                .chunk_entry(auth.account_id, &chunk, 0, 0)
+                .await?;
+            Ok((StatusCode::OK, Json(json!({ "chunk": entry }))).into_response())
+        }
+        None => Ok((StatusCode::NOT_FOUND, Json(json!({ "error": "not_found" }))).into_response()),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct PublishChunk {
+    pub chunk_id: Uuid,
+    pub index: u32,
+    pub offset: u64,
+    pub plaintext_hash: String,
+    pub plaintext_len: u64,
+    pub compression: u8,
+    pub ciphertext: String,
+}
+
+/// Accepts one client-encrypted chunk. The backend erasure-codes and posts the
+/// ciphertext; it has no key and no plaintext.
+pub async fn publish_chunk(
+    State(state): State<AppState>,
+    auth: Auth,
+    Json(body): Json<PublishChunk>,
+) -> ApiResult<impl IntoResponse> {
+    let hash = hex_decode(&body.plaintext_hash)
+        .ok_or_else(|| ApiError::BadRequest("plaintext_hash must be hex".into()))?;
+    if hash.len() != 32 {
+        return Err(ApiError::BadRequest(
+            "plaintext_hash must be 32 bytes".into(),
+        ));
+    }
+    if body.plaintext_len == 0 || body.plaintext_len > 64 * 1024 * 1024 {
+        return Err(ApiError::BadRequest("invalid chunk length".into()));
+    }
+    let ciphertext = unb64(&body.ciphertext)?;
+    if ciphertext.is_empty() || ciphertext.len() > 96 * 1024 * 1024 {
+        return Err(ApiError::BadRequest("invalid ciphertext".into()));
+    }
+    if nntdrive_storage::Compression::from_u8(body.compression).is_none() {
+        return Err(ApiError::BadRequest("unknown compression codec".into()));
+    }
+    state
+        .check_quota(auth.account_id, body.plaintext_len)
+        .await?;
+    let prepared = nntdrive_storage::PreparedChunk {
+        id: body.chunk_id,
+        index: body.index,
+        offset: body.offset,
+        plaintext_len: body.plaintext_len,
+        plaintext_hash: hash,
+        ciphertext_len: ciphertext.len() as u64,
+        compression: nntdrive_storage::Compression::from_u8(body.compression).unwrap(),
+        ciphertext,
+    };
+    let (entry, stats) = state
+        .storage
+        .publish_prepared(auth.account_id, &prepared)
+        .await?;
+    Ok(Json(json!({ "chunk": entry, "stats": stats })))
+}
+
+pub async fn get_article(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(message_id): Path<String>,
+) -> ApiResult<impl IntoResponse> {
+    if message_id.len() > 512 {
+        return Err(ApiError::BadRequest("invalid message id".into()));
+    }
+    // Authorization is resolved from the database before touching the cache or
+    // network, so one tenant can never read another tenant's article.
+    let shard = state
+        .store
+        .find_article(auth.account_id, &message_id)
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    let data = if let Some(cached) = state.cache.get(&message_id).await {
+        cached
+    } else {
+        let fetched = state.storage.nntp().fetch(&message_id).await?;
+        if hex(&sha256(&fetched)) != shard.sha256 {
+            return Err(ApiError::Storage(
+                nntdrive_storage::StorageError::Integrity(
+                    "article hash does not match metadata".into(),
+                ),
+            ));
+        }
+        let _ = state.cache.put(&message_id, &fetched).await;
+        fetched
+    };
+    let mut resp = (StatusCode::OK, data).into_response();
+    resp.headers_mut().insert(
+        header::CONTENT_TYPE,
+        "application/octet-stream".parse().unwrap(),
+    );
+    resp.headers_mut().insert(
+        header::CACHE_CONTROL,
+        "private, max-age=31536000, immutable".parse().unwrap(),
+    );
+    Ok(resp)
+}
+
+#[derive(Deserialize)]
+pub struct SinceQuery {
+    #[serde(default)]
+    pub since: i64,
+}
+
+pub async fn list_events(
+    State(state): State<AppState>,
+    auth: Auth,
+    Query(q): Query<SinceQuery>,
+) -> ApiResult<impl IntoResponse> {
+    let events = fetch_events(&state, auth.account_id, q.since, 500).await?;
+    Ok(Json(json!({ "events": events })))
+}
+
+pub async fn stream_events(
+    State(state): State<AppState>,
+    auth: Auth,
+    Query(q): Query<SinceQuery>,
+) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
+    let stream = async_stream::stream! {
+        let mut last = q.since;
+        let mut idle = 0u32;
+        loop {
+            match fetch_events(&state, auth.account_id, last, 200).await {
+                Ok(events) => {
+                    for e in events {
+                        if let Some(seq) = e.get("seq").and_then(|s| s.as_i64()) {
+                            last = last.max(seq);
+                        }
+                        yield Ok(Event::default().event("change").data(e.to_string()));
+                        idle = 0;
+                    }
+                }
+                Err(e) => {
+                    yield Ok(Event::default().event("error").data(
+                        json!({"error": e.to_string()}).to_string()
+                    ));
+                    return;
+                }
+            }
+            idle += 1;
+            if idle % 15 == 0 {
+                yield Ok(Event::default().comment("keepalive"));
+            }
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+    };
+    Sse::new(stream).keep_alive(axum::response::sse::KeepAlive::default())
+}
+
+async fn fetch_events(
+    state: &AppState,
+    account_id: Uuid,
+    since: i64,
+    limit: i64,
+) -> ApiResult<Vec<Value>> {
+    let rows = sqlx::query(
+        "SELECT seq, file_id, revision_id, kind, device_id, payload, created_at
+         FROM sync_events WHERE account_id = $1 AND seq > $2
+         ORDER BY seq LIMIT $3",
+    )
+    .bind(account_id)
+    .bind(since)
+    .bind(limit)
+    .fetch_all(&state.pool)
+    .await?;
+    Ok(rows
+        .iter()
+        .map(|r| {
+            json!({
+                "seq": r.get::<i64, _>("seq"),
+                "file_id": r.get::<Option<Uuid>, _>("file_id"),
+                "revision_id": r.get::<Option<Uuid>, _>("revision_id"),
+                "device_id": r.get::<Option<Uuid>, _>("device_id"),
+                "kind": r.get::<String, _>("kind"),
+                "payload": r.get::<Value, _>("payload"),
+                "created_at": r.get::<DateTime<Utc>, _>("created_at"),
+            })
+        })
+        .collect())
+}
+
+async fn append_event(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    account_id: Uuid,
+    device_id: Option<Uuid>,
+    file_id: Uuid,
+    revision_id: Option<Uuid>,
+    kind: &str,
+    payload: Value,
+) -> ApiResult<()> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+        .bind(account_id.to_string())
+        .execute(&mut **tx)
+        .await?;
+    let seq: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(seq), 0) + 1 FROM sync_events WHERE account_id = $1",
+    )
+    .bind(account_id)
+    .fetch_one(&mut **tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO sync_events (account_id, seq, device_id, file_id, revision_id, kind, payload)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
+    )
+    .bind(account_id)
+    .bind(seq)
+    .bind(device_id)
+    .bind(file_id)
+    .bind(revision_id)
+    .bind(kind)
+    .bind(payload)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+async fn ensure_file(state: &AppState, account_id: Uuid, id: Uuid) -> ApiResult<()> {
+    let exists: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM files WHERE account_id = $1 AND id = $2 AND deleted = FALSE",
+    )
+    .bind(account_id)
+    .bind(id)
+    .fetch_optional(&state.pool)
+    .await?;
+    exists.map(|_| ()).ok_or(ApiError::NotFound)
+}
+
+async fn load_file(
+    state: &AppState,
+    account_id: Uuid,
+    id: Uuid,
+) -> ApiResult<(bool, Option<Uuid>)> {
+    let row = sqlx::query(
+        "SELECT is_dir, current_version FROM files WHERE account_id = $1 AND id = $2 AND deleted = FALSE",
+    )
+    .bind(account_id)
+    .bind(id)
+    .fetch_optional(&state.pool)
+    .await?
+    .ok_or(ApiError::NotFound)?;
+    Ok((row.get("is_dir"), row.get("current_version")))
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn hex_decode(s: &str) -> Option<Vec<u8>> {
+    if s.len() % 2 != 0 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(s.len() / 2);
+    let bytes = s.as_bytes();
+    for pair in bytes.chunks(2) {
+        let hi = (pair[0] as char).to_digit(16)?;
+        let lo = (pair[1] as char).to_digit(16)?;
+        out.push(((hi << 4) | lo) as u8);
+    }
+    Some(out)
+}
+
+pub async fn health(State(state): State<AppState>) -> impl IntoResponse {
+    match sqlx::query_scalar::<_, i32>("SELECT 1")
+        .fetch_one(&state.pool)
+        .await
+    {
+        Ok(_) => (StatusCode::OK, Json(json!({ "status": "ok" }))),
+        Err(_) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "status": "degraded" })),
+        ),
+    }
+}

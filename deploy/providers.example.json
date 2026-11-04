@@ -1,0 +1,17 @@
+{
+  "name": "eweka",
+  "host": "news.eweka.nl",
+  "port": 563,
+  "tls": true,
+  "username": "REPLACE_WITH_EWEKA_USERNAME",
+  "password": "REPLACE_WITH_EWEKA_PASSWORD",
+  "max_connections": 8,
+  "role": "both",
+  "priority": 0,
+  "groups": ["alt.binaries.nntdrive"],
+  "message_id_domain": "nntdrive.local",
+  "connect_timeout_secs": 30,
+  "io_timeout_secs": 60,
+  "retention_days": null,
+  "max_retries": 3
+}

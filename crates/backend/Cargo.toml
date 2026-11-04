@@ -1,0 +1,41 @@
+[package]
+name = "nntdrive-backend"
+description = "NNTDrive self-hosted backend (Axum + PostgreSQL + Usenet)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "nntdrive-backend"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-stream = { version = "0.1", features = ["sync"] }
+async-stream = "0.2"
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+rand.workspace = true
+base64.workspace = true
+sha2 = "0.10"
+axum = { version = "0.8", features = ["macros"] }
+tower-http = { version = "0.6", features = ["trace", "limit", "timeout"] }
+chacha20poly1305 = { version = "0.10", features = ["std"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "migrate"] }
+nntdrive-crypto = { path = "../crypto" }
+nntdrive-nntp = { path = "../nntp" }
+nntdrive-storage = { path = "../storage" }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full", "test-util"] }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+tempfile = "3"
+blake3.workspace = true

@@ -1,0 +1,33 @@
+# Rust
+/target
+**/target
+*.rs.bk
+
+# Local runtime data and secrets - never commit
+/.env
+/data
+/cache
+*.key
+*.nntdrive-kit
+recovery-kit-*.json
+*.db
+*.sqlite3
+crash.log
+
+# Flutter / Dart
+clients/flutter/.dart_tool/
+clients/flutter/build/
+clients/flutter/.flutter-plugins*
+clients/flutter/.packages
+clients/flutter/pubspec.lock
+clients/flutter/ios/Pods/
+clients/flutter/android/.gradle/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+deploy/.env
+*.recovery.json
+*.nntdrive-part

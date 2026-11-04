@@ -1,0 +1,12 @@
+target
+**/target
+.git
+.github
+clients
+docs
+backups
+data
+cache
+*.keyfile.json
+*.recovery.json
+deploy/.env

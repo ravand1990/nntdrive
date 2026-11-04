@@ -1,0 +1,22 @@
+[package]
+name = "nntdrive-nntp"
+description = "NNTP (TLS) client with pooling, yEnc, NZB and a fault-injecting mock server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+tokio.workspace = true
+tokio-rustls = "0.26"
+rustls = "0.23"
+webpki-roots = "1"
+quick-xml = "0.37"
+crc32fast = "1"
+thiserror.workspace = true
+tracing.workspace = true
+rand.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
