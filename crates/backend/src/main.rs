@@ -51,12 +51,24 @@ async fn main() -> anyhow::Result<()> {
     let router = app((*state).clone());
     let listener = tokio::net::TcpListener::bind(bind).await?;
     tracing::info!(%bind, "NNTDrive backend listening");
+    let restart = state.restart.clone();
+    let shutdown = async move {
+        tokio::select! {
+            _ = shutdown_signal() => {},
+            _ = restart.notified() => {
+                tracing::warn!("restart requested via admin API; stopping");
+            }
+        }
+    };
     axum::serve(
         listener,
         router.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(shutdown_signal())
+    .with_graceful_shutdown(shutdown)
     .await?;
+    // Returning normally lets Docker (`restart: unless-stopped`) or systemd
+    // (`Restart=always`) start the process again with the new provider config.
+    tracing::info!("backend stopped");
     Ok(())
 }
 

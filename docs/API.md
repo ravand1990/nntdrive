@@ -90,6 +90,7 @@ Requires `accounts.is_admin`.
 | GET/POST | `/admin/providers` | list (no passwords) / add (applies on restart) |
 | DELETE | `/admin/providers/{id}` | remove (applies on restart) |
 | GET/POST | `/admin/jobs` | list / enqueue `{kind,payload}` |
+| POST | `/admin/restart` | gracefully stop the backend so Compose/systemd restarts it (applies provider changes) |
 
 The embedded dashboard is `GET /admin`.
 

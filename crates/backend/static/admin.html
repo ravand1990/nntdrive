@@ -99,8 +99,9 @@
     <div class="row">
       <button class="secondary" data-job="health_sweep">Run health sweep</button>
       <button class="secondary" data-job="refresh_sweep">Run retention refresh</button>
+      <button class="secondary danger" id="restart">Restart backend</button>
     </div>
-    <p id="jobmsg" class="muted"></p>
+    <p id="jobmsg" class="muted">Restarting applies new provider settings. Active transfers will be interrupted.</p>
   </section>
 </main>
 
@@ -195,7 +196,7 @@ $('addprovider').onclick = async () => {
       role: $('p_role').value, priority: Number($('p_priority').value)
     };
     await api('/admin/providers', { method:'POST', body: JSON.stringify(body) });
-    $('pmsg').textContent = 'Saved. Restart the backend to apply.';
+    $('pmsg').textContent = 'Saved. Use "Restart backend" in Maintenance to apply it.';
     $('p_pass').value = '';
   } catch (e) { $('pmsg').textContent = e.message; }
 };
@@ -204,6 +205,33 @@ document.querySelectorAll('button[data-job]').forEach(b => b.onclick = async () 
   try { await api('/admin/jobs', { method:'POST', body: JSON.stringify({ kind: b.dataset.job, payload: {} })}); $('jobmsg').textContent = 'Job queued.'; load(); }
   catch (e) { $('jobmsg').textContent = e.message; }
 });
+
+$('restart').onclick = async () => {
+  if (!confirm('Restart the backend now? Active uploads/downloads will be interrupted.')) return;
+  const btn = $('restart');
+  btn.disabled = true;
+  try {
+    await api('/admin/restart', { method: 'POST' });
+    $('jobmsg').textContent = 'Restarting… waiting for the backend to come back.';
+    const started = Date.now();
+    while (Date.now() - started < 90000) {
+      await new Promise(r => setTimeout(r, 2000));
+      try {
+        const res = await fetch('/healthz', { cache: 'no-store' });
+        if (res.ok) {
+          $('jobmsg').textContent = 'Backend restarted successfully.';
+          await load();
+          btn.disabled = false;
+          return;
+        }
+      } catch (_) { /* still restarting */ }
+    }
+    $('jobmsg').textContent = 'Backend did not respond within 90s. Check container logs.';
+  } catch (e) {
+    $('jobmsg').textContent = 'Restart failed: ' + e.message;
+  }
+  btn.disabled = false;
+};
 
 if (token) load().catch(e => showLogin(e.message)); else showLogin();
 setInterval(() => { if (token && !$('app').hidden) load().catch(()=>{}); }, 20000);

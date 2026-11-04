@@ -329,3 +329,22 @@ pub async fn list_jobs(
         })).collect::<Vec<_>>()
     })))
 }
+
+/// Gracefully stops the backend so the container manager restarts it. Used to
+/// apply provider configuration changes without shell access. The response is
+/// sent first; the process shuts down ~400 ms later.
+pub async fn restart_backend(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+) -> ApiResult<impl IntoResponse> {
+    let notify = state.restart.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        tracing::warn!("admin requested backend restart");
+        notify.notify_waiters();
+    });
+    Ok(Json(json!({
+        "status": "restarting",
+        "message": "backend is restarting; retry in a few seconds"
+    })))
+}

@@ -74,8 +74,14 @@ cp deploy/providers.example.json /tmp/providers.json
 ```
 
 Or add a provider in the admin dashboard. New providers are stored (password
-encrypted) and applied on the next restart. Test posting with a small demo/upload
-before trusting the provider with important data.
+encrypted) and applied on the next restart. The dashboard has a **Restart
+backend** button in Maintenance; it shuts the process down gracefully and waits
+for the container manager to start it again (Compose `restart: unless-stopped`,
+systemd `Restart=always`). Active transfers are interrupted during the restart.
+If you run the binary by hand, restart it yourself after changing providers.
+
+Test posting with a small demo/upload before trusting the provider with important
+data.
 
 Eweka: use `news.eweka.nl:563` with TLS. Posting must be enabled on the plan.
 Retention and posting limits are contractual and can change; NNTDrive does not

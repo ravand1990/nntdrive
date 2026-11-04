@@ -95,6 +95,9 @@ pub struct AppState {
     pub config: Arc<ServerConfig>,
     pub cache: Arc<ArticleCache>,
     pub limiter: Arc<RateLimiter>,
+    /// Notified by the admin restart endpoint; the server then shuts down
+    /// gracefully and the container manager (Compose/systemd) starts it again.
+    pub restart: Arc<tokio::sync::Notify>,
 }
 
 impl AppState {
@@ -112,6 +115,7 @@ impl AppState {
             limiter: Arc::new(RateLimiter::new(20, Duration::from_secs(60))),
             config: Arc::new(config),
             cache,
+            restart: Arc::new(tokio::sync::Notify::new()),
         })
     }
 

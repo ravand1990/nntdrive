@@ -150,6 +150,22 @@ async fn registration_login_and_admin_authorization() {
     .await;
     assert_eq!(s, StatusCode::OK);
 
+    // Admin-only restart trigger. In the test runtime nothing listens for the
+    // shutdown notification, so this only verifies routing and authorization.
+    let (s, body) = call(
+        &env.state,
+        req("POST", "/api/v1/admin/restart", Some(&first.token), None),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "restarting");
+    let (s, _) = call(
+        &env.state,
+        req("POST", "/api/v1/admin/restart", Some(&second.token), None),
+    )
+    .await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+
     let (_, me) = call(
         &env.state,
         req("GET", "/api/v1/me", Some(&first.token), None),
