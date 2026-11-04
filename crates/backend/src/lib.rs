@@ -54,6 +54,10 @@ pub fn app(state: state::AppState) -> Router {
         );
 
     Router::new()
+        .route(
+            "/",
+            get(|| async { axum::response::Redirect::temporary("/admin") }),
+        )
         .route("/healthz", get(api::health))
         .route(
             "/admin",
