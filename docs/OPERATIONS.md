@@ -92,6 +92,18 @@ docker compose ... exec backend nntdrive --database-url "$DATABASE_URL" \
   token-create --account <uuid> --label admin
 ```
 
+For an account that already exists (for example one created in the app), mint an
+administrator token with one command:
+
+```bash
+scripts/mint-admin-token.sh you@example.com admin
+```
+
+It promotes the account to administrator, finds its UUID, and prints a token
+once. Use `NNTDRIVE_PROD=1 scripts/mint-admin-token.sh ...` when the production
+Compose file is running without the dev override. The token is stored hashed and
+expires after 90 days; revoke it by setting `api_tokens.revoked_at`.
+
 Open `/admin`, paste the token. The dashboard shows users, devices, storage,
 Usenet volume, redundancy overhead, cache usage, article health, jobs, provider
 counters and recent failures. It can disable users, set quotas, add providers and
