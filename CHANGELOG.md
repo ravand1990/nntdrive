@@ -16,6 +16,7 @@ release workflow refuses to publish if the entry is missing.
 ### Bug fixes
 
 - Sync folder removal now also deletes the remote-hash cache.
+- Excluding a folder that was already synced keeps its baseline history, so re-enabling it does not create conflicts or duplicate uploads.
 
 ## [0.1.0] - 2026-11-04
 

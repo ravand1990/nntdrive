@@ -308,23 +308,32 @@ async fn excluded_paths_are_skipped_in_both_directions() {
     std::fs::write(dir_a.path().join("keep/a.txt"), b"a").unwrap();
     std::fs::write(dir_a.path().join("skip/local.txt"), b"local").unwrap();
 
-    let report = sync_excluded(&s, root, dir_a.path(), &ja, "a", vec!["skip".into()]).await;
-    assert_eq!(report.uploaded, 1, "{report:?}");
-    assert!(dir_a.path().join("skip/local.txt").exists());
+    // Full first sync, so `skip/` has baseline entries before it is excluded.
+    let report = sync(&s, root, dir_a.path(), &ja, "a").await;
+    assert_eq!(report.uploaded, 2, "{report:?}");
+    let report = sync(&s, root, dir_b.path(), &jb, "b").await;
+    assert_eq!(report.downloaded, 2, "{report:?}");
 
-    std::fs::create_dir_all(dir_b.path().join("skip")).unwrap();
+    // Excluding the folder must not delete anything, and a remote addition
+    // inside it must not be downloaded.
     std::fs::write(dir_b.path().join("skip/b.txt"), b"remote").unwrap();
     let report = sync(&s, root, dir_b.path(), &jb, "b").await;
     assert_eq!(report.uploaded, 1, "{report:?}");
-    assert!(dir_b.path().join("keep/a.txt").exists());
-
     let report = sync_excluded(&s, root, dir_a.path(), &ja, "a", vec!["skip".into()]).await;
     assert_eq!(report.downloaded, 0, "{report:?}");
     assert!(!dir_a.path().join("skip/b.txt").exists());
     assert!(dir_a.path().join("skip/local.txt").exists());
 
-    let report = sync(&s, root, dir_b.path(), &jb, "b").await;
-    assert!(!dir_b.path().join("skip/local.txt").exists(), "{report:?}");
+    // Re-enabling the folder resumes normally, with no conflict copies.
+    let report = sync(&s, root, dir_a.path(), &ja, "a").await;
+    assert_eq!(report.conflicts, 0, "{report:?}");
+    assert_eq!(report.downloaded, 1, "{report:?}");
+    assert_eq!(
+        std::fs::read(dir_a.path().join("skip/b.txt")).unwrap(),
+        b"remote"
+    );
+    assert!(dir_a.path().join("skip/local.txt").exists());
+    assert!(!dir_a.path().join("skip/local.txt (conflict").exists());
 }
 
 fn b64(bytes: &[u8]) -> String {

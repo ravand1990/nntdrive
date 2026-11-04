@@ -203,7 +203,8 @@ iOS platform constraints:
   explicit keep-mine/keep-theirs/keep-both merge actions are still future work.
 - Selective sync is a per-folder exclusion list stored with the client config.
   Excluded folders are skipped while scanning local files and filtering the
-  remote snapshot; they are not deleted on either side.
+  remote snapshot; they are not deleted on either side, and their sync history
+  is kept so re-enabling them does not create conflicts.
 
 ## Environment limitations to document in the UI
 

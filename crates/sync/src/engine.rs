@@ -97,7 +97,11 @@ impl SyncEngine {
         journal: &Journal,
         now: &str,
     ) -> Result<SyncReport> {
-        let baseline = journal.load().await?;
+        let mut baseline = journal.load().await?;
+        // Excluded paths are ignored entirely, including their baseline entries:
+        // treating them as deleted would drop history and cause conflicts when
+        // they are re-enabled.
+        baseline.retain(|_, entry| !self.is_excluded(&entry.path));
         let previous: HashMap<String, scanner::ScannedEntry> = baseline
             .values()
             .filter(|b| !b.deleted)
