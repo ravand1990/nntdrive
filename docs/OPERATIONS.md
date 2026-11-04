@@ -45,7 +45,7 @@ is in front.
 Tagging `vX.Y.Z` runs `.github/workflows/release.yml`:
 
 1. runs formatting, clippy, 82 Rust tests and the storage demo;
-2. builds `linux/amd64` and `linux/arm64` images with BuildKit;
+2. builds a `linux/amd64` image with BuildKit (arm64 can be added with native arm runners);
 3. pushes `X.Y.Z`, `X.Y`, `latest` and `sha-*` tags to GHCR with provenance/SBOM;
 4. creates a GitHub release and attaches the image-only Compose files.
 
