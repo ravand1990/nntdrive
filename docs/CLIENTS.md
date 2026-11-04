@@ -9,7 +9,7 @@
 | Android | Flutter + Rust FFI | ✅ release APK verified (arm64, armv7, x86_64 libs embedded) | ✅ works end-to-end |
 | iOS | Flutter | Not built (no macOS/Xcode in this environment) | Rust static lib needs an XCFramework; File Provider still missing |
 
-`flutter analyze` is clean, 4 Dart tests pass (including a test that loads the
+`flutter analyze` is clean, 3 Dart tests pass (including a test that loads the
 real Rust FFI library), and the Linux/Android clients were exercised through the
 exact Dart FFI layer against a running backend: register → create file → upload →
 download → decrypt → byte-for-byte verify.
@@ -184,3 +184,9 @@ iOS platform constraints:
   applications.
 - Background sync is best-effort on both mobile OSes. The app must tell the user
   when a sync is paused by the OS.
+
+Android note: `AndroidManifest.xml` currently sets `usesCleartextTraffic="true"` so
+the app can reach a local HTTP dev server (and the INTERNET permission is present
+in release builds). Remove that flag and use HTTPS for any real deployment.
+On a phone, `127.0.0.1` means the phone itself; enter the PC's LAN IP and allow
+the port through the host firewall.
