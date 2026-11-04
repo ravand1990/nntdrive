@@ -4,8 +4,10 @@ Last updated: 2026-11-04. This file is the handoff record for the next agent.
 
 ## Verified working
 
-Everything below is exercised by `cargo test --workspace --all-targets` (79 tests)
+Everything below is exercised by `cargo test --workspace --all-targets` (82 tests)
 against real PostgreSQL and an in-process NNTP server, plus the CLI demo.
+Additional live checks were run against a real Eweka account (upload, download,
+decrypt, verify) and through the Flutter FFI sync layer.
 
 | Area | Evidence |
 |---|---|
@@ -19,9 +21,13 @@ against real PostgreSQL and an in-process NNTP server, plus the CLI demo.
 | Two-device sync: create/modify/delete propagation, conflict copies, independent multiple roots | `crates/client/tests/sync_e2e.rs` (real API + mock NNTP) |
 | Dart ↔ Rust FFI sync: two local folders, upload/download/edit propagation against the live backend | `clients/flutter/tool/sync_smoke.dart` (verified) |
 | Dart ↔ Rust FFI: account generation, keyfile unlock, name seal/open with wrong-key rejection | `clients/flutter/test/native_test.dart` + `crates/ffi` tests |
+| First-run onboarding: setup status, first admin registration, one-time admin token, recovery code | backend tests + Flutter UI |
+| Provider test: DNS/TLS/auth probe without posting; admin restart; article verification via retrieval provider | `nntdrive-backend/tests/api.rs`, live Eweka |
+| Multi-folder UI: base + additional folders, 5-minute auto-sync, pause, manual sync, conflict copies | `clients/flutter/lib/sync_controller.dart`, `sync_page.dart`; FFI sync smoke |
+| Real Eweka round-trip: post via `post.eweka.nl:563`, retrieve via `news.eweka.nl:563`, decrypt, verify hash | 4 KB live upload; both articles STAT-verified |
 | Live deployment: dev Compose stack with mock NNTP; register/upload/download through the API | `crates/client/examples/smoke.rs` (verified) |
 | Docker image build, Compose stack, healthcheck, admin page, CLI bootstrap, admin API | ✅ verified locally (image built, stack started, `/healthz` 200, admin stats returned) |
-| Flutter client analyze/tests, Linux/Android/Windows release builds | ✅ clean analyze, Dart FFI test passes; Linux and Windows bundles run, Android APK (63 MB, debug-signed) embeds all ABIs |
+| Flutter client analyze/tests, Linux/Android/Windows release builds | ✅ clean analyze, Dart FFI tests pass; Linux/Windows bundles run, Android APK (~77 MB, debug-signed) embeds all ABIs |
 
 Run it yourself:
 
@@ -50,6 +56,43 @@ re-upload identical content: chunks_reused=1 new_articles=0
 whole-stripe loss correctly reported: data is unrecoverable: ...
 ```
 
+Live checks against a real Eweka account (not the mock):
+
+```
+uploaded revision ... (1 new chunks, 2 articles)   # 4 KB test file
+SMOKE_OK: upload, download, decrypt and verify succeeded
+admin/articles/verify: 2/2 retrievable via eweka   # STAT through news.eweka.nl
+```
+
+Dart FFI sync smoke against the live backend + Eweka:
+
+```
+A sync: uploaded=1
+B sync: downloaded=1
+B edit sync: uploaded=1
+A pull: downloaded=1
+SYNC_FFI_SMOKE_OK
+```
+
+Eweka provider notes for the next agent: use `news.eweka.nl:563` (retrieval,
+`retrieval_only`) and `post.eweka.nl:563` (posting, `posting_only`) with the same
+credentials; posting must be enabled on the plan. The article `From` header must
+be a valid internet address and Rustls needs an explicitly installed crypto
+provider when both aws-lc-rs and ring are in the dependency graph.
+
+## Recent implementation milestones
+
+- Multi-folder sync integrated end-to-end: HTTP `Remote` adapter, per-folder
+  SQLite journals, base + additional folders, automatic 5-minute runs, pause,
+  manual sync, conflict copies, directory sync actions.
+- First-run onboarding in the app: setup detection, first administrator, recovery
+  code and one-time admin token; CLI `bootstrap` command and script.
+- Admin dashboard: added provider test, recent-article verification, one-click
+  graceful restart.
+- Real Eweka upload/download fixed: host/port/TLS validation, posting host split,
+  valid From header, Rustls provider selection.
+- Flutter Windows release build and Android/Linux release artifacts verified.
+
 ## Phase status
 
 | Phase | State |
@@ -70,14 +113,17 @@ whole-stripe loss correctly reported: data is unrecoverable: ...
 - The backend is not trusted with plaintext; do not add a server-side decrypt
   path.
 - No security audit. No production durability claim.
-- The client stores the password-wrapped keyfile and an (unused) device identity
-  secret in shared preferences; move the device secret to the platform keystore
-  before relying on device enrollment. The keyfile itself is Argon2id-wrapped.
+- The client stores the password-wrapped keyfile in shared preferences; it is
+  Argon2id-protected. The unused device-identity secret is no longer persisted.
+  Move the keyfile to the platform keystore for a hardened build.
 - Sync runs only while the desktop app is open (no background service yet) and
   each file is buffered in memory by the `Remote` adapter; very large files and
   true background sync are future work.
 - Empty local folders are synced, but remote folder renames are currently seen
   as delete+recreate (content is preserved; history/path identity is not).
+- The live Eweka account required separate retrieval/posting hosts and a valid
+  `From` header. Other providers may need different ports or groups; use the
+  dashboard Test and Verify actions before bulk uploads.
 
 ## Immediate next tasks (in order)
 
@@ -95,20 +141,24 @@ whole-stripe loss correctly reported: data is unrecoverable: ...
    reads, write-back cache, offline pinning and safe interrupted writes.
 6. **Mobile integrations**: Android DocumentsProvider + WorkManager/JobScheduler;
    iOS File Provider extension + BGTaskScheduler with honest background limits.
-7. **Security review**, fuzzing of article/yEnc parsers, rate limiting at the
+7. **Provider management**: the dashboard can add/delete/test providers and
+   restart, but cannot edit an existing provider in place; add PATCH + live
+   reload without restart where possible.
+8. **Sync UX**: conflict review/merge screen, selective subfolder sync, per-file
+   progress, and background sync outside the app process.
+9. **Security review**, fuzzing of article/yEnc parsers, rate limiting at the
    proxy, password reset policy, audit logging coverage.
-8. **Tests to add**: interrupted upload/download, huge-file memory ceiling
-   measurement, replayed manifest, provider backbone correlation,
-   restore-from-dump automation, Flutter integration tests for the upload flow.
-9. **Sync scalability**: sync currently buffers each file in memory for the
-   `Remote` trait; move to streaming for multi-GB files, and run sync in a
-   background isolate/service rather than only while the UI process is open.
+10. **Tests to add**: interrupted upload/download, huge-file memory ceiling
+    measurement, replayed manifest, provider backbone correlation,
+    restore-from-dump automation, Flutter integration tests for add-folder/sync.
 
 ## Known bugs / rough edges
 
 - SSE only supports `Authorization` headers (fine for Dart/Flutter HTTP clients,
-  not for browser `EventSource`).
-- Admin provider changes require a backend restart (deliberate; documented in UI).
+  not for browser `EventSource`). The app does not yet consume SSE; it refreshes
+  on demand and after sync.
+- Provider changes require a process restart (one click in the dashboard). There
+  is no in-place edit form for existing provider rows yet.
 - `nntdrive_storage::store::platform_totals` casts aggregate sums to `bigint` because
   PostgreSQL returns `numeric`; keep casts when editing.
 - Full-text search is impossible server-side (names/content encrypted); the
@@ -119,8 +169,13 @@ whole-stripe loss correctly reported: data is unrecoverable: ...
   not perform client-side key rotation automatically.
 - The Docker image was verified with the legacy Docker builder in WSL; BuildKit
   is used in CI. No multi-arch image is published.
-- Client CI builds Linux/Android; Windows/iOS jobs stay non-blocking until a
-  Developer-Mode/ macOS build is verified in CI.
+- Client CI builds and tests Linux/Android; Windows/iOS jobs stay non-blocking
+  (Windows is verified locally; iOS needs macOS).
 - The app's "upload" of a new file creates the node first; if the upload fails it
   tombstones the node. An interrupted version upload leaves the previous version
   intact (the manifest commits last).
+- Sync conflicts are preserved as files but there is no merge/review dialog yet.
+- Remote folder renames are not detected as moves; they become delete + recreate.
+- Sync currently keeps one SQLite journal per selected folder under the app
+  support directory; uninstalling the app loses the baseline (the next sync may
+  re-download or produce conflicts, never data loss).
