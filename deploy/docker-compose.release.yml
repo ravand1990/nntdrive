@@ -1,0 +1,72 @@
+name: nntdrive
+
+# Image-only deployment. No repository checkout or local build required.
+#
+#   docker login ghcr.io           # only while the package is private
+#   docker compose --env-file .env -f docker-compose.release.yml up -d
+#
+# Images are published by .github/workflows/release.yml as
+# ghcr.io/<owner>/nntdrive-backend:<version> plus :latest.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nntdrive
+      POSTGRES_USER: nntdrive
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - nntdrive-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nntdrive -d nntdrive"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    expose:
+      - "5432"
+
+  backend:
+    image: "${NNTDRIVE_IMAGE:-ghcr.io/ravand1990/nntdrive-backend}:${NNTDRIVE_VERSION:-latest}"
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgres://nntdrive:${POSTGRES_PASSWORD}@postgres:5432/nntdrive
+      NNTDRIVE_BIND: 0.0.0.0:8080
+      NNTDRIVE_CACHE_DIR: /var/lib/nntdrive/cache
+    volumes:
+      - nntdrive-cache:/var/lib/nntdrive/cache
+    ports:
+      - "${NNTDRIVE_HOST_BIND:-127.0.0.1}:${NNTDRIVE_HOST_PORT:-8080}:8080"
+    security_opt:
+      - no-new-privileges:true
+
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["tls"]
+    restart: unless-stopped
+    depends_on:
+      - backend
+    command:
+      - caddy
+      - reverse-proxy
+      - --from
+      - "${NNTDRIVE_DOMAIN:?set NNTDRIVE_DOMAIN}"
+      - --to
+      - backend:8080
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  nntdrive-pg:
+  nntdrive-cache:
+  caddy-data:
+  caddy-config:

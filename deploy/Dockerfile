@@ -10,6 +10,11 @@ RUN cargo build --release -p nntdrive-backend -p nntdrive-cli && \
     cp target/release/nntdrive /usr/local/bin/nntdrive
 
 FROM debian:bookworm-slim
+ARG VERSION=dev
+LABEL org.opencontainers.image.title="NNTDrive backend" \
+      org.opencontainers.image.description="Self-hosted end-to-end encrypted storage on Usenet" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.licenses="AGPL-3.0-or-later"
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && \
     rm -rf /var/lib/apt/lists/* && \
     useradd --system --uid 10001 --home /var/lib/nntdrive nntdrive

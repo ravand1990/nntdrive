@@ -2,7 +2,33 @@
 
 ## Deployment
 
-### Docker Compose (recommended)
+### From published images (no source checkout)
+
+Images are published to GHCR with semantic version tags:
+
+```
+ghcr.io/ravand1990/nntdrive-backend:0.1.0
+ghcr.io/ravand1990/nntdrive-backend:latest
+ghcr.io/ravand1990/nntdrive-backend:edge
+```
+
+While the repository/package is private:
+
+```bash
+echo "$GHCR_TOKEN" | docker login ghcr.io -u ravand1990 --password-stdin
+```
+
+Download `docker-compose.release.yml`, `.env.release.example` and
+`README-IMAGES.md` from the GitHub release, configure `.env` (database password,
+`NNTDRIVE_SECRET_KEY`, pinned `NNTDRIVE_VERSION`), then:
+
+```bash
+docker compose --env-file .env -f docker-compose.release.yml up -d
+```
+
+This needs no repository checkout. Full details: `deploy/README-IMAGES.md`.
+
+### Docker Compose from source (recommended for development)
 
 ```bash
 cp deploy/.env.example deploy/.env
@@ -13,6 +39,22 @@ docker compose -f deploy/docker-compose.yml up -d --build
 TLS: add `--profile tls` and set `NNTDRIVE_DOMAIN`. Caddy terminates TLS and
 proxies to the backend. Keep the backend port bound to `127.0.0.1` when a proxy
 is in front.
+
+### Publishing a release
+
+Tagging `vX.Y.Z` runs `.github/workflows/release.yml`:
+
+1. runs formatting, clippy, 82 Rust tests and the storage demo;
+2. builds `linux/amd64` and `linux/arm64` images with BuildKit;
+3. pushes `X.Y.Z`, `X.Y`, `latest` and `sha-*` tags to GHCR with provenance/SBOM;
+4. creates a GitHub release and attaches the image-only Compose files.
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+`NNTDRIVE_VERSION` in the release Compose file selects the image tag.
 
 ### Bare metal / VM
 

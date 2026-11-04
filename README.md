@@ -90,6 +90,54 @@ server cannot recover E2EE data without them. See
 For a public deployment, enable the Caddy profile (`--profile tls`) and set
 `NNTDRIVE_DOMAIN`. Caddy obtains and renews TLS certificates automatically.
 
+## Run from the published image (no repository checkout)
+
+Backend images are published to GHCR by `.github/workflows/release.yml`:
+
+```
+ghcr.io/ravand1990/nntdrive-backend:<version>   # e.g. 0.1.0
+ghcr.io/ravand1990/nntdrive-backend:latest
+ghcr.io/ravand1990/nntdrive-backend:edge        # main branch
+```
+
+The package is currently private because the repository is private. Authenticate
+with a GitHub token that has `read:packages`:
+
+```bash
+echo "$GHCR_TOKEN" | docker login ghcr.io -u ravand1990 --password-stdin
+```
+
+Download `docker-compose.release.yml`, `.env.release.example` and
+`README-IMAGES.md` from the latest GitHub **Release → Assets**, then:
+
+```bash
+mkdir nntdrive && cd nntdrive
+# put the downloaded compose file here as docker-compose.release.yml
+mv .env.release.example .env
+# set POSTGRES_PASSWORD and NNTDRIVE_SECRET_KEY (openssl rand -base64 32)
+# set NNTDRIVE_VERSION=0.1.0 to pin the image
+docker compose --env-file .env -f docker-compose.release.yml up -d
+curl -fsS http://127.0.0.1:8080/healthz
+```
+
+Open `http://127.0.0.1:8080/`: a fresh backend offers first-time setup. Add
+providers in `/admin`, then **Maintenance → Restart backend**. For automatic TLS:
+
+```bash
+docker compose --env-file .env -f docker-compose.release.yml --profile tls up -d
+```
+
+Details, upgrades and backups: [deploy/README-IMAGES.md](deploy/README-IMAGES.md).
+
+**Releasing a new version:** push a semver tag; CI tests the workspace, builds and
+pushes `linux/amd64` + `linux/arm64` images, then creates a GitHub release with
+the deployment files attached.
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
 ## Run the full app without a Usenet account (dev stack)
 
 The dev override adds an in-memory NNTP provider and enables open registration,
