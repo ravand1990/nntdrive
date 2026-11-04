@@ -17,18 +17,18 @@ echo "$GHCR_TOKEN" | docker login ghcr.io -u ravand1990 --password-stdin
 
 ## 1. Get two files (no clone)
 
-Download `docker-compose.release.yml` and `.env.release.example` from the
+Download `docker-compose.release.yml` and `env.release.example` from the
 repository's **Releases → Assets**, or copy them from this repository:
 
 - `deploy/docker-compose.release.yml`
-- `deploy/.env.release.example`
+- `deploy/env.release.example`
 
 Put both files in an empty directory:
 
 ```bash
 mkdir nntdrive && cd nntdrive
 mv ~/Downloads/docker-compose.release.yml docker-compose.release.yml
-mv ~/Downloads/.env.release.example .env
+mv ~/Downloads/env.release.example .env
 ```
 
 ## 2. Set secrets

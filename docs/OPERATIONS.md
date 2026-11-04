@@ -18,7 +18,7 @@ While the repository/package is private:
 echo "$GHCR_TOKEN" | docker login ghcr.io -u ravand1990 --password-stdin
 ```
 
-Download `docker-compose.release.yml`, `.env.release.example` and
+Download `docker-compose.release.yml`, `env.release.example` and
 `README-IMAGES.md` from the GitHub release, configure `.env` (database password,
 `NNTDRIVE_SECRET_KEY`, pinned `NNTDRIVE_VERSION`), then:
 

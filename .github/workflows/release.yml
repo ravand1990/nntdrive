@@ -120,18 +120,19 @@ jobs:
           IMAGE="ghcr.io/${GITHUB_REPOSITORY_OWNER}/nntdrive-backend:${TAG#v}"
           NOTES="Container image: \`${IMAGE}\` (linux/amd64).
 
-          Docker Compose: download \`docker-compose.release.yml\` and \`.env.release.example\` from this release's assets.
+          Docker Compose: download \`docker-compose.release.yml\` and \`env.release.example\` from this release's assets.
           Quick start: see \`README-IMAGES.md\` in the assets or README.md."
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" --clobber \
               deploy/docker-compose.release.yml \
-              deploy/.env.release.example \
+              deploy/env.release.example \
               deploy/README-IMAGES.md
           else
             gh release create "$TAG" \
               --title "NNTDrive ${TAG}" \
               --generate-notes \
-              --notes "$NOTES" \              deploy/docker-compose.release.yml \
-              deploy/.env.release.example \
+              --notes "$NOTES" \
+              deploy/docker-compose.release.yml \
+              deploy/env.release.example \
               deploy/README-IMAGES.md
           fi

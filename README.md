@@ -107,13 +107,13 @@ with a GitHub token that has `read:packages`:
 echo "$GHCR_TOKEN" | docker login ghcr.io -u ravand1990 --password-stdin
 ```
 
-Download `docker-compose.release.yml`, `.env.release.example` and
+Download `docker-compose.release.yml`, `env.release.example` and
 `README-IMAGES.md` from the latest GitHub **Release → Assets**, then:
 
 ```bash
 mkdir nntdrive && cd nntdrive
 # put the downloaded compose file here as docker-compose.release.yml
-mv .env.release.example .env
+mv env.release.example .env
 # set POSTGRES_PASSWORD and NNTDRIVE_SECRET_KEY (openssl rand -base64 32)
 # set NNTDRIVE_VERSION=0.1.0 to pin the image
 docker compose --env-file .env -f docker-compose.release.yml up -d
