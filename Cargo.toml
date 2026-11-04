@@ -7,6 +7,8 @@ members = [
   "crates/sync",
   "crates/backend",
   "crates/cli",
+  "crates/client",
+  "crates/ffi",
 ]
 # The clients are built from clients/flutter with Flutter tooling, not cargo.
 

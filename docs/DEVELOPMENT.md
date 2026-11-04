@@ -5,7 +5,7 @@
 - Rust stable (1.82+; CI uses current stable)
 - PostgreSQL 14+ for storage/backend integration tests
 - Optional: Docker for the deployment stack
-- Optional: Flutter 3.x for the client scaffold
+- Optional: Flutter 3.47.9 for the clients
 
 On Windows, run the Rust build/tests inside WSL2 (Linux) — the backend targets
 Linux and the test suite uses real TCP/PostgreSQL.
@@ -78,13 +78,15 @@ flutter config --android-sdk "$ANDROID_SDK_ROOT"
 cd clients/flutter
 flutter pub get
 flutter analyze && flutter test
-flutter build linux --debug
-flutter build apk --debug
+NNTDRIVE_FFI_PATH="$PWD/linux/lib/libnntdrive_ffi.so" flutter test
+flutter build linux --release
+flutter build apk --release
 ```
 
-Flutter/Gradle also auto-installed Android NDK 28c and platform 35 during the
-first APK build. The APK is a debug build (debug signing); release signing is
-not configured.
+Use `bash scripts/build-clients.sh` for the complete path (builds the Rust FFI,
+copies it, runs tests, builds both artifacts). Flutter/Gradle also auto-installed
+Android NDK 28c and platform 35 during the first APK build. The APK is a release
+build signed with the debug key; configure a real keystore before distributing.
 
 Windows (for `flutter build windows`):
 
@@ -93,7 +95,10 @@ Windows (for `flutter build windows`):
 - Enable **Developer Mode** (Settings → For developers) so Flutter can create
   plugin symlinks. Without it the build stops with
   `Building with plugins requires symlink support`.
-- Then `flutter pub get && flutter build windows --debug` in `clients/flutter`.
+- Build the Rust DLL and copy it next to the runner:
+  `cargo build --release -p nntdrive-ffi` then
+  `copy target\release\nntdrive_ffi.dll clients\flutter\windows\runner\`.
+- Then `flutter pub get && flutter build windows --release` in `clients/flutter`.
 
 iOS requires macOS + Xcode (`flutter build ios --no-codesign`). It cannot be
 built from Windows or Linux.

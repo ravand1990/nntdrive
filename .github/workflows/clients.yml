@@ -5,10 +5,12 @@ on:
   push:
     paths:
       - "clients/flutter/**"
+      - "crates/**"
       - ".github/workflows/clients.yml"
   pull_request:
     paths:
       - "clients/flutter/**"
+      - "crates/**"
 
 jobs:
   analyze:
@@ -18,14 +20,24 @@ jobs:
         working-directory: clients/flutter
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
           flutter-version: "3.47.9"
           cache: true
+      - name: Build native core
+        working-directory: .
+        run: cargo build --release -p nntdrive-ffi
+      - run: |
+          mkdir -p linux/lib
+          cp ../../target/release/libnntdrive_ffi.so linux/lib/libnntdrive_ffi.so
       - run: flutter pub get
       - run: flutter analyze
       - run: flutter test
+        env:
+          NNTDRIVE_FFI_PATH: ${{ github.workspace }}/clients/flutter/linux/lib/libnntdrive_ffi.so
 
   build-linux:
     runs-on: ubuntu-24.04
@@ -35,18 +47,27 @@ jobs:
         working-directory: clients/flutter
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
           flutter-version: "3.47.9"
           cache: true
       - run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
+      - name: Build native core
+        working-directory: .
+        run: cargo build --release -p nntdrive-ffi
+      - run: |
+          mkdir -p linux/lib
+          cp ../../target/release/libnntdrive_ffi.so linux/lib/libnntdrive_ffi.so
       - run: flutter pub get
-      - run: flutter build linux --debug
+      - run: flutter build linux --release
+      - run: cp linux/lib/libnntdrive_ffi.so build/linux/x64/release/bundle/lib/
       - uses: actions/upload-artifact@v4
         with:
           name: nntdrive-linux
-          path: clients/flutter/build/linux/x64/debug/bundle/
+          path: clients/flutter/build/linux/x64/release/bundle/
 
   build-android:
     runs-on: ubuntu-24.04
@@ -54,26 +75,41 @@ jobs:
     defaults:
       run:
         working-directory: clients/flutter
+    env:
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+      ANDROID_HOME: /usr/local/lib/android/sdk
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
           flutter-version: "3.47.9"
           cache: true
+      - run: cargo install cargo-ndk --locked
+      - name: Build native core
+        working-directory: .
+        run: |
+          NDK_HOME="$(ls -d "$ANDROID_SDK_ROOT"/ndk/* | sort -V | tail -1)"
+          export NDK_HOME
+          cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 \
+            -o clients/flutter/android/app/src/main/jniLibs \
+            build --release -p nntdrive-ffi
       - run: flutter pub get
-      - run: flutter build apk --debug
+      - run: flutter build apk --release
       - uses: actions/upload-artifact@v4
         with:
-          name: nntdrive-android-debug
-          path: clients/flutter/build/app/outputs/flutter-apk/app-debug.apk
+          name: nntdrive-android-release
+          path: clients/flutter/build/app/outputs/flutter-apk/app-release.apk
 
-  # Requires Developer Mode (symlink support) on the Windows runner. Kept
-  # non-blocking until it is verified in CI.
+  # Requires Developer Mode (symlink support) on the Windows runner.
   build-windows:
     runs-on: windows-2022
     needs: analyze
@@ -83,17 +119,24 @@ jobs:
         working-directory: clients/flutter
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
           flutter-version: "3.47.9"
           cache: true
+      - name: Build native core
+        working-directory: .
+        run: cargo build --release -p nntdrive-ffi
+      - run: |
+          mkdir windows/runner -Force
+          copy ..\..\target\release\nntdrive_ffi.dll windows\runner\
       - run: flutter pub get
-      - run: flutter build windows --debug
+      - run: flutter build windows --release
 
-  # Requires macOS/Xcode and an Apple developer setup for a device build. The
-  # unsigned compile is checked but is not a deliverable until the Rust bridge
-  # and File Provider extension exist.
+  # Requires macOS/Xcode; unsigned compile only until the Rust static library is
+  # packaged as an XCFramework and the File Provider extension exists.
   build-ios:
     runs-on: macos-14
     needs: analyze

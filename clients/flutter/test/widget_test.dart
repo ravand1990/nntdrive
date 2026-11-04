@@ -4,17 +4,16 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:nntdrive/main.dart';
 
 void main() {
-  testWidgets('shows login with the bridge warning', (WidgetTester tester) async {
+  testWidgets('shows login and registration options', (WidgetTester tester) async {
     SharedPreferences.setMockInitialValues({});
     final prefs = await SharedPreferences.getInstance();
     await tester.pumpWidget(NntDriveApp(prefs: prefs));
     await tester.pumpAndSettle();
 
     expect(find.text('NNTDrive'), findsOneWidget);
-    expect(
-      find.textContaining('Rust cryptography bridge is not built'),
-      findsOneWidget,
-    );
+    expect(find.text('Sign in'), findsOneWidget);
+    expect(find.text('Create account'), findsOneWidget);
+    expect(find.text('Server URL'), findsOneWidget);
   });
 
   test('formats byte sizes', () {

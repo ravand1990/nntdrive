@@ -4,7 +4,7 @@ Last updated: 2026-11-04. This file is the handoff record for the next agent.
 
 ## Verified working
 
-Everything below is exercised by `cargo test --workspace --all-targets` (74 tests)
+Everything below is exercised by `cargo test --workspace --all-targets` (79 tests)
 against real PostgreSQL and an in-process NNTP server, plus the CLI demo.
 
 | Area | Evidence |
@@ -14,15 +14,23 @@ against real PostgreSQL and an in-process NNTP server, plus the CLI demo.
 | Chunk bounds/determinism/empty files, RS reconstruction, manifest validation | `nntdrive-storage` unit tests |
 | Encrypted upload/download, plaintext never on the wire, dedupe, shard loss, total loss, repair, refresh, wrong key, provider outage, version history | `nntdrive-storage/tests/storage.rs` |
 | Scanner ignore rules, case collisions, path validation, rename detection, concurrent offline edits, conflict preservation, delete propagation | `nntdrive-sync` tests |
-| Register/login, revoked device, admin authorization, tenant isolation, ciphertext upload, article proxy, dedupe lookup | `nntdrive-backend/tests/api.rs` |
+| Register/login/logout, revoked device, admin authorization, tenant isolation, ciphertext upload, article proxy, dedupe lookup, shard locations | `nntdrive-backend/tests/api.rs` |
+| Real client SDK: register → create node → encrypted upload → manifest → download → decrypt → verify; dedupe; unauthorized access | `crates/client/tests/e2e.rs` |
+| Dart ↔ Rust FFI: account generation, keyfile unlock, name seal/open with wrong-key rejection | `clients/flutter/test/native_test.dart` + `crates/ffi` tests |
+| Live deployment: dev Compose stack with mock NNTP; register/upload/download through the API | `crates/client/examples/smoke.rs` (verified) |
 | Docker image build, Compose stack, healthcheck, admin page, CLI bootstrap, admin API | ✅ verified locally (image built, stack started, `/healthz` 200, admin stats returned) |
-| Flutter client analysis/tests, Linux bundle, Android APK (debug + release) | ✅ `flutter analyze` clean, 2 tests pass, Linux release bundle (24 MB) and Android release APK (50 MB, debug-signed) built |
+| Flutter client analyze/tests, Linux/Android/Windows release builds | ✅ clean analyze, Dart FFI test passes; Linux and Windows bundles run, Android APK (63 MB, debug-signed) embeds all ABIs |
 
 Run it yourself:
 
 ```bash
 export TEST_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/nntdrive_test
 cargo test --workspace --all-targets
+
+# full local app stack (mock Usenet provider)
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml up -d --build
+bash scripts/build-clients.sh
+cargo run -p nntdrive-client --example smoke -- http://127.0.0.1:18080 /tmp/anyfile
 ```
 
 Demo output (2 MB input, 40 % redundancy in the demo config):
@@ -46,9 +54,9 @@ whole-stripe loss correctly reported: data is unrecoverable: ...
 |---|---|
 | 1. Working storage engine | **Done and tested** (CLI demo uploads, downloads, decrypts, verifies) |
 | 2. Self-healing storage | **Done and tested** (health, repair, refresh, snapshots via sealed manifests, simulated loss) |
-| 3. Desktop synchronization | **Engine done and tested; client build verified; UI not wired to crypto/sync** |
+| 3. Desktop synchronization | **Client implemented for manual upload/download/versioning on Linux, Android and Windows; automatic folder sync engine tested but not yet driven by the UI** |
 | 4. Virtual filesystem | **Not implemented** (WinFsp/FUSE design only) |
-| 5. Mobile clients | **Android UI shell builds; iOS unbuilt; no DocumentsProvider/File Provider/photo backup** |
+| 5. Mobile clients | **Android app builds and performs encrypted upload/download; iOS unbuilt; no DocumentsProvider/File Provider/photo backup** |
 | 6. Sharing & production readiness | **Partial**: backend, admin dashboard, auth, jobs, Docker, backups, CI done; sharing/link endpoints absent; hardening/audit pending |
 
 ## What is intentionally not claimed
@@ -60,33 +68,36 @@ whole-stripe loss correctly reported: data is unrecoverable: ...
 - The backend is not trusted with plaintext; do not add a server-side decrypt
   path.
 - No security audit. No production durability claim.
-- Flutter *source scaffold* is not a working client. `docs/CLIENTS.md` has the
-  exact missing integration.
+- The client stores the password-wrapped keyfile and an (unused) device identity
+  secret in shared preferences; move the device secret to the platform keystore
+  before relying on device enrollment. The keyfile itself is Argon2id-wrapped.
+- Automatic folder synchronization is not wired to the UI yet; upload/download
+  are manual.
 
 ## Immediate next tasks (in order)
 
-1. **Rust↔Dart bridge**: expose `KeyFile::unlock`, `derive_auth_verifier`,
-   chunking/prepare/publish, manifest seal/open, and the sync engine over a
-   stable FFI (flutter_rust_bridge or a hand-written C ABI). Add Android NDK,
-   iOS, Windows and Linux build wiring; then replace `NativeCryptoService`
-   stubs. The Dart UI already calls a `CryptoService` interface.
-2. **Sync backend adapter** implementing `nntdrive_sync::Remote` over the HTTP
-   API (`/files`, `/chunks`, `/files/:id/manifest`, `/articles`), including
-   conflict actions and SSE cursors.
-3. **AMK epoch rotation** on device revocation (client command + keyring update);
+1. **Sync engine integration**: implement the `Remote` adapter over the HTTP API
+   and add a "Choose folder / Sync now / Pause" UI with conflict review.
+   `crates/sync` already reconciles and preserves conflicts.
+2. **Windows build**: enable Developer Mode on the build host, build
+   `nntdrive_ffi.dll`, bundle it, and produce `nntdrive.exe`. Code is ready;
+   only the host policy blocks it here.
+3. **iOS**: build the Rust static library as an XCFramework, add the File
+   Provider extension and BGTaskScheduler integration; requires macOS.
+4. **AMK epoch rotation** on device revocation (client command + keyring update);
    currently the backend only tells the client rotation is required.
-4. **Sharing**: complete folder share endpoints and per-share wrapped keys, link
+5. **Sharing**: complete folder share endpoints and per-share wrapped keys, link
    tokens with password/expiry; share the AMK-derived folder key without exposing
    the AMK.
-5. **Virtual drives**: FUSE (Linux) and WinFsp (Windows) adapters with range
+6. **Virtual drives**: FUSE (Linux) and WinFsp (Windows) adapters with range
    reads, write-back cache, offline pinning and safe interrupted writes.
-6. **Mobile integrations**: Android DocumentsProvider + WorkManager/JobScheduler;
+7. **Mobile integrations**: Android DocumentsProvider + WorkManager/JobScheduler;
    iOS File Provider extension + BGTaskScheduler with honest background limits.
-7. **Security review**, fuzzing of article/yEnc parsers, rate limiting at the
+8. **Security review**, fuzzing of article/yEnc parsers, rate limiting at the
    proxy, password reset policy, audit logging coverage.
-8. **Tests to add**: cross-machine sync over the real HTTP API, interrupted
-   upload/download, huge-file memory ceiling measurement, replayed manifest,
-   provider backbone correlation, restore-from-dump automation.
+9. **Tests to add**: interrupted upload/download, huge-file memory ceiling
+   measurement, replayed manifest, provider backbone correlation,
+   restore-from-dump automation, Flutter integration tests for the upload flow.
 
 ## Known bugs / rough edges
 
@@ -103,5 +114,8 @@ whole-stripe loss correctly reported: data is unrecoverable: ...
   not perform client-side key rotation automatically.
 - The Docker image was verified with the legacy Docker builder in WSL; BuildKit
   is used in CI. No multi-arch image is published.
-- Client CI jobs are non-blocking because the Flutter scaffold is not a working
-  client yet.
+- Client CI builds Linux/Android; Windows/iOS jobs stay non-blocking until a
+  Developer-Mode/ macOS build is verified in CI.
+- The app's "upload" of a new file creates the node first; if the upload fails it
+  tombstones the node. An interrupted version upload leaves the previous version
+  intact (the manifest commits last).

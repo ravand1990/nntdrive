@@ -39,7 +39,7 @@ class AccountInfo {
 }
 
 class RemoteFile {
-  RemoteFile(this.id, this.parentId, this.nameEnc, this.isDir, this.size, this.favorite, this.revision);
+  RemoteFile(this.id, this.parentId, this.nameEnc, this.isDir, this.size, this.favorite, this.revision, this.currentVersion);
   final String id;
   final String? parentId;
   final String nameEnc; // sealed bytes, base64
@@ -47,6 +47,7 @@ class RemoteFile {
   final int size;
   final bool favorite;
   final int revision;
+  final String? currentVersion;
 
   factory RemoteFile.fromJson(Map<String, dynamic> j) => RemoteFile(
         j['id'] as String,
@@ -56,6 +57,7 @@ class RemoteFile {
         j['size'] as int? ?? 0,
         j['favorite'] as bool? ?? false,
         j['revision'] as int? ?? 0,
+        j['current_version'] as String?,
       );
 }
 
@@ -150,10 +152,58 @@ class ApiClient {
   Uri _uri(String path, [Map<String, String>? query]) =>
       Uri.parse('$_baseUrl/api/v1$path').replace(queryParameters: query);
 
-  /// Login requires an Argon2id verifier derived by the Rust core. That bridge
-  /// is not shipped yet, so only token login is usable in this scaffold.
-  Future<Map<String, dynamic>> loginWithVerifier(String email, String verifier) =>
-      _send('POST', '/auth/login', body: {'email': email, 'verifier': verifier});
+  /// Login requires an Argon2id verifier derived by the Rust core.
+  Future<Map<String, dynamic>> loginWithVerifier(
+    String email,
+    String verifier, {
+    Map<String, dynamic>? device,
+  }) =>
+      _send('POST', '/auth/login', body: {
+        'email': email,
+        'verifier': verifier,
+        if (device != null) 'device': device,
+      });
+
+  Future<String> lookupAccountId(String email) async {
+    final j = await _send('GET', '/auth/lookup?email=${Uri.encodeQueryComponent(email)}');
+    return j['account_id'] as String;
+  }
+
+  Future<Map<String, dynamic>> register({
+    required String accountId,
+    required String email,
+    required String verifier,
+    required Map<String, dynamic> keyfile,
+    Map<String, dynamic>? recoveryKit,
+    Map<String, dynamic>? device,
+  }) =>
+      _send('POST', '/auth/register', body: {
+        'account_id': accountId,
+        'email': email,
+        'verifier': verifier,
+        'keyfile': keyfile,
+        if (recoveryKit != null) 'recovery_kit': recoveryKit,
+        if (device != null) 'device': device,
+      });
+
+  Future<void> createFile({
+    required String id,
+    required String? parentId,
+    required String nameEnc,
+    required bool isDir,
+  }) =>
+      _send('POST', '/files', body: {
+        'id': id,
+        'parent_id': parentId,
+        'name_enc': nameEnc,
+        'is_dir': isDir,
+      });
+
+  Future<void> deleteFile(String id) =>
+      _send('PATCH', '/files/$id', body: {'deleted': true});
+
+  Future<void> setFavorite(String id, bool favorite) =>
+      _send('PATCH', '/files/$id', body: {'favorite': favorite});
 
   Future<AccountInfo> me() async {
     final j = await _send('GET', '/me');

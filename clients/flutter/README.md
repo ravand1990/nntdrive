@@ -1,46 +1,68 @@
-# NNTDrive Flutter client (UI/API scaffold)
+# NNTDrive Flutter client
 
-**Status: UI preview, not a working client.** The Rust cryptographic/sync bridge
-is not wired, so this app deliberately disables password login, encryption,
-upload, download, preview, file names and synchronization. It can sign in with a
-developer API token and browse encrypted metadata. See `docs/CLIENTS.md` and
-`docs/STATUS.md`.
+Working client for Linux and Android, backed by the shared Rust core
+(`crates/ffi`). The UI never implements cryptography.
 
-## What works in the scaffold
+## Features
 
-- Server URL + developer API token sign-in (`nntdrive token-create`).
-- Account/quota display, encrypted folder browsing, sealed-size display.
-- Version metadata dialog and device list/revocation.
-- Light/dark/system theme, persisted server and token.
-- `flutter analyze` clean and two tests passing.
-- Generated runners: Linux, Android, Windows (iOS needs `flutter create` on macOS).
+- Account creation with recovery kit + one-time recovery code, and password
+  login (Argon2id verifier; password never leaves the device).
+- Encrypted name decryption, folder navigation, filter/search.
+- Create folders, upload files, download and verify, upload new versions,
+  version history with per-revision download, delete, favorites.
+- Device list/revocation, quota display, light/dark/system theme.
+- All content operations run in a Dart isolate calling Rust; the UI stays
+  responsive during transfers.
 
-Verified builds in this environment: `flutter build linux --debug` and
-`flutter build apk --debug`. The Windows debug build is blocked by the host's
-Developer Mode/symlink setting (requires administrator); enable Developer Mode
-and run `flutter build windows --debug`. See `docs/CLIENTS.md`.
+## Not yet implemented
 
-## What is intentionally disabled
+Automatic folder sync, virtual drives, Android DocumentsProvider/photo backup,
+iOS File Provider/background sync, sharing UI, iOS build. Windows sources are
+ready but the build host needs Developer Mode (Flutter plugin symlinks) and the
+Rust DLL.
 
-- Password login (needs Argon2id verifier from Rust).
-- Names/content decryption (needs XChaCha20-Poly1305 + keyfile unlock).
-- Upload/download (needs chunking, encryption, erasure coding, sync).
-- Sync engine, virtual drive, photo backup, DocumentsProvider/File Provider.
+## Build
 
-## Run
+Linux + Android (verified):
 
 ```bash
-cd clients/flutter
-flutter pub get
-flutter run -d linux        # or -d windows / a connected Android device
+export ANDROID_SDK_ROOT=/opt/android-sdk
+export NDK_HOME=$(ls -d "$ANDROID_SDK_ROOT"/ndk/* | sort -V | tail -1)
+bash scripts/build-clients.sh
 ```
 
-Platform runners are committed for Linux, Android and Windows. For iOS:
+Artifacts:
+
+- Linux: `build/linux/x64/release/bundle/` (run `./nntdrive`)
+- Android: `build/app/outputs/flutter-apk/app-release.apk`
+
+Windows (after enabling Settings → System → For developers → Developer Mode):
+
+```powershell
+cargo build --release -p nntdrive-ffi
+copy target\release\nntdrive_ffi.dll windows\runner\
+cd clients\flutter
+flutter build windows --release
+```
+
+## Test
 
 ```bash
-flutter create --platforms=ios .
-flutter build ios --no-codesign
+# with the Rust core built:
+NNTDRIVE_FFI_PATH=$PWD/linux/lib/libnntdrive_ffi.so flutter test
 ```
 
-A working product still requires the Rust↔Dart bridge described above.
+The native test covers account creation, unlock, name sealing/opening and
+wrong-key rejection. A full headless client smoke test against a live backend is
+in `tool/native_smoke.dart`:
 
+```bash
+dart run tool/native_smoke.dart http://127.0.0.1:18080 /tmp/file.bin
+```
+
+## Architecture
+
+`lib/native.dart` loads the Rust library (`dart:ffi`), passes UTF-8 JSON, and
+keeps only integer key handles in Dart. `lib/api.dart` talks to the backend;
+names/manifests arrive sealed and are opened in Rust. Uploads are client-side
+encrypted; the backend only sees ciphertext.

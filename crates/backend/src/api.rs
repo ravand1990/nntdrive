@@ -393,6 +393,48 @@ pub struct ChunkLookup {
     pub len: u64,
 }
 
+/// Returns the article locations for one chunk so an authenticated client can
+/// reconstruct it (directly from Usenet or through the article proxy).
+pub async fn get_chunk(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+) -> ApiResult<impl IntoResponse> {
+    let (chunk, stripes) = state.store.load_chunk(auth.account_id, id).await?;
+    let compression = chunk.compression as u8;
+    let mut stripe_json = Vec::with_capacity(stripes.len());
+    for (stripe, shards) in stripes {
+        let mut shard_json = Vec::with_capacity(shards.len());
+        for s in shards {
+            shard_json.push(json!({
+                "index": s.shard_index,
+                "message_id": s.message_id,
+                "sha256": s.sha256,
+                "size": s.size,
+                "status": s.status,
+            }));
+        }
+        stripe_json.push(json!({
+            "id": stripe.id,
+            "index": stripe.stripe_index,
+            "data_shards": stripe.data_shards,
+            "parity_shards": stripe.parity_shards,
+            "shard_len": stripe.shard_len,
+            "ciphertext_len": stripe.ciphertext_len,
+            "shards": shard_json,
+        }));
+    }
+    Ok(Json(json!({
+        "chunk": {
+            "id": chunk.id,
+            "plaintext_len": chunk.plaintext_len,
+            "ciphertext_len": chunk.ciphertext_len,
+            "compression": compression,
+        },
+        "stripes": stripe_json,
+    })))
+}
+
 pub async fn lookup_chunk(
     State(state): State<AppState>,
     auth: Auth,

@@ -157,6 +157,13 @@ enum Command {
         #[arg(long, default_value = "nntdrive-demo.keyfile.json")]
         keyfile_out: PathBuf,
     },
+    /// Development-only standalone NNTP mock (no credentials, in-memory).
+    MockNntp {
+        #[arg(long, default_value = "127.0.0.1:1119")]
+        bind: String,
+        #[arg(long, default_value = "alt.binaries.test")]
+        group: String,
+    },
 }
 
 #[tokio::main]
@@ -414,6 +421,43 @@ async fn main() -> Result<()> {
             keyfile_out,
         } => {
             demo(&cli, file, size, &keyfile_out).await?;
+        }
+        Command::MockNntp { bind, group } => {
+            let server = MockNntpServer::start_on(
+                bind.parse()
+                    .map_err(|_| anyhow::anyhow!("invalid --bind address"))?,
+                MockConfig {
+                    require_auth: false,
+                    posting_enabled: true,
+                    groups: vec![group.clone()],
+                    ..Default::default()
+                },
+            )
+            .await;
+            let config = nntdrive_nntp::NntpConfig {
+                name: "mock".into(),
+                host: "127.0.0.1".into(),
+                port: server.addr.port(),
+                tls: false,
+                username: None,
+                password: None,
+                max_connections: 8,
+                role: nntdrive_nntp::ProviderRole::Both,
+                priority: 0,
+                groups: vec![group],
+                message_id_domain: "mock.local".into(),
+                connect_timeout_secs: 5,
+                io_timeout_secs: 30,
+                retention_days: None,
+                max_retries: 1,
+            };
+            println!(
+                "mock NNTP listening on {} (in-memory, development only)",
+                server.addr
+            );
+            println!("provider JSON: {}", serde_json::to_string(&vec![config])?);
+            println!("press Ctrl-C to stop; all articles are lost on exit");
+            tokio::signal::ctrl_c().await?;
         }
     }
     Ok(())

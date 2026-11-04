@@ -183,7 +183,11 @@ pub struct MockNntpServer {
 
 impl MockNntpServer {
     pub async fn start(config: MockConfig) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        Self::start_on("127.0.0.1:0".parse().unwrap(), config).await
+    }
+
+    pub async fn start_on(addr: SocketAddr, config: MockConfig) -> Self {
+        let listener = TcpListener::bind(addr).await.unwrap();
         let addr = listener.local_addr().unwrap();
         let store = Arc::new(MockStore::default());
         let (tx, mut rx) = tokio::sync::watch::channel(false);

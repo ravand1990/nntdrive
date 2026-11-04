@@ -1,0 +1,32 @@
+# Development override: adds an in-memory NNTP provider so the full flow can be
+# tested without a real Usenet account.
+#
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml up -d --build
+#
+# WARNING: mock articles disappear when the mock-nntp container stops. This is
+# for local evaluation only; never use it for real data.
+services:
+  mock-nntp:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    entrypoint: ["/usr/local/bin/nntdrive"]
+    command: ["mock-nntp", "--bind", "0.0.0.0:1119", "--group", "alt.binaries.test"]
+    restart: unless-stopped
+    expose:
+      - "1119"
+
+  backend:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mock-nntp:
+        condition: service_started
+    environment:
+      NNTDRIVE_ALLOW_REGISTRATION: "true"
+      NNTDRIVE_NNTP_PROVIDERS: >-
+        [{"name":"mock","host":"mock-nntp","port":1119,"tls":false,
+          "username":null,"password":null,"max_connections":8,"role":"both",
+          "priority":0,"groups":["alt.binaries.test"],
+          "message_id_domain":"mock.local","connect_timeout_secs":5,
+          "io_timeout_secs":30,"retention_days":null,"max_retries":1}]

@@ -25,8 +25,11 @@
 | `nntdrive-backend` | Axum API, tenant auth, devices, file namespace, ciphertext chunk intake, article proxy/cache, SSE, admin API/dashboard, durable jobs |
 | `nntdrive-cli` | Operator bootstrap, recovery actions, health/repair/refresh, Phase 1/2 demonstration |
 
-The Flutter clients are intended to embed the shared Rust engine. Today only the
-UI/API scaffold exists (see `CLIENTS.md`).
+The Flutter client embeds the shared Rust client core through a JSON C ABI
+(`crates/ffi`). It signs in with the Argon2 verifier, fetches only ciphertext,
+and performs chunking, encryption, upload, download, reconstruction and
+decryption inside Rust. Linux and Android builds are verified; see
+`CLIENTS.md`.
 
 ## Key hierarchy
 

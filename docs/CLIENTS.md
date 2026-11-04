@@ -2,83 +2,139 @@
 
 ## Current state
 
-| Platform | Source | Build status | Crypto/sync |
+| Platform | Source | Build status | Crypto/content |
 |---|---|---|---|
-| Windows 10/11 | Flutter scaffold + generated runner | Compiles on Windows; local debug build blocked here by Developer Mode/symlink privilege (enable Developer Mode, then `flutter build windows`) | ❌ Rust bridge missing |
-| Linux desktop | Flutter scaffold + generated runner | ✅ `flutter build linux --debug` verified | ❌ Rust bridge missing |
-| Android | Flutter scaffold + generated runner | ✅ `flutter build apk --debug` verified (APK 148 MB debug) | ❌ Rust bridge missing |
-| iOS | Flutter scaffold | Not built (no macOS/Xcode in this environment) | ❌ Rust bridge missing |
+| Windows 10/11 | Flutter + Rust FFI | ✅ release build verified, DLL bundled, app launches | ✅ works end-to-end |
+| Linux desktop | Flutter + Rust FFI | ✅ release build and headless launch verified | ✅ works end-to-end |
+| Android | Flutter + Rust FFI | ✅ release APK verified (arm64, armv7, x86_64 libs embedded) | ✅ works end-to-end |
+| iOS | Flutter | Not built (no macOS/Xcode in this environment) | Rust static lib needs an XCFramework; File Provider still missing |
 
-`flutter analyze` is clean, the two widget/unit tests pass, and the Linux and
-Android debug builds are verified locally. The shared Rust engine
-(`crates/sync`, `crates/crypto`, `crates/storage`) is implemented and tested. The
-Flutter app (`clients/flutter`) is still a **UI and API scaffold**: it can
-authenticate with a developer API token and browse encrypted metadata. It
-deliberately disables password login, upload, download, decryption and sync
-because the Rust↔Dart bridge is not built. The app displays this limitation in
-its UI; nothing is presented as functional that is not.
+`flutter analyze` is clean, 4 Dart tests pass (including a test that loads the
+real Rust FFI library), and the Linux/Android clients were exercised through the
+exact Dart FFI layer against a running backend: register → create file → upload →
+download → decrypt → byte-for-byte verify.
 
-The Windows build failure is environmental, not a code error: Flutter requires
-symlink support for plugin links, which needs Developer Mode (an administrator
-registry change). Enable it, or run the build on a Windows CI runner with
-Developer Mode, and the same sources should produce the Windows binary.
+The shared Rust engine (`crates/ffi`, `crates/client`, `crates/sync`,
+`crates/crypto`, `crates/storage`) does all cryptography and content handling.
+Dart never implements crypto; it passes UTF-8 JSON to the native core.
 
-## What the Rust bridge must export
+## Implemented in the client
 
-1. `derive_auth_verifier(password, account_id)` — Argon2id; never send the
-   password.
-2. `unlock_keyfile(keyfile_json, password)` and `unlock_recovery_kit(kit, code)`
-   returning an opaque key handle. Store the wrapped keyfile in the platform
-   keystore, not in shared preferences.
-3. `prepare_chunk(handle, bytes)` — compress + encrypt; return ciphertext, hash,
-   length, codec. The Dart layer must never implement crypto itself.
-4. `seal_manifest`, `open_manifest`, `seal_name`, `open_name`.
-5. `start_sync(server, token, root, options)` — run `nntdrive_sync::SyncEngine`
-   with an HTTP `Remote` adapter and emit progress/conflicts over a stream.
-6. Key epoch rotation and device enrollment wrapping.
+- Account creation (keyfile + recovery kit + Argon2 verifier) and login.
+- Encrypted password unlock; recovery code shown once at registration.
+- Browse folders, decrypt names locally, search/filter.
+- Create folders, upload files, download + verify, version history with
+  per-revision download, delete, favorites.
+- Device list/revocation, quota display, light/dark/system theme.
+- Server URL + TLS backend support.
 
-Recommended: `flutter_rust_bridge` (build scripts for Android NDK, iOS,
-Windows, Linux) or a small C ABI with `dart:ffi`. Pin the Rust toolchain and
-include the `.so`/`.dll`/`.dylib`/XCFramework in the respective platform build.
+## Still missing in the client
 
-## Build instructions (after the bridge exists)
+- Automatic bidirectional folder synchronization (the Rust sync engine is
+  tested but not yet driven from the UI).
+- Virtual drive (FUSE/WinFsp), Android DocumentsProvider, iOS File Provider,
+  photo backup, background transfers.
+- Sharing UI/public links.
+- iOS build/signing.
+- Windows build requires enabling Developer Mode on the host; the FFI DLL must
+  be built and copied next to the executable (see below).
 
-### Linux
+## What the Rust bridge exports
+
+`crates/ffi` exposes a JSON C ABI:
+
+1. `generate_account` — AMK/keyfile/recovery kit/verifier.
+2. `derive_verifier`, `unlock`, `lock` — keys stay in a process-local handle table.
+3. `seal_name` / `open_name` — encrypted filenames.
+4. `upload` — stream chunk → compress → encrypt → POST ciphertext chunks → seal
+   manifest → commit revision.
+5. `download` — fetch sealed manifest → fetch/verify shards → Reed–Solomon
+   reconstruct → decrypt → decompress → verify whole-file hash → atomic write.
+6. `device_identity`, `recovery_kit`.
+
+Dart (`lib/native.dart`) wraps this with `dart:ffi`; long calls run in an
+isolate. The sync engine (`crates/sync`) is still driven by Rust tests only.
+
+## Build instructions
+
+### Linux and Android (all-in-one)
 
 ```bash
-sudo apt-get install -y libgtk-3-dev libfuse3-dev ninja-build clang cmake
-cd clients/flutter
-flutter pub get
-flutter build linux --release
+export ANDROID_SDK_ROOT=/opt/android-sdk
+export NDK_HOME=$(ls -d "$ANDROID_SDK_ROOT"/ndk/* | sort -V | tail -1)
+bash scripts/build-clients.sh
 ```
 
-FUSE requires `/dev/fuse`, the `fuse3` package, and either a setuid `fusermount3`
-or a user_allow_other setup. A virtual drive is a separate mount process; the
-Flutter app only configures it.
+The script builds the Rust FFI core for Linux and all Android ABIs, runs
+`flutter analyze` and the Dart tests (including the real FFI test), builds the
+Linux release bundle and the Android release APK, and copies the Linux shared
+library into the bundle. Artifacts:
+
+- `clients/flutter/build/linux/x64/release/bundle/`
+- `clients/flutter/build/app/outputs/flutter-apk/app-release.apk`
+
+For development `flutter run -d linux` also needs
+`clients/flutter/linux/lib/libnntdrive_ffi.so` (the script creates it).
 
 ### Windows
 
-```powershell
-choco install visualstudio2022buildtools winfsp
-cd clients\flutter
-flutter pub get
-flutter build windows --release
-```
+1. Enable **Settings → System → For developers → Developer Mode** (Flutter
+   needs symlink support for plugins; this requires an administrator action).
+2. Install Flutter 3.47.9 for Windows and Visual Studio 2022 Build Tools with
+   the C++ workload + Windows SDK.
+3. Build the Rust DLL (Rust MSVC toolchain):
 
-WinFsp: install the WinFsp runtime, ship `winfsp-x64.dll`, and install a
-filesystem service (WinFsp.Launcher or a service wrapper). A non-elevated
-desktop app cannot mount a drive letter without the WinFsp service; document the
-elevation step. Cloud Files API (cfapi) is an alternative but requires a sync
-root registration and a privileged installer.
+   ```powershell
+   cd C:\Users\you\Desktop\NNTDrive
+   cargo build --release -p nntdrive-ffi
+   copy target\release\nntdrive_ffi.dll clients\flutter\windows\runner\
+   ```
+
+4. Build and run:
+
+   ```powershell
+   cd clients\flutter
+   flutter pub get
+   flutter build windows --release
+   .\build\windows\x64\runner\Release\nntdrive.exe
+   ```
+
+   Keep `nntdrive_ffi.dll` next to `nntdrive.exe` (the runner copies it in the
+   current build; if not, copy it into the Release directory).
+
+Developer Mode is not an SDK: it is the Windows policy that allows symlinks.
+Without it Flutter stops with `Building with plugins requires symlink support`.
 
 ### Android
 
+Use `scripts/build-clients.sh`, or manually:
+
 ```bash
-cd clients/flutter
-flutter build apk --release   # or appbundle
+cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 \
+  -o clients/flutter/android/app/src/main/jniLibs build --release -p nntdrive-ffi
+cd clients/flutter && flutter build apk --release
 ```
 
-Requirements for the missing integrations:
+The jniLibs directory is generated (not committed). Without it the UI builds but
+fails at runtime when it tries to load the native core.
+
+### iOS
+
+iOS requires macOS + Xcode and an `.xcframework` of the Rust core (a staticlib
+build for `aarch64-apple-ios` plus simulator architectures). The current
+`crates/ffi` can be compiled as a static library:
+
+```bash
+cargo build --release --target aarch64-apple-ios -p nntdrive-ffi
+```
+
+Then package the resulting `libnntdrive_ffi.a` with `xcodebuild -create-xcframework`.
+This was not built or verified in this environment. File Provider, background
+transfer and photo backup integrations remain separate work.
+
+## Remaining native integration work
+
+Android:
 
 - **DocumentsProvider**: implement a `ContentProvider` subclass in Kotlin,
   declared in the manifest with `android:grantUriPermissions="true"`,
@@ -90,14 +146,7 @@ Requirements for the missing integrations:
 - **Background**: use a foreground service with a persistent notification for
   long transfers; declare `FOREGROUND_SERVICE_DATA_SYNC` (Android 14+).
 
-### iOS
-
-```bash
-cd clients/flutter
-flutter build ios --no-codesign   # requires macOS + Xcode
-```
-
-Requirements and hard limits:
+iOS platform constraints:
 
 - **File Provider**: ship a File Provider extension target with an
   `NSFileProviderReplicatedExtension`. The extension has a small memory budget

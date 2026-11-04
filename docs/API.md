@@ -13,6 +13,7 @@ The server cannot decrypt names or manifests. `name_enc` and
 |---|---|---|
 | POST | `/auth/register` | `{account_id, email, verifier, keyfile, recovery_kit?, device:{id,name,platform,public_key}}` |
 | POST | `/auth/login` | `{email, verifier, device?}` → `{token, keyfile, account_id, ...}` |
+| GET | `/auth/lookup?email=` | resolve account id so a new device can derive the account-bound verifier (rate-limited) |
 | POST | `/auth/logout` | — |
 | GET | `/me` | account, quota, usage, devices |
 | GET | `/devices` | device list |
@@ -44,6 +45,7 @@ A version is only visible after commit; clients must upload all chunks first.
 |---|---|---|
 | GET | `/chunks/lookup?hash=<hex>&len=<n>` | find an existing chunk for this account |
 | POST | `/chunks` | publish one client-encrypted chunk |
+| GET | `/chunks/{id}` | article locations (stripe layout + Message-IDs) for reconstruction |
 | GET | `/articles/{message_id}` | fetch one shard (authenticated, tenant-scoped) |
 
 Chunk body:

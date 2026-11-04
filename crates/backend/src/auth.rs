@@ -284,6 +284,34 @@ pub async fn login(
     })))
 }
 
+/// Resolves an email to its account id so a new device can derive the
+/// account-bound Argon2 verifier before logging in. Rate-limited and reveals
+/// only the account UUID; it does not confirm credentials.
+#[derive(Debug, Deserialize)]
+pub struct LookupQuery {
+    pub email: String,
+}
+
+pub async fn lookup_account(
+    State(state): State<AppState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    axum::extract::Query(q): axum::extract::Query<LookupQuery>,
+) -> ApiResult<impl IntoResponse> {
+    if !state.limiter.allow(addr.ip()).await {
+        return Err(ApiError::TooManyRequests);
+    }
+    let account_id: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM accounts WHERE lower(email) = lower($1) AND disabled = FALSE",
+    )
+    .bind(q.email.trim())
+    .fetch_optional(&state.pool)
+    .await?;
+    match account_id {
+        Some(id) => Ok(Json(json!({ "account_id": id }))),
+        None => Err(ApiError::NotFound),
+    }
+}
+
 async fn upsert_device_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     account_id: Uuid,

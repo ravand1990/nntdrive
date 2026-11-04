@@ -106,3 +106,13 @@ install(DIRECTORY "${PROJECT_BUILD_DIR}/${FLUTTER_ASSET_DIR_NAME}"
 install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
   CONFIGURATIONS Profile;Release
   COMPONENT Runtime)
+
+# NNTDrive Rust client core (built by scripts/build-clients.sh or cargo).
+set(NNTDRIVE_FFI_DLL "${CMAKE_CURRENT_SOURCE_DIR}/runner/nntdrive_ffi.dll")
+if(EXISTS "${NNTDRIVE_FFI_DLL}")
+  install(FILES "${NNTDRIVE_FFI_DLL}"
+    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+    COMPONENT Runtime)
+else()
+  message(WARNING "nntdrive_ffi.dll is missing; run cargo build --release -p nntdrive-ffi and copy it to windows/runner/")
+endif()

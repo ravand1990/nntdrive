@@ -1,0 +1,20 @@
+[package]
+name = "nntdrive-ffi"
+description = "C ABI used by the Flutter clients (JSON in/out, no secrets logged)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "nntdrive_ffi"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+base64.workspace = true
+nntdrive-crypto = { path = "../crypto" }
+nntdrive-client = { path = "../client" }

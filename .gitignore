@@ -33,3 +33,7 @@ Thumbs.db
 deploy/.env
 *.recovery.json
 *.nntdrive-part
+# Generated native libraries
+clients/flutter/linux/lib/*.so
+clients/flutter/android/app/src/main/jniLibs/
+clients/flutter/windows/runner/*.dll

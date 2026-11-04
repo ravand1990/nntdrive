@@ -6,13 +6,12 @@ deduplicated uploads, immutable versions, bidirectional sync, version history,
 conflict preservation, self-healing erasure-coded storage — without keeping a
 permanent plaintext or ciphertext copy of your library on the server.
 
-> **Project status — read this first.** This repository is a working,
-> tested storage engine, backend API and administration interface. It is **not
-> yet a finished end-user product**: the Flutter client is a UI/API scaffold and
-> the Rust↔Dart cryptographic bridge is not wired, so the Android/iOS/desktop
-> apps do not yet perform sync. The filesystem virtual drives and native mobile
-> integrations are not implemented. See [docs/STATUS.md](docs/STATUS.md) for the
-> precise, verified list of what works and what does not.
+> **Project status.** The storage engine, self-healing layer, backend and the
+> Linux/Android/Windows Flutter clients are working end-to-end: register/login,
+> browse, upload, download, verify, versions, delete and favorites are implemented
+> and verified against a real backend. Not finished: iOS builds, automatic folder
+> synchronization, virtual drives, native mobile document providers/photo backup,
+> and sharing UIs. See [docs/STATUS.md](docs/STATUS.md) for the exact list.
 
 ## What works today (verified by automated tests)
 
@@ -31,10 +30,8 @@ permanent plaintext or ciphertext copy of your library on the server.
 | Multi-tenant Axum API, device tokens, revocation, admin endpoints, SSE | ✅ tested |
 | PostgreSQL schema, migrations, durable jobs, admin dashboard | ✅ tested |
 | Dockerfile, Compose, backup/restore scripts, CI | ✅ provided (image build in CI) |
-| Flutter desktop/mobile clients | ⚠️ UI shell only; Linux/Android debug builds verified, Rust crypto/sync bridge missing |
-| Virtual drives (WinFsp/FUSE) | ❌ not implemented |
-| Android DocumentsProvider / iOS File Provider / photo backup | ❌ not implemented |
-| Folder sharing UI, public links | ❌ API tables exist, endpoints incomplete |
+| Flutter desktop/mobile client | ✅ Linux/Android/Windows release builds and E2E verified (Rust FFI); iOS needs macOS |
+| Automatic folder sync / virtual drives / mobile document providers | ❌ not implemented |
 
 ## Quick start: the storage demo (no Usenet account needed)
 
@@ -91,6 +88,38 @@ server cannot recover E2EE data without them. See
 For a public deployment, enable the Caddy profile (`--profile tls`) and set
 `NNTDRIVE_DOMAIN`. Caddy obtains and renews TLS certificates automatically.
 
+## Run the full app without a Usenet account (dev stack)
+
+The dev override adds an in-memory NNTP provider and enables open registration,
+so you can exercise the complete encrypted flow locally:
+
+```bash
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml up -d --build
+bash scripts/build-clients.sh
+```
+
+- **Linux:** run `clients/flutter/build/linux/x64/release/bundle/nntdrive`.
+- **Windows:** enable Developer Mode, build the DLL
+  (`cargo build --release -p nntdrive-ffi`), copy
+  `target\release\nntdrive_ffi.dll` to `clients\flutter\windows\runner\`, then
+  `cd clients\flutter; flutter build windows --release` and run
+  `build\windows\x64\runner\Release\nntdrive.exe`.
+- **Android:** install `clients/flutter/build/app/outputs/flutter-apk/app-release.apk`.
+
+In the app use server `http://127.0.0.1:8080` (or your machine's LAN IP for a
+phone), choose **Create account**, then upload/download files. Mock articles are
+lost when the mock container stops — this mode is for local evaluation only.
+
+A headless verification of the same client path is available:
+
+```bash
+cargo run -p nntdrive-client --example smoke -- http://127.0.0.1:8080 /tmp/somefile
+```
+
+For a real deployment replace the dev override with `NNTDRIVE_NNTP_PROVIDERS`
+pointing at a posting-enabled provider (Eweka example in
+`deploy/providers.example.json`).
+
 ## Eweka / first provider
 
 Posting must be enabled on your provider account, and the provider's terms must
@@ -139,7 +168,7 @@ crates/cli/       operator CLI + end-to-end storage demo
 migrations/       PostgreSQL schema
 deploy/           Dockerfile, Compose, Caddyfile, env examples
 scripts/          backup and restore
-clients/flutter/  desktop/mobile UI scaffold (see docs/CLIENTS.md)
+clients/flutter/  Flutter client (Rust FFI core, Linux/Android UI)
 docs/             architecture, security, operations, recovery, status
 ```
 

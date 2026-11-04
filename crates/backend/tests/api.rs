@@ -67,6 +67,7 @@ async fn call(state: &AppState, req: Request<Body>) -> (StatusCode, Value) {
 }
 
 struct Account {
+    account_id: Uuid,
     device_id: Uuid,
     token: String,
     master: MasterKey,
@@ -103,6 +104,7 @@ async fn register(state: &AppState, email: &str) -> Account {
     .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
     Account {
+        account_id,
         device_id,
         token: body["token"].as_str().unwrap().to_string(),
         master,
@@ -174,6 +176,20 @@ async fn registration_login_and_admin_authorization() {
     assert_eq!(s, StatusCode::OK, "{body}");
     assert!(body["keyfile"].is_object());
     assert!(body["token"].as_str().unwrap().len() > 20);
+
+    // A new device can resolve the account id before deriving its verifier.
+    let (s, body) = call(
+        &env.state,
+        req(
+            "GET",
+            "/api/v1/auth/lookup?email=admin%40example.com",
+            None,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["account_id"], first.account_id.to_string());
 }
 
 #[tokio::test]

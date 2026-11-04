@@ -126,3 +126,13 @@ if(NOT CMAKE_BUILD_TYPE MATCHES "Debug")
   install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
     COMPONENT Runtime)
 endif()
+
+# Rust client core bundled into the Linux application.
+set(NNTDRIVE_FFI_LIB "${CMAKE_CURRENT_SOURCE_DIR}/lib/libnntdrive_ffi.so")
+if(EXISTS "${NNTDRIVE_FFI_LIB}")
+  install(FILES "${NNTDRIVE_FFI_LIB}"
+    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+    COMPONENT Runtime)
+else()
+  message(WARNING "libnntdrive_ffi.so is missing; run scripts/build-clients.sh before building")
+endif()
