@@ -244,6 +244,8 @@ class ApiClient {
         .toList();
   }
 
+  Future<void> logout() => _send('POST', '/auth/logout');
+
   /// Returns the sealed manifest. Only the Rust core can open it.
   Future<List<int>> manifest(String fileId, {String? revision}) async {
     final uri = _uri('/files/$fileId/manifest',

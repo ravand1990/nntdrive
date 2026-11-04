@@ -99,14 +99,22 @@ class _NntDriveAppState extends State<NntDriveApp> {
   }
 
   void _signOut() {
-    final handle = _session?.handle;
+    final session = _session;
+    final handle = session?.handle;
+    if (session != null) {
+      ApiClient(baseUrl: session.server, token: session.token).logout().catchError((_) {});
+    }
     if (handle != null) {
       NativeBridge.instance.lock(handle);
     }
     widget.prefs.remove('token');
+    widget.prefs.remove('keyfile');
+    widget.prefs.remove('accountId');
     setState(() {
       _session = null;
       _token = null;
+      _keyfile = null;
+      _accountId = null;
     });
   }
 
