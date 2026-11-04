@@ -44,17 +44,31 @@ is in front.
 
 Tagging `vX.Y.Z` runs `.github/workflows/release.yml`:
 
-1. runs formatting, clippy, 82 Rust tests and the storage demo;
-2. builds a `linux/amd64` image with BuildKit (arm64 can be added with native arm runners);
-3. pushes `X.Y.Z`, `X.Y`, `latest` and `sha-*` tags to GHCR with provenance/SBOM;
-4. creates a GitHub release and attaches the image-only Compose files.
+1. validates the matching `CHANGELOG.md` section (Features/Bug fixes required);
+2. runs formatting, clippy, all Rust tests and the storage demo;
+3. builds a `linux/amd64` image with BuildKit (arm64 can be added with native arm runners);
+4. pushes `X.Y.Z`, `X.Y`, `latest` and `sha-*` tags to GHCR with provenance/SBOM;
+5. creates/updates a GitHub release whose notes come from `CHANGELOG.md`, with the
+   image-only Compose files attached.
+
+Before tagging:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+# 1. bump the workspace version in Cargo.toml
+# 2. add a section to CHANGELOG.md:
+#    ## [0.1.1] - 2026-11-05
+#    ### Features
+#    - ...
+#    ### Bug fixes
+#    - ...
+bash scripts/release-notes.sh v0.1.1   # verify the notes extract
+git tag v0.1.1
+git push origin v0.1.1
 ```
 
-`NNTDRIVE_VERSION` in the release Compose file selects the image tag.
+The release workflow fails before building the image if the changelog entry is
+missing, empty, or has no `Features`/`Bug fixes` bullets. `NNTDRIVE_VERSION` in
+the release Compose file selects the image tag.
 
 ### Bare metal / VM
 

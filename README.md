@@ -129,9 +129,11 @@ docker compose --env-file .env -f docker-compose.release.yml --profile tls up -d
 
 Details, upgrades and backups: [deploy/README-IMAGES.md](deploy/README-IMAGES.md).
 
-**Releasing a new version:** push a semver tag; CI tests the workspace, builds and
-pushes a `linux/amd64` image, then creates a GitHub release with the deployment
-files attached. (An arm64 build can be added later with native arm runners.)
+**Releasing a new version:** update `CHANGELOG.md` with a `## [x.y.z]` section
+containing `### Features` and/or `### Bug fixes`, bump the workspace version in
+`Cargo.toml`, commit, then push a matching semver tag. CI validates the changelog
+entry, tests the workspace, builds and pushes the `linux/amd64` image, and creates
+a GitHub release whose notes are generated from that section.
 
 ```bash
 git tag v0.1.0
