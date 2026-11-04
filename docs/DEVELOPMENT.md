@@ -46,6 +46,58 @@ cargo test -p nntdrive-sync
 cargo test -p nntdrive-backend
 ```
 
+## Client SDK setup (verified versions)
+
+Linux/WSL (used for the verified Linux and Android builds):
+
+```bash
+# Rust backend + tests
+rustup toolchain install stable
+
+# Flutter 3.47.9 / Dart 3.13.7
+curl -fsSL https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.47.9-stable.tar.xz \
+  | tar -xJ -C "$HOME"          # or /opt/flutter
+export PATH="$HOME/flutter/bin:$PATH"
+
+# Java 17 + Linux desktop toolchain
+sudo apt-get install -y openjdk-17-jdk-headless clang cmake ninja-build \
+  pkg-config libgtk-3-dev liblzma-dev
+
+# Android command-line tools + SDK 36
+sudo mkdir -p /opt/android-sdk/cmdline-tools
+curl -fsSL https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip \
+  -o /tmp/cmdline-tools.zip
+sudo unzip -q /tmp/cmdline-tools.zip -d /opt/android-sdk/cmdline-tools/latest
+# flatten the archive's cmdline-tools/ directory, then:
+export ANDROID_SDK_ROOT=/opt/android-sdk
+yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses
+sdkmanager --sdk_root="$ANDROID_SDK_ROOT" platform-tools 'platforms;android-36' 'build-tools;36.0.0'
+flutter config --android-sdk "$ANDROID_SDK_ROOT"
+
+# Build and test
+cd clients/flutter
+flutter pub get
+flutter analyze && flutter test
+flutter build linux --debug
+flutter build apk --debug
+```
+
+Flutter/Gradle also auto-installed Android NDK 28c and platform 35 during the
+first APK build. The APK is a debug build (debug signing); release signing is
+not configured.
+
+Windows (for `flutter build windows`):
+
+- Flutter 3.47.9 for Windows, Visual Studio 2022 Build Tools with
+  `Microsoft.VisualStudio.Component.VC.Tools.x86.x64` and a Windows 10/11 SDK.
+- Enable **Developer Mode** (Settings → For developers) so Flutter can create
+  plugin symlinks. Without it the build stops with
+  `Building with plugins requires symlink support`.
+- Then `flutter pub get && flutter build windows --debug` in `clients/flutter`.
+
+iOS requires macOS + Xcode (`flutter build ios --no-codesign`). It cannot be
+built from Windows or Linux.
+
 ## Code map
 
 - `crates/crypto/src/lib.rs` — key hierarchy, keyfile, auth verifier.

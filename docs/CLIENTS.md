@@ -4,20 +4,24 @@
 
 | Platform | Source | Build status | Crypto/sync |
 |---|---|---|---|
-| Windows 10/11 | Flutter scaffold | Not built in this environment (no Flutter SDK) | ❌ Rust bridge missing |
-| Linux desktop | Flutter scaffold | Not built in this environment | ❌ Rust bridge missing |
-| Android | Flutter scaffold | Not built (no Flutter/Android SDK) | ❌ Rust bridge missing |
-| iOS | Flutter scaffold | Not built (no macOS/Xcode) | ❌ Rust bridge missing |
+| Windows 10/11 | Flutter scaffold + generated runner | Compiles on Windows; local debug build blocked here by Developer Mode/symlink privilege (enable Developer Mode, then `flutter build windows`) | ❌ Rust bridge missing |
+| Linux desktop | Flutter scaffold + generated runner | ✅ `flutter build linux --debug` verified | ❌ Rust bridge missing |
+| Android | Flutter scaffold + generated runner | ✅ `flutter build apk --debug` verified (APK 148 MB debug) | ❌ Rust bridge missing |
+| iOS | Flutter scaffold | Not built (no macOS/Xcode in this environment) | ❌ Rust bridge missing |
 
-The shared Rust engine (`crates/sync`, `crates/crypto`, `crates/storage`) is
-implemented and tested. The Flutter app (`clients/flutter`) is a **UI and API
-scaffold**: it can authenticate with a developer API token and browse encrypted
-metadata. It deliberately disables password login, upload, download, decryption
-and sync because the Rust↔Dart bridge is not built. The build workflow in
-`.github/workflows/clients.yml` is marked non-blocking for this reason.
+`flutter analyze` is clean, the two widget/unit tests pass, and the Linux and
+Android debug builds are verified locally. The shared Rust engine
+(`crates/sync`, `crates/crypto`, `crates/storage`) is implemented and tested. The
+Flutter app (`clients/flutter`) is still a **UI and API scaffold**: it can
+authenticate with a developer API token and browse encrypted metadata. It
+deliberately disables password login, upload, download, decryption and sync
+because the Rust↔Dart bridge is not built. The app displays this limitation in
+its UI; nothing is presented as functional that is not.
 
-This is stated in the app UI as well, so the scaffold is not presented as a
-finished client.
+The Windows build failure is environmental, not a code error: Flutter requires
+symlink support for plugin links, which needs Developer Mode (an administrator
+registry change). Enable it, or run the build on a Windows CI runner with
+Developer Mode, and the same sources should produce the Windows binary.
 
 ## What the Rust bridge must export
 

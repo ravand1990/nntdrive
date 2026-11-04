@@ -12,6 +12,13 @@ developer API token and browse encrypted metadata. See `docs/CLIENTS.md` and
 - Account/quota display, encrypted folder browsing, sealed-size display.
 - Version metadata dialog and device list/revocation.
 - Light/dark/system theme, persisted server and token.
+- `flutter analyze` clean and two tests passing.
+- Generated runners: Linux, Android, Windows (iOS needs `flutter create` on macOS).
+
+Verified builds in this environment: `flutter build linux --debug` and
+`flutter build apk --debug`. The Windows debug build is blocked by the host's
+Developer Mode/symlink setting (requires administrator); enable Developer Mode
+and run `flutter build windows --debug`. See `docs/CLIENTS.md`.
 
 ## What is intentionally disabled
 
@@ -20,16 +27,20 @@ developer API token and browse encrypted metadata. See `docs/CLIENTS.md` and
 - Upload/download (needs chunking, encryption, erasure coding, sync).
 - Sync engine, virtual drive, photo backup, DocumentsProvider/File Provider.
 
-## Run (once Flutter is installed)
+## Run
 
 ```bash
 cd clients/flutter
-flutter create --platforms=android,ios,linux,windows .
 flutter pub get
-flutter run -d linux   # or windows/chrome for UI checks
+flutter run -d linux        # or -d windows / a connected Android device
 ```
 
-`flutter create` adds the platform runners that are not committed in this
-scaffold (their generated files depend on the Flutter SDK version and would be
-misleading without a build). The CI client workflow is non-blocking until the
-bridge lands.
+Platform runners are committed for Linux, Android and Windows. For iOS:
+
+```bash
+flutter create --platforms=ios .
+flutter build ios --no-codesign
+```
+
+A working product still requires the Rust↔Dart bridge described above.
+

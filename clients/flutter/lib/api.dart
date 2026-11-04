@@ -107,20 +107,17 @@ class SyncEvent {
 }
 
 class ApiClient {
-  ApiClient({required String baseUrl, String? token})
-      : _baseUrl = baseUrl.replaceAll(RegExp(r'/+$'), ''),
-        _token = token;
+  ApiClient({required String baseUrl, this.token})
+      : _baseUrl = baseUrl.replaceAll(RegExp(r'/+$'), '');
 
   final String _baseUrl;
-  String? _token;
+  String? token;
 
   String get baseUrl => _baseUrl;
-  String? get token => _token;
-  set token(String? value) => _token = value;
 
   Map<String, String> get _headers => {
         'content-type': 'application/json',
-        if (_token != null) 'authorization': 'Bearer $_token',
+        if (token != null) 'authorization': 'Bearer $token',
       };
 
   Future<Map<String, dynamic>> _send(String method, String path,
@@ -208,6 +205,6 @@ class ApiClient {
     return res.bodyBytes;
   }
 
-  Future<Uri> articleUrl(String messageId) =>
+  Uri articleUrl(String messageId) =>
       _uri('/articles/${Uri.encodeComponent(messageId)}');
 }

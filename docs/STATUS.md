@@ -16,6 +16,7 @@ against real PostgreSQL and an in-process NNTP server, plus the CLI demo.
 | Scanner ignore rules, case collisions, path validation, rename detection, concurrent offline edits, conflict preservation, delete propagation | `nntdrive-sync` tests |
 | Register/login, revoked device, admin authorization, tenant isolation, ciphertext upload, article proxy, dedupe lookup | `nntdrive-backend/tests/api.rs` |
 | Docker image build, Compose stack, healthcheck, admin page, CLI bootstrap, admin API | ✅ verified locally (image built, stack started, `/healthz` 200, admin stats returned) |
+| Flutter client analysis/tests, Linux desktop bundle, Android debug APK | ✅ `flutter analyze` clean, 2 tests pass, both artifacts built |
 
 Run it yourself:
 
@@ -45,9 +46,9 @@ whole-stripe loss correctly reported: data is unrecoverable: ...
 |---|---|
 | 1. Working storage engine | **Done and tested** (CLI demo uploads, downloads, decrypts, verifies) |
 | 2. Self-healing storage | **Done and tested** (health, repair, refresh, snapshots via sealed manifests, simulated loss) |
-| 3. Desktop synchronization | **Engine done and tested; Flutter UI not wired** (no Rust↔Dart bridge) |
+| 3. Desktop synchronization | **Engine done and tested; client build verified; UI not wired to crypto/sync** |
 | 4. Virtual filesystem | **Not implemented** (WinFsp/FUSE design only) |
-| 5. Mobile clients | **Not implemented** (UI scaffold only; no DocumentsProvider/File Provider/photo backup) |
+| 5. Mobile clients | **Android UI shell builds; iOS unbuilt; no DocumentsProvider/File Provider/photo backup** |
 | 6. Sharing & production readiness | **Partial**: backend, admin dashboard, auth, jobs, Docker, backups, CI done; sharing/link endpoints absent; hardening/audit pending |
 
 ## What is intentionally not claimed

@@ -19,9 +19,11 @@ clients/flutter/.dart_tool/
 clients/flutter/build/
 clients/flutter/.flutter-plugins*
 clients/flutter/.packages
-clients/flutter/pubspec.lock
 clients/flutter/ios/Pods/
 clients/flutter/android/.gradle/
+clients/flutter/android/local.properties
+clients/flutter/windows/flutter/ephemeral/
+clients/flutter/linux/flutter/ephemeral/
 
 # Editors / OS
 .idea/

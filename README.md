@@ -31,7 +31,7 @@ permanent plaintext or ciphertext copy of your library on the server.
 | Multi-tenant Axum API, device tokens, revocation, admin endpoints, SSE | ✅ tested |
 | PostgreSQL schema, migrations, durable jobs, admin dashboard | ✅ tested |
 | Dockerfile, Compose, backup/restore scripts, CI | ✅ provided (image build in CI) |
-| Flutter desktop/mobile clients | ⚠️ scaffold only, not built here |
+| Flutter desktop/mobile clients | ⚠️ UI shell only; Linux/Android debug builds verified, Rust crypto/sync bridge missing |
 | Virtual drives (WinFsp/FUSE) | ❌ not implemented |
 | Android DocumentsProvider / iOS File Provider / photo backup | ❌ not implemented |
 | Folder sharing UI, public links | ❌ API tables exist, endpoints incomplete |

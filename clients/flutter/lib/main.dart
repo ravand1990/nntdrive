@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api.dart';
-import 'crypto_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();

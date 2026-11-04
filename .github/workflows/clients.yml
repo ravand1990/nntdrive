@@ -1,48 +1,59 @@
 name: Clients
 
-# The Flutter client is a UI/API scaffold: the Rust crypto/sync bridge is not
-# wired yet, so this workflow is intentionally non-blocking. Remove
-# `continue-on-error` once clients/flutter/lib/rust_bridge.dart is implemented.
 on:
   workflow_dispatch:
   push:
     paths:
       - "clients/flutter/**"
       - ".github/workflows/clients.yml"
+  pull_request:
+    paths:
+      - "clients/flutter/**"
 
 jobs:
   analyze:
     runs-on: ubuntu-24.04
-    continue-on-error: true
+    defaults:
+      run:
+        working-directory: clients/flutter
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: "3.47.9"
           cache: true
-      - working-directory: clients/flutter
-        run: flutter pub get
-      - working-directory: clients/flutter
-        run: flutter analyze
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
 
   build-linux:
     runs-on: ubuntu-24.04
-    continue-on-error: true
     needs: analyze
+    defaults:
+      run:
+        working-directory: clients/flutter
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: "3.47.9"
           cache: true
-      - run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libfuse3-dev ninja-build
-      - working-directory: clients/flutter
-        run: flutter pub get && flutter build linux --debug
+      - run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
+      - run: flutter pub get
+      - run: flutter build linux --debug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nntdrive-linux
+          path: clients/flutter/build/linux/x64/debug/bundle/
 
   build-android:
     runs-on: ubuntu-24.04
-    continue-on-error: true
     needs: analyze
+    defaults:
+      run:
+        working-directory: clients/flutter
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -52,32 +63,50 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: "3.47.9"
           cache: true
-      - working-directory: clients/flutter
-        run: flutter pub get && flutter build apk --debug
+      - run: flutter pub get
+      - run: flutter build apk --debug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nntdrive-android-debug
+          path: clients/flutter/build/app/outputs/flutter-apk/app-debug.apk
 
+  # Requires Developer Mode (symlink support) on the Windows runner. Kept
+  # non-blocking until it is verified in CI.
   build-windows:
     runs-on: windows-2022
-    continue-on-error: true
     needs: analyze
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: clients/flutter
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: "3.47.9"
           cache: true
-      - working-directory: clients/flutter
-        run: flutter pub get; flutter build windows --debug
+      - run: flutter pub get
+      - run: flutter build windows --debug
 
+  # Requires macOS/Xcode and an Apple developer setup for a device build. The
+  # unsigned compile is checked but is not a deliverable until the Rust bridge
+  # and File Provider extension exist.
   build-ios:
     runs-on: macos-14
-    continue-on-error: true
     needs: analyze
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: clients/flutter
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: "3.47.9"
           cache: true
-      - working-directory: clients/flutter
-        run: flutter pub get && flutter build ios --no-codesign --debug
+      - run: flutter pub get
+      - run: flutter build ios --no-codesign --debug
