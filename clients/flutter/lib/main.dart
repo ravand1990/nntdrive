@@ -222,7 +222,7 @@ class _LoginPageState extends State<LoginPage> {
           },
         );
         final token = response['token'] as String;
-        await widget.prefsDeviceSecret(device['secret'] as String);
+
         final code = account['recovery_code'] as String;
         if (mounted) {
           await showDialog<void>(
@@ -383,13 +383,6 @@ class _LoginPageState extends State<LoginPage> {
         ),
       ),
     );
-  }
-}
-
-extension on LoginPage {
-  Future<void> prefsDeviceSecret(String secret) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('deviceSecret', secret);
   }
 }
 
