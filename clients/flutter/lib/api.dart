@@ -164,6 +164,19 @@ class ApiClient {
         if (device != null) 'device': device,
       });
 
+  Future<({bool setupRequired, bool registrationAllowed})> setupStatus() async {
+    final j = await _send('GET', '/setup/status');
+    return (
+      setupRequired: j['setup_required'] as bool? ?? false,
+      registrationAllowed: j['registration_allowed'] as bool? ?? false,
+    );
+  }
+
+  Future<String> createToken(String label) async {
+    final j = await _send('POST', '/tokens', body: {'label': label});
+    return j['token'] as String;
+  }
+
   Future<String> lookupAccountId(String email) async {
     final j = await _send('GET', '/auth/lookup?email=${Uri.encodeQueryComponent(email)}');
     return j['account_id'] as String;

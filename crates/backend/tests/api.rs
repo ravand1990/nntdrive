@@ -120,8 +120,35 @@ fn base64_key(bytes: &[u8]) -> String {
 #[tokio::test]
 async fn registration_login_and_admin_authorization() {
     let Some(env) = env().await else { return };
+    let (s, status) = call(&env.state, req("GET", "/api/v1/setup/status", None, None)).await;
+    assert_eq!(s, StatusCode::OK, "{status}");
+    assert_eq!(status["setup_required"], true);
+
     let first = register(&env.state, "admin@example.com").await;
     let second = register(&env.state, "user@example.com").await;
+
+    let (_, status) = call(&env.state, req("GET", "/api/v1/setup/status", None, None)).await;
+    assert_eq!(status["setup_required"], false);
+
+    // The first-run flow mints a dashboard token for the administrator.
+    let (s, body) = call(
+        &env.state,
+        req(
+            "POST",
+            "/api/v1/tokens",
+            Some(&first.token),
+            Some(json!({ "label": "admin-dashboard" })),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{body}");
+    let dashboard_token = body["token"].as_str().unwrap();
+    let (s, _) = call(
+        &env.state,
+        req("GET", "/api/v1/admin/stats", Some(dashboard_token), None),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
 
     let (_, me) = call(
         &env.state,

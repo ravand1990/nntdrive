@@ -37,3 +37,4 @@ deploy/.env
 clients/flutter/linux/lib/*.so
 clients/flutter/android/app/src/main/jniLibs/
 clients/flutter/windows/runner/*.dll
+bootstrap-credentials/

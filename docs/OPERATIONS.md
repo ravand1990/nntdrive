@@ -83,6 +83,31 @@ assume unlimited upload or indefinite retention.
 
 ## First account and admin token
 
+### From the app (recommended)
+
+Open the app against a fresh backend. It calls `GET /api/v1/setup/status`, detects
+that no account exists, and shows **First-time setup**. The client generates the
+keyfile/recovery kit locally, registers the first account as administrator, mints
+a dashboard token via `POST /api/v1/tokens`, and presents all of it once with copy
+buttons. Nothing secret is sent to the server beyond the normal ciphertext and
+Argon2 verifier.
+
+### One-command CLI bootstrap
+
+```bash
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml up -d
+scripts/bootstrap.sh you@example.com
+```
+
+It creates the first administrator (refuses if any account exists), writes the
+keyfile and recovery kit into `bootstrap-credentials/`, and prints a 90-day admin
+token. Set `NNTDRIVE_PROD=1` to use the production Compose file without the dev
+override, or `NNTDRIVE_PASSWORD=...` for unattended use.
+
+### Existing accounts
+
+There is no default admin password and no pre-seeded credentials.
+
 ```bash
 docker compose -f deploy/docker-compose.yml exec backend \
   nntdrive --database-url "$DATABASE_URL" account-create --email admin@example.com \

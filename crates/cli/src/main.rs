@@ -128,6 +128,18 @@ enum Command {
         #[arg(long, default_value = "operator")]
         label: String,
     },
+    /// First-run bootstrap: create the first administrator, keyfile, recovery
+    /// kit and admin token in one step (only when the database has no accounts).
+    Bootstrap {
+        #[arg(long)]
+        email: String,
+        #[arg(long, env = "NNTDRIVE_PASSWORD")]
+        password: String,
+        #[arg(long, default_value = "nntdrive-admin.keyfile.json")]
+        keyfile_out: PathBuf,
+        #[arg(long)]
+        recovery_out: Option<PathBuf>,
+    },
     /// Export a recovery kit for an existing key.
     RecoveryCreate {
         #[arg(long)]
@@ -357,9 +369,6 @@ async fn main() -> Result<()> {
             }
         }
         Command::TokenCreate { account, label } => {
-            use base64::Engine;
-            use rand::RngCore;
-            use sha2::{Digest, Sha256};
             let pool = pool(&cli).await?;
             let exists: Option<Uuid> = sqlx::query_scalar("SELECT id FROM accounts WHERE id = $1")
                 .bind(account)
@@ -368,22 +377,70 @@ async fn main() -> Result<()> {
             if exists.is_none() {
                 bail!("account {account} does not exist");
             }
-            let mut bytes = [0u8; 32];
-            rand::rngs::OsRng.fill_bytes(&mut bytes);
-            let token = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
-            let mut h = Sha256::new();
-            h.update(token.as_bytes());
-            let hash = h.finalize();
+            let token = mint_token(&pool, account, &label).await?;
+            println!("token ({label}, valid 90 days, shown once): {token}");
+        }
+        Command::Bootstrap {
+            email,
+            password,
+            keyfile_out,
+            recovery_out,
+        } => {
+            let pool = pool(&cli).await?;
+            let count: i64 = sqlx::query_scalar("SELECT count(*) FROM accounts")
+                .fetch_one(&pool)
+                .await?;
+            if count > 0 {
+                bail!("this server already has accounts; use account-create/token-create instead");
+            }
+            if password.len() < 8 {
+                bail!("password must be at least 8 characters");
+            }
+            let account_id = Uuid::new_v4();
+            let (keyfile, master) = KeyFile::create(&password, account_id)?;
+            let verifier = nntdrive_crypto::derive_auth_verifier(&password, account_id);
+            let hash = hash_verifier(&verifier)?;
             sqlx::query(
-                "INSERT INTO api_tokens (id, account_id, token_hash, scope)
-                 VALUES ($1, $2, $3, 'client')",
+                "INSERT INTO accounts (id, email, password_hash, display_name, keyfile, is_admin)
+                 VALUES ($1, lower($2), $3, $2, $4, TRUE)",
             )
-            .bind(Uuid::new_v4())
-            .bind(account)
-            .bind(hash.as_slice())
+            .bind(account_id)
+            .bind(&email)
+            .bind(hash)
+            .bind(serde_json::to_value(&keyfile)?)
             .execute(&pool)
             .await?;
-            println!("token ({label}, valid 90 days, shown once): {token}");
+            let (kit, code) = RecoveryKit::create(&master, Some(format!("account {account_id}")))?;
+
+            if let Some(parent) = keyfile_out.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&keyfile_out, serde_json::to_vec_pretty(&keyfile)?)?;
+            let kit_path = recovery_out
+                .clone()
+                .unwrap_or_else(|| keyfile_out.with_extension("recovery.json"));
+            if let Some(parent) = kit_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&kit_path, kit.to_json_pretty()?)?;
+            let token = mint_token(&pool, account_id, "admin-dashboard").await?;
+
+            println!("==================================================================");
+            println!(" NNTDrive first-run setup complete");
+            println!("==================================================================");
+            println!("server:        (your backend URL, e.g. http://127.0.0.1:8080)");
+            println!("account_id:    {account_id}");
+            println!("email:         {email}");
+            println!("role:          administrator");
+            println!("keyfile:       {}", keyfile_out.display());
+            println!("recovery kit:  {}", kit_path.display());
+            println!();
+            println!("RECOVERY CODE (shown once, store offline):");
+            println!("  {code}");
+            println!();
+            println!("ADMIN API TOKEN (shown once, paste into /admin):");
+            println!("  {token}");
+            println!("==================================================================");
         }
         Command::RecoveryCreate {
             keyfile,
@@ -502,6 +559,29 @@ fn unlock(path: &Path, password: &str, account: Uuid) -> Result<MasterKey> {
         bail!("keyfile belongs to account {}", kf.account_id);
     }
     Ok(kf.unlock(password)?)
+}
+
+async fn mint_token(pool: &PgPool, account: Uuid, label: &str) -> Result<String> {
+    use base64::Engine;
+    use rand::RngCore;
+    use sha2::{Digest, Sha256};
+    let mut bytes = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    let token = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
+    let mut h = Sha256::new();
+    h.update(token.as_bytes());
+    let hash = h.finalize();
+    sqlx::query(
+        "INSERT INTO api_tokens (id, account_id, token_hash, scope, expires_at)
+         VALUES ($1, $2, $3, 'client', now() + interval '90 days')",
+    )
+    .bind(Uuid::new_v4())
+    .bind(account)
+    .bind(hash.as_slice())
+    .execute(pool)
+    .await?;
+    let _ = label;
+    Ok(token)
 }
 
 async fn create_file(

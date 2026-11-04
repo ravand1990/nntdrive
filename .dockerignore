@@ -10,3 +10,4 @@ cache
 *.keyfile.json
 *.recovery.json
 deploy/.env
+bootstrap-credentials

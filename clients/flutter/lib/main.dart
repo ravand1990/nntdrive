@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -187,7 +188,31 @@ class _LoginPageState extends State<LoginPage> {
   final _password = TextEditingController();
   bool _register = false;
   bool _busy = false;
+  bool _setupRequired = false;
+  bool _registrationAllowed = true;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkSetup();
+  }
+
+  Future<void> _checkSetup() async {
+    final server = _server.text.trim().replaceAll(RegExp(r'/+$'), '');
+    if (server.isEmpty) return;
+    try {
+      final status = await ApiClient(baseUrl: server).setupStatus();
+      if (!mounted) return;
+      setState(() {
+        _setupRequired = status.setupRequired;
+        _registrationAllowed = status.registrationAllowed || status.setupRequired;
+        if (status.setupRequired) _register = true;
+      });
+    } catch (_) {
+      // Server unreachable or old backend: leave the normal sign-in visible.
+    }
+  }
 
   @override
   void dispose() {
@@ -230,26 +255,30 @@ class _LoginPageState extends State<LoginPage> {
           },
         );
         final token = response['token'] as String;
+        final isAdmin = response['is_admin'] == true;
+
+        String? adminToken;
+        String? tokenError;
+        if (isAdmin) {
+          api.token = token;
+          try {
+            adminToken = await api.createToken('admin-dashboard');
+          } catch (e) {
+            tokenError = e.toString();
+          }
+        }
 
         final code = account['recovery_code'] as String;
         if (mounted) {
-          await showDialog<void>(
+          await _showSetupComplete(
             context: context,
-            barrierDismissible: false,
-            builder: (context) => AlertDialog(
-              title: const Text('Save your recovery code'),
-              content: SelectableText(
-                '$code\n\n'
-                'This code is shown once and is required to recover your encryption key. '
-                'Store it offline, separately from your server backups. Nobody, including the server, can reset it.',
-              ),
-              actions: [
-                FilledButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('I saved it'),
-                ),
-              ],
-            ),
+            server: server,
+            email: email,
+            accountId: accountId,
+            isAdmin: isAdmin,
+            recoveryCode: code,
+            adminToken: adminToken,
+            tokenError: tokenError,
           );
         }
         await widget.onAuthenticated(
@@ -293,6 +322,119 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
+  Future<void> _showSetupComplete({
+    required BuildContext context,
+    required String server,
+    required String email,
+    required String accountId,
+    required bool isAdmin,
+    required String recoveryCode,
+    required String? adminToken,
+    String? tokenError,
+  }) async {
+    const mono = TextStyle(fontFamily: 'monospace', fontSize: 13);
+    Widget copyRow(String label, String value) => Padding(
+          padding: const EdgeInsets.only(top: 10),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(label, style: Theme.of(context).textTheme.labelLarge),
+                    SelectableText(value, style: mono),
+                  ],
+                ),
+              ),
+              IconButton(
+                tooltip: 'Copy',
+                onPressed: () => Clipboard.setData(ClipboardData(text: value)),
+                icon: const Icon(Icons.copy, size: 18),
+              ),
+            ],
+          ),
+        );
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.check_circle, color: Colors.green),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(isAdmin ? 'First-time setup complete' : 'Account created'),
+            ),
+          ],
+        ),
+        content: SizedBox(
+          width: 580,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  isAdmin
+                      ? 'You are the administrator. Store the recovery code offline and use the admin token for the dashboard. Both are shown only once.'
+                      : 'Store the recovery code offline. It is shown only once.',
+                ),
+                const SizedBox(height: 12),
+                Text('Server', style: Theme.of(context).textTheme.labelLarge),
+                SelectableText(server, style: mono),
+                Text('Email', style: Theme.of(context).textTheme.labelLarge),
+                SelectableText(email, style: mono),
+                Text('Account id', style: Theme.of(context).textTheme.labelLarge),
+                SelectableText(accountId, style: mono),
+                const Divider(height: 26),
+                copyRow('Recovery code (offline, never on the server)', recoveryCode),
+                if (adminToken != null) ...[
+                  copyRow('Admin API token (paste at $server/admin)', adminToken),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'The admin token expires after 90 days. Keep it private.',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                ] else if (isAdmin) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    'Could not mint the admin token automatically${tokenError == null ? '' : ': $tokenError'}. '
+                    'Run scripts/mint-admin-token.sh $email admin to create one.',
+                    style: TextStyle(color: Theme.of(context).colorScheme.error),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              final all = StringBuffer()
+                ..writeln('NNTDrive account')
+                ..writeln('server: $server')
+                ..writeln('email: $email')
+                ..writeln('account_id: $accountId')
+                ..writeln('recovery_code: $recoveryCode');
+              if (adminToken != null) {
+                all.writeln('admin_token: $adminToken');
+                all.writeln('admin_url: $server/admin');
+              }
+              Clipboard.setData(ClipboardData(text: all.toString()));
+            },
+            child: const Text('Copy all'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('I saved these — continue'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -318,27 +460,65 @@ class _LoginPageState extends State<LoginPage> {
                 Text('End-to-end encrypted storage on Usenet',
                     style: theme.textTheme.bodyMedium
                         ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+                if (_setupRequired) ...[
+                  const SizedBox(height: 18),
+                  Card(
+                    color: theme.colorScheme.primaryContainer,
+                    child: Padding(
+                      padding: const EdgeInsets.all(14),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(Icons.rocket_launch_outlined,
+                              color: theme.colorScheme.onPrimaryContainer),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              'Welcome! This server has no accounts yet. Create the first '
+                              'administrator below: your encryption keys are generated on this '
+                              'device, then you will get a recovery code and a one-time admin token.',
+                              style: TextStyle(color: theme.colorScheme.onPrimaryContainer),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
                 const SizedBox(height: 24),
-                SegmentedButton<bool>(
-                  segments: const [
-                    ButtonSegment(value: false, label: Text('Sign in')),
-                    ButtonSegment(value: true, label: Text('Create account')),
-                  ],
-                  selected: {_register},
-                  onSelectionChanged: _busy
-                      ? null
-                      : (s) => setState(() {
-                            _register = s.first;
-                            _error = null;
-                          }),
-                ),
+                if (_registrationAllowed)
+                  SegmentedButton<bool>(
+                    segments: [
+                      if (!_setupRequired)
+                        const ButtonSegment(value: false, label: Text('Sign in')),
+                      ButtonSegment(
+                        value: true,
+                        label: Text(_setupRequired ? 'First-time setup' : 'Create account'),
+                      ),
+                    ],
+                    selected: {_register || _setupRequired},
+                    onSelectionChanged: _busy || _setupRequired
+                        ? null
+                        : (s) => setState(() {
+                              _register = s.first;
+                              _error = null;
+                            }),
+                  )
+                else
+                  Text('Registration is disabled. Sign in with an existing account.',
+                      style: TextStyle(color: theme.colorScheme.onSurfaceVariant)),
                 const SizedBox(height: 18),
                 TextField(
                   controller: _server,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     labelText: 'Server URL',
                     hintText: 'https://drive.example.com',
-                    border: OutlineInputBorder(),
+                    border: const OutlineInputBorder(),
+                    suffixIcon: IconButton(
+                      tooltip: 'Check server / setup state',
+                      onPressed: _busy ? null : _checkSetup,
+                      icon: const Icon(Icons.refresh),
+                    ),
                   ),
                   keyboardType: TextInputType.url,
                 ),
@@ -373,7 +553,9 @@ class _LoginPageState extends State<LoginPage> {
                     child: _busy
                         ? const SizedBox(
                             width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                        : Text(_register ? 'Create encrypted account' : 'Unlock'),
+                        : Text(_setupRequired
+                            ? 'Create administrator account'
+                            : (_register ? 'Create encrypted account' : 'Unlock')),
                   ),
                 ),
                 if (_error != null) ...[

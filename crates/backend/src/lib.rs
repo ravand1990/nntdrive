@@ -22,6 +22,8 @@ pub fn app(state: state::AppState) -> Router {
         .route("/auth/register", post(auth::register))
         .route("/auth/login", post(auth::login))
         .route("/auth/lookup", get(auth::lookup_account))
+        .route("/setup/status", get(auth::setup_status))
+        .route("/tokens", post(auth::create_token))
         .route("/auth/logout", post(auth::logout))
         .route("/me", get(auth::me))
         .route("/devices", get(auth::list_devices))

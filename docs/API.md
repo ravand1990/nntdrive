@@ -14,6 +14,8 @@ The server cannot decrypt names or manifests. `name_enc` and
 | POST | `/auth/register` | `{account_id, email, verifier, keyfile, recovery_kit?, device:{id,name,platform,public_key}}` |
 | POST | `/auth/login` | `{email, verifier, device?}` → `{token, keyfile, account_id, ...}` |
 | GET | `/auth/lookup?email=` | resolve account id so a new device can derive the account-bound verifier (rate-limited) |
+| GET | `/setup/status` | `{setup_required, registration_allowed}`; used for first-run setup |
+| POST | `/tokens` | mint an additional 90-day token for the authenticated account `{label}` → `{token, expires_at}` |
 | POST | `/auth/logout` | — |
 | GET | `/me` | account, quota, usage, devices |
 | GET | `/devices` | device list |

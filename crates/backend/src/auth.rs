@@ -312,6 +312,65 @@ pub async fn lookup_account(
     }
 }
 
+/// Reports whether this backend has no accounts yet, so a client can show the
+/// first-run setup flow.
+pub async fn setup_status(State(state): State<AppState>) -> ApiResult<impl IntoResponse> {
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM accounts")
+        .fetch_one(&state.pool)
+        .await?;
+    Ok(Json(json!({
+        "setup_required": count == 0,
+        "registration_allowed": state.config.allow_registration,
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NewTokenPayload {
+    pub label: String,
+}
+
+/// Mints an additional bearer token for the authenticated account. Used by the
+/// first-run flow to hand the user an admin dashboard token once.
+pub async fn create_token(
+    State(state): State<AppState>,
+    auth: Auth,
+    Json(body): Json<NewTokenPayload>,
+) -> ApiResult<impl IntoResponse> {
+    let label = body.label.trim();
+    if label.is_empty()
+        || label.len() > 64
+        || !label
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(ApiError::BadRequest(
+            "label must be 1-64 letters, digits, '-' or '_'".into(),
+        ));
+    }
+    let token = random_token();
+    let id = Uuid::new_v4();
+    let expires: DateTime<Utc> = sqlx::query_scalar(
+        "INSERT INTO api_tokens (id, account_id, device_id, token_hash, scope, expires_at)
+         VALUES ($1, $2, $3, $4, 'client', now() + interval '90 days')
+         RETURNING expires_at",
+    )
+    .bind(id)
+    .bind(auth.account_id)
+    .bind(auth.device_id)
+    .bind(sha256(token.as_bytes()).as_slice())
+    .fetch_one(&state.pool)
+    .await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "id": id,
+            "token": token,
+            "label": label,
+            "expires_at": expires,
+        })),
+    ))
+}
+
 async fn upsert_device_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     account_id: Uuid,

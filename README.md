@@ -107,8 +107,21 @@ bash scripts/build-clients.sh
 - **Android:** install `clients/flutter/build/app/outputs/flutter-apk/app-release.apk`.
 
 In the app use server `http://127.0.0.1:8080` (or your machine's LAN IP for a
-phone), choose **Create account**, then upload/download files. Mock articles are
-lost when the mock container stops — this mode is for local evaluation only.
+phone). A fresh backend is detected automatically: the app shows **First-time
+setup**, creates the first administrator locally, and presents the one-time
+recovery code and admin API token. Later registrations appear only if
+`NNTDRIVE_ALLOW_REGISTRATION=true`; otherwise use **Sign in**.
+
+Prefer a terminal bootstrap? One command creates the first admin, keyfile,
+recovery kit and admin token:
+
+```bash
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml up -d
+scripts/bootstrap.sh you@example.com
+```
+
+It prints the credentials once and copies the keyfile/recovery kit to
+`bootstrap-credentials/` (git-ignored).
 
 A headless verification of the same client path is available:
 
