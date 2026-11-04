@@ -13,6 +13,8 @@ services:
     entrypoint: ["/usr/local/bin/nntdrive"]
     command: ["mock-nntp", "--bind", "0.0.0.0:1119", "--group", "alt.binaries.test"]
     restart: unless-stopped
+    healthcheck:
+      disable: true
     expose:
       - "1119"
 
