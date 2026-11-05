@@ -1,3 +1,6 @@
+# Per-worktree container dependency caches and build outputs
+/.toolchain/
+
 # Rust
 /target
 **/target

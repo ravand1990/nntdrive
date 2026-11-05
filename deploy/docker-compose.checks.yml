@@ -1,0 +1,74 @@
+# Checks deliberately do not merge deployment files or read deploy/.env.
+services:
+  test-db:
+    image: postgres:16-alpine@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab
+    environment:
+      POSTGRES_USER: nntdrive
+      POSTGRES_PASSWORD: nntdrive_test
+      POSTGRES_DB: nntdrive_test
+    tmpfs:
+      - /var/lib/postgresql/data:size=512m
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U nntdrive -d nntdrive_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    networks: [checks]
+    mem_limit: 768m
+    cpus: 1
+    pids_limit: 128
+    security_opt: ["no-new-privileges:true"]
+  rust: &rust
+    image: nntdrive-toolchain-rust:local
+    build:
+      context: ./toolchains
+      target: rust
+    user: "${LOCAL_UID:?use wrapper}:${LOCAL_GID:?use wrapper}"
+    working_dir: /src
+    init: true
+    environment: &env
+      HOME: /state/home
+      CARGO_HOME: /state/cargo
+      CARGO_TARGET_DIR: /target
+      CARGO_BUILD_JOBS: "2"
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      RUST_BACKTRACE: "1"
+      TEST_DATABASE_URL: postgres://nntdrive:nntdrive_test@test-db:5432/nntdrive_test
+      DATABASE_URL: postgres://nntdrive:nntdrive_test@test-db:5432/nntdrive_test
+    volumes:
+      - ${CHECKOUT:?use wrapper}:/src
+      - ${CHECK_STATE:?use wrapper}:/state
+      - ${CHECK_STATE:?use wrapper}/target:/target
+    networks: [checks]
+    mem_limit: 6g
+    cpus: 2
+    pids_limit: 512
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+  rust-fetch:
+    <<: *rust
+    networks: [default]
+    environment:
+      <<: *env
+      TEST_DATABASE_URL: ""
+      DATABASE_URL: ""
+  flutter: &flutter
+    <<: *rust
+    image: nntdrive-toolchain-flutter:3.47.9
+    build:
+      context: ./toolchains
+      target: flutter
+    working_dir: /src/clients/flutter
+    environment:
+      <<: *env
+      PUB_CACHE: /state/pub
+      FLUTTER_SUPPRESS_ANALYTICS: "true"
+      NNTDRIVE_FFI_PATH: /target/release/libnntdrive_ffi.so
+  flutter-fetch:
+    <<: *flutter
+    networks: [default]
+networks:
+  checks:
+    internal: true

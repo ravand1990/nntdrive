@@ -71,6 +71,22 @@ anonymous links), then mobile and platform packaging.
 
 ## Backlog
 
+### NNT-020 — Protect container development checks against CI drift
+
+- Priority: P2
+- Outcome: wrapper contracts and container checks detect future toolchain drift.
+- Scope: run `python3 scripts/test-dev-check.py` in Linux CI; add a deliberate
+  manual or scheduled container-check job with documented cache/resource limits.
+- Acceptance: wrapper tests run on relevant PRs; a container-check workflow can
+  build the pinned images and run `bash scripts/dev-check.sh all`; failures are
+  visible without starting deployment services or exposing credentials.
+- Depends on: NNT-019 integration and authorization to edit workflow files.
+- Verify: actual GitHub Actions runs for wrapper tests and container checks.
+- Handoff: workflow wiring was deferred because GitHub rejected workflow-file
+  updates under the available token permissions. Local verification is not CI
+  coverage; obtain the required workflow permission before implementation.
+- Owner: — · Branch: —
+
 ### NNT-001 — Background sync service
 
 - Priority: P1
@@ -329,6 +345,44 @@ anonymous links), then mobile and platform packaging.
 _None._
 
 ## Review
+
+### NNT-019 — Containerized local development checks
+
+- Priority: P1
+- Owner: Hermes
+- Branch/worktree: `task/NNT-019-container-toolchains`; replaces the original
+  NNT-104 branch and PR #1 to align the branch with the corrected task ID.
+  NNT-019 was unused in fetched `origin/main`, branches, commits and all PRs.
+- Setup exception (retrospective): the user authorized toolchain setup outside
+  the normal priority/claim sequence and authorized these review fixes. The task
+  record was added with the implementation, not pushed as a pre-implementation
+  claim. This note records the exception; it does not rewrite that history.
+- Started: 2026-11-05T01:40:42Z
+- Updated: 2026-11-05
+- Outcome: reusable Rust/Flutter images, disposable checks, isolated PostgreSQL 16,
+  persistent per-worktree caches; no host SDKs or production changes.
+- Scope: development Compose, Dockerfile, wrapper and setup documentation only.
+- Acceptance/evidence: `bash scripts/dev-check.sh build` exited 0;
+  `bash scripts/dev-check.sh all` exited 0 twice (cold then warm). Rust 1.99.1:
+  fmt, check, clippy `-D warnings`, all 86 tests passed without DB skips.
+  Flutter 3.47.9/Dart 3.13.7: release FFI build, analyze and all 6 tests passed.
+  PostgreSQL 16.15: healthy/query verified; no published ports, internal network,
+  bounded tmpfs/resources, cleanup verified; overlap lock exits 75.
+- Review verification: rebuilt both pinned toolchain targets successfully. Full
+  `all` passed twice as UID/GID 10001:10001 in an isolated workspace/cache; the
+  second run used a fresh HOME. Rust 86/Flutter 6 passed with no database skips;
+  all workspace/cache entries remained owned by UID 10001. Flutter HOME settings
+  confirmed Linux desktop enabled. Four fast wrapper/Compose tests passed.
+  Wiring them into CI was attempted but GitHub rejected the push for missing
+  token `workflow` scope; the workflow edit was removed before publication.
+- Pinning: Ubuntu and PostgreSQL use inspected immutable image digests; Rust is
+  exact 1.99.1; Flutter archive SHA-256 retained. Apt packages/rustup installer
+  are not snapshot-pinned; this is not a bit-for-bit reproducible build.
+- Issues: native Windows, Android and iOS packaging are outside this Linux setup.
+- Handoff: see `docs/CONTAINER-DEVELOPMENT.md` for commands, limitations and job
+  prompt recommendation. No production changes or host SDK installs. CI wiring
+  remains deferred and is tracked separately as NNT-020.
+- Next step: review the PR, confirm CI results and merge only with user approval.
 
 ### NNT-100 — Establish repository-based task management
 
