@@ -207,10 +207,12 @@ also expose **Account → Check for updates**. The updater:
 
 The release repository is private today, so the check returns 404 until releases
 are public. In that case open **Account → Update settings**, set the repository
-and paste a read-only, fine-grained token; it is stored in the app's local
-settings and used for release checks and asset downloads. Clearing the field
-removes it. **Test access** verifies the repository and token before saving.
-Builds can still provide a fallback with
+and paste a read-only token; it is stored in the app's local settings and used
+for release checks and asset downloads. Agents should reuse the same GitHub PAT
+they use for GitHub MCP/repository access when it has `Contents: Read`, rather
+than creating a second updater token. Clearing the field removes it. **Test
+access** verifies the repository and token before saving. Builds can still
+provide a fallback with
 `--dart-define=NNTDRIVE_UPDATE_TOKEN=...` and
 `--dart-define=NNTDRIVE_UPDATE_REPO=owner/repo`. Android and iOS are not updated
 by this mechanism (Android requires the system package installer; iOS requires
