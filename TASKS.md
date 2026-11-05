@@ -334,8 +334,8 @@ _None._
 
 - Priority: P1 (explicit user authorization for toolchain setup).
 - Owner: Hermes
-- Branch/worktree: `task/NNT-104-container-toolchains`; PR #1 retained to preserve
-  review continuity after the user-authorized rename from NNT-104 to NNT-019.
+- Branch/worktree: `task/NNT-019-container-toolchains`; replaces the original
+  NNT-104 branch and PR #1 to align the branch with the corrected task ID.
   NNT-019 was unused in fetched `origin/main`, branches, commits and all PRs.
 - Setup exception (retrospective): the user authorized toolchain setup outside
   the normal priority/claim sequence and authorized these review fixes. The task
