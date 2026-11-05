@@ -13,6 +13,7 @@ release workflow refuses to publish if the entry is missing.
 
 ### Bug fixes
 
+- Enabled desktop update checks now run on every app launch, even after a recent check, and daily while the app stays open. Later suppresses only that version's automatic prompt; checks continue. Automatic and manual checks cannot overlap or open duplicate prompts, and failures stay non-blocking.
 - Remote folder renames now move the local subtree using stable remote node IDs, preserving baseline revisions and empty directories instead of deleting/recreating children. Interrupted local moves recover from a durable journal intent; destination collisions and selective-sync intersections stop safely without overwriting content.
 
 ## [0.4.1] - 2026-11-05

@@ -202,8 +202,14 @@ iOS platform constraints:
 
 ## Client updates
 
-Windows and Linux clients check the latest GitHub release at most once a day and
-also expose **Account → Check for updates**. The updater:
+Windows and Linux clients check the latest GitHub release on every app launch
+(including the login/unlock screen), ignoring the last check's 24-hour throttle.
+They also check every 24 hours while open. **Account → Update settings → Check at
+startup and daily** disables both automatic triggers; explicit **Account → Check
+for updates** remains available. **Later** suppresses automatic prompts only for
+that release version, not release checks or prompts for newer versions. Checks
+and prompts are serialized across automatic and manual triggers, and offline or
+inaccessible feeds never prevent using the app. The updater:
 
 1. reads `releases/latest` and compares the tag with the installed version;
 2. selects `nntdrive-windows-x64.zip` or `nntdrive-linux-x64.tar.gz`;

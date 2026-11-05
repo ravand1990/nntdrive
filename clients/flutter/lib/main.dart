@@ -14,6 +14,8 @@ import 'native.dart';
 import 'sync_controller.dart';
 import 'sync_page.dart';
 import 'updater.dart';
+import 'update_checks.dart';
+import 'update_prompt.dart';
 
 const _uuid = Uuid();
 
@@ -54,6 +56,22 @@ class _NntDriveAppState extends State<NntDriveApp> {
   String? _accountId;
   String? _email;
   Session? _session;
+  final _navigatorKey = GlobalKey<NavigatorState>();
+  late final UpdateChecks _updates = UpdateChecks(
+    check: () async => Updater(await Updater.loadConfig()).check(),
+    prompt: (info) async {
+      final context = _navigatorKey.currentState?.overlay?.context;
+      if (context != null && context.mounted) {
+        await promptUpdate(context, info, _formatBytes(info.size));
+      }
+    },
+  );
+
+  @override
+  void dispose() {
+    _updates.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -64,6 +82,9 @@ class _NntDriveAppState extends State<NntDriveApp> {
     _keyfile = widget.prefs.getString('keyfile');
     _accountId = widget.prefs.getString('accountId');
     _email = widget.prefs.getString('email');
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && Updater.supported) _updates.start();
+    });
   }
 
   void _setTheme(ThemeMode mode) {
@@ -134,6 +155,7 @@ class _NntDriveAppState extends State<NntDriveApp> {
     if (_session != null) {
       home = FilesPage(
         session: _session!,
+        updates: _updates,
         themeMode: _themeMode,
         onTheme: _setTheme,
         onSignOut: _signOut,
@@ -159,6 +181,7 @@ class _NntDriveAppState extends State<NntDriveApp> {
       home = LoginPage(initialServer: _server, onAuthenticated: _completeAuth);
     }
     return MaterialApp(
+      navigatorKey: _navigatorKey,
       title: 'NNTDrive',
       debugShowCheckedModeBanner: false,
       theme: _theme(Brightness.light),
@@ -683,12 +706,14 @@ class _UnlockPageState extends State<UnlockPage> {
 class FilesPage extends StatefulWidget {
   const FilesPage({
     super.key,
+    required this.updates,
     required this.session,
     required this.themeMode,
     required this.onTheme,
     required this.onSignOut,
   });
   final Session session;
+  final UpdateChecks updates;
   final ThemeMode themeMode;
   final ValueChanged<ThemeMode> onTheme;
   final VoidCallback onSignOut;
@@ -722,7 +747,6 @@ class _FilesPageState extends State<FilesPage> {
     _sync.addListener(_onSyncChanged);
     _loadSync();
     _refresh();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeCheckUpdates());
   }
 
   Future<void> _loadSync() async {
@@ -1110,29 +1134,9 @@ class _FilesPageState extends State<FilesPage> {
     );
   }
 
-  Future<void> _maybeCheckUpdates() async {
-    if (!Updater.supported) return;
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      if (!(prefs.getBool('updateAutoCheck') ?? true)) return;
-      final last = DateTime.tryParse(prefs.getString('updateLastCheck') ?? '');
-      if (last != null &&
-          DateTime.now().difference(last) < const Duration(hours: 24)) {
-        return;
-      }
-      await prefs.setString(
-          'updateLastCheck', DateTime.now().toIso8601String());
-      final updater = Updater(await Updater.loadConfig());
-      final info = await updater.check();
-      if (info == null || !mounted) return;
-      if (prefs.getString('updateSkippedVersion') == info.version) return;
-      await _promptUpdate(info);
-    } catch (_) {
-      // Offline or no accessible release feed: update checks are best-effort.
-    }
-  }
+  Future<void> _checkForUpdates() => widget.updates.manual(_checkForUpdatesNow);
 
-  Future<void> _checkForUpdates() async {
+  Future<void> _checkForUpdatesNow() async {
     if (!Updater.supported) {
       _toast('Automatic updates are available on Windows and Linux.');
       return;
@@ -1159,64 +1163,13 @@ class _FilesPageState extends State<FilesPage> {
     }
   }
 
-  Future<void> _promptUpdate(UpdateInfo info) async {
-    final prefs = await SharedPreferences.getInstance();
-    if (!mounted) return;
-    final go = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Update available — ${info.version}'),
-        content: SizedBox(
-          width: 540,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('A newer NNTDrive client is available'
-                    '${info.size > 0 ? ' (${_formatBytes(info.size)})' : ''}. '
-                    'It downloads, verifies and replaces this installation, then '
-                    'restarts the app.'),
-                if (info.notes.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  Text(info.notes,
-                      style: Theme.of(context).textTheme.bodySmall),
-                ],
-              ],
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Later'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Install and restart'),
-          ),
-        ],
-      ),
-    );
-    if (go != true) {
-      await prefs.setString('updateSkippedVersion', info.version);
-      return;
-    }
-    if (!mounted) return;
-    _showProgress('Downloading NNTDrive ${info.version}…');
-    try {
-      final updater = Updater(await Updater.loadConfig());
-      await updater.install(info);
-      exit(0);
-    } catch (e) {
-      if (mounted && Navigator.of(context, rootNavigator: true).canPop()) {
-        Navigator.of(context, rootNavigator: true).pop();
-      }
-      _showError(e);
-    }
-  }
+  Future<void> _promptUpdate(UpdateInfo info) =>
+      promptUpdate(context, info, _formatBytes(info.size));
 
-  Future<void> _showUpdateSettings() async {
+  Future<void> _showUpdateSettings() =>
+      widget.updates.manual(_showUpdateSettingsNow);
+
+  Future<void> _showUpdateSettingsNow() async {
     final config = await Updater.loadConfig();
     if (!mounted) return;
     final prefs = await SharedPreferences.getInstance();
@@ -1261,7 +1214,7 @@ class _FilesPageState extends State<FilesPage> {
                   contentPadding: EdgeInsets.zero,
                   value: autoCheck,
                   onChanged: (value) => setDialogState(() => autoCheck = value),
-                  title: const Text('Check automatically once a day'),
+                  title: const Text('Check at startup and daily'),
                 ),
                 const Text(
                   'The token is stored in this app’s local settings. Use a '
