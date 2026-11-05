@@ -66,6 +66,13 @@ and Scheduling readiness. Link dependency issues, not a duplicate task list.
    dependencies. Skip owned/claimed/PR-linked/Review/Blocked candidates and
    continue through independent eligible tasks. One task per run does not limit
    the repository to one open PR. Do not infer acceptance from merge alone.
+   Before selecting new work, recheck issues blocked by this worker: compare the
+   recorded blocker with current evidence (such as a restored CI run or integrated
+   prerequisite), and recheck ownership. If conclusively resolved with no human
+   decision or acceptance still required, resume that worker's existing branch/
+   worktree first, post the evidence, and set In Progress. Never make a duplicate
+   claim or branch. If unresolved, ambiguous, owned by another agent, or awaiting
+   a human decision, leave it Blocked and continue to independent eligible work.
 3. Publish an agent-identifying claim comment with branch/worktree/start time;
    set Project Status In Progress, assign the responsible account where
    appropriate, read back the exact item and issue, and recheck competing claims.
@@ -78,6 +85,8 @@ and Scheduling readiness. Link dependency issues, not a duplicate task list.
 5. Put actual checks/results, owner, branch/commit, remaining work, blockers,
    PR link and exact next action on the issue. Set Ready For Review after
    implementation; Blocked for a genuine blocker. Read back every write.
+   On later runs, objectively revalidate the recorded blocker before new task
+   selection; time passing alone does not clear a blocker.
 6. Automatically merge code PRs only under the user-authorized merge gate below.
    Mandatory post-merge reconciliation follows the completion transaction below.
    The user grants standing approval to close verified completed tasks and set

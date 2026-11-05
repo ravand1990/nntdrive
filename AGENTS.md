@@ -241,8 +241,16 @@ Decision:
 
 - **In Progress/Ready For Review, a claim comment, an assignee, or any
   branch/PR hit** — treat as owned; skip and consider independent candidates.
-- **Blocked** — not actively worked on, but do not claim until the
-  blocker is resolved.
+- **Blocked** — do not treat as new work. On each scheduled run, first review
+  blocked issues for this worker and check whether the recorded blocker has
+  objectively cleared (for example, restored CI quota or completed dependency).
+  Verify the exact evidence and recheck claims/branch/PR state. If clear and no
+  decision or acceptance remains, resume only this worker's existing branch and
+  worktree, comment with the evidence, and move Project Status to In Progress.
+  Do not create a second claim/branch. If blocked work belongs to another agent,
+  or needs user judgment, credentials, policy changes, or unverified evidence,
+  leave it Blocked and report the next action. A blocker is not resolved merely
+  because time passed or a new run started.
 - **Todo with Scheduling readiness Ready**, accepted dependencies, no claim and
   no branch/PR hit — safe to claim. Todo alone does not authorize backlog work.
 - **Records disagree** — stop and ask; never delete, force-push, or reuse an
@@ -270,6 +278,11 @@ When claiming, before implementation:
   user approves: leave a closure comment with the evidence and close the issue.
   Set Project Status Done; never equate automatic PR merge with issue acceptance.
 - **Blocked**: set Project Status Blocked and record the exact blocker and next action.
+- At the start of each run, before claiming new work, recheck blocked issues
+  owned by this worker. Resume its existing work first only when the recorded
+  blocker is demonstrably resolved and ownership is still clear; document the
+  evidence and transition to In Progress. Otherwise preserve Blocked and consider
+  other eligible tasks. Never auto-resolve a blocker requiring a human decision.
 - Before stopping or handing off, update the issue with: owner/worker, branch and
   commit/uncommitted state, completed work, exact checks and results, remaining
   work, blockers, and the exact next step.
