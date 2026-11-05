@@ -1,12 +1,23 @@
 name: Bug report
 description: Something is broken or behaves unexpectedly
 title: "Bug: "
-labels: ["status:backlog", "priority:P2"]
+labels: ["priority:P2"]
 body:
+  - type: dropdown
+    id: readiness
+    attributes:
+      label: Scheduling readiness
+      description: Queue authorization, not phase; Ready never overrides dependencies or ownership.
+      options:
+        - Backlog
+        - Ready
+      default: 0
+    validations:
+      required: true
   - type: markdown
     attributes:
       value: |
-        Keep exactly one `status:*` and one `priority:*` label. Triage the
+        Use Project Status (not status labels), default Todo + Backlog. Triage the
         priority after filing. Do not include secrets, tokens, recovery codes or
         private infrastructure details.
   - type: textarea

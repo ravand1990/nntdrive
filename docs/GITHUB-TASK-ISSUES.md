@@ -1,225 +1,120 @@
-# GitHub Issues task workflow and migration
+# GitHub Issues and Project task workflow
 
-Migration date: 2026-11-05. GitHub Issues are the single source of truth for task
-requirements, status, priority, dependencies, ownership, and handoff. `TASKS.md`
-is now only a pointer.
+## Authority and live cutover
 
-## Issue workflow
+Effective 2026-11-05 by explicit user direction, Issues own requirements,
+priority, dependencies, ownership and evidence; the existing
+[NNTDrive Project](https://github.com/users/ravand1990/projects/2) **Status**
+field owns phase. `TASKS.md` is only a pointer. Do not recreate status labels.
+This live user-authorized policy supersedes older label instructions, including
+any still present in `AGENTS.md` or on main while this documentation PR awaits
+review. It does not waive security, scope, ownership, checks or acceptance.
 
-Open tasks:
+Project ID: `PVT_kwHOAGX9p84BqWm7`.
+Status field ID: `PVTSSF_lAHOAGX9p84BqWm7zhouHdE`.
+Discover current field/option IDs at runtime; do not rely on cached option IDs.
 
-<https://github.com/ravand1990/nntdrive/issues>
+| Project Status | Meaning |
+|---|---|
+| Todo | Not implementing; may be Backlog or Ready for scheduling |
+| In Progress | Claimed implementation |
+| Ready For Review | Implementation/evidence handed off; not accepted |
+| Blocked | Explicit dependency, decision or environment blocker |
+| Done | Accepted and completed; retain closed completed tasks on the board |
 
-Status labels (exactly one per open issue):
+No new column or automation was added. Cancelled and verification/test issues
+must not be represented as completed work. Test issue #4 is excluded.
 
-- `status:backlog` — accepted or proposed, not ready
-- `status:ready` — defined, unblocked, safe to claim
-- `status:in-progress` — claimed and being implemented
-- `status:review` — implementation and evidence ready for review
-- `status:blocked` — blocked by a dependency or decision
+## Scheduling readiness is not phase
 
-Priority labels (exactly one per issue):
+Every task body contains `## Scheduling readiness` followed by exactly `Ready`
+or `Backlog`. This is queue authorization, not a second progress tracker.
+Both old Backlog and Ready map to Todo, but only Todo **and** readiness Ready
+can be considered for new selection. Missing/ambiguous membership, Status or
+readiness is not permission to work. Never promote Backlog automatically.
+Ready still requires satisfied dependencies and unambiguous lack of ownership.
+Review/Blocked/In Progress retain Ready authorization without becoming eligible;
+closed tasks remain ineligible regardless of readiness.
 
-- `priority:P0` — security, data loss, or release blocker
-- `priority:P1` — current milestone
-- `priority:P2` — planned later
+At cutover, old Ready and already active/review/blocked tasks retained Ready;
+old Backlog retained Backlog. Historical closed tasks received conservative
+Backlog, because completion is not authorization for a new run.
+New tasks default to Todo plus Backlog, with one priority label:
+`priority:P0` security/data loss/release blockers, `priority:P1` current milestone,
+`priority:P2` later work. Preserve other non-status labels.
 
-Closed issues represent completed or explicitly cancelled tasks. Leave a closure
-comment with the reason and evidence; do not leave a status label on a closed
-issue. Use the issue templates for new tasks and bugs.
+Task bodies retain Outcome, Scope / exclusions, Acceptance criteria,
+Dependencies, Verification, Ownership / branch / linked PR, Handoff / blockers,
+and Scheduling readiness. Link dependency issues, not a duplicate task list.
 
-Issue bodies use this structure:
+## Discovery, claims and handoff
 
-- Outcome
-- Scope / exclusions
-- Acceptance criteria
-- Dependencies (linked as `NNT-xxx (#issue)`)
-- Verification
-- Ownership / branch / linked PR
-- Handoff / blockers
+1. Read issue body/comments, assignees, priority, dependencies and linked/open
+   PRs; inspect local/remote branches, commits and worktrees. Read the Project
+   membership and Status with full pagination, not issue label search.
+2. Select the highest-priority unowned open Todo + Ready task with satisfied
+   dependencies. Skip owned/claimed/PR-linked/Review/Blocked candidates and
+   continue through independent eligible tasks. One task per run does not limit
+   the repository to one open PR. Do not infer acceptance from merge alone.
+3. Publish an agent-identifying claim comment with branch/worktree/start time;
+   set Project Status In Progress, assign the responsible account where
+   appropriate, read back the exact item and issue, and recheck competing claims.
+   Comments, assignments and Project transitions are coordination, not locks.
+4. Use an isolated task branch/worktree; resume only your own unfinished work
+   with clear coordinator authorization. Review handoffs are not unfinished
+   implementation. Preserve other agents' work and existing branches.
+5. Put actual checks/results, owner, branch/commit, remaining work, blockers,
+   PR link and exact next action on the issue. Set Ready For Review after
+   implementation; Blocked for a genuine blocker. Read back every write.
+6. Never automatically close, merge, deploy or set Done. Done requires verified
+   acceptance, integration and user approval with a closure evidence comment.
+   Avoid automatic-closing keywords in PRs.
 
-Manual status transitions are required. There are no GitHub Projects or
-automations in this migration; no Project is needed for worker operation.
-Comments and labels are coordination, not an atomic lock.
+## API capability and protected credentials
 
-## Ownership and claiming
+Use verified GitHub MCP issue/PR tools when available. The currently configured
+Hermes GitHub MCP launcher exports issue/PR/repository/Actions tools, **not
+Projects**. Use authenticated GitHub GraphQL for Project reads/mutations and
+report that fallback honestly. REST is available for issue/comment operations;
+a missing gh CLI is not a blocker. Other clients must verify their own access.
 
-1. Read the issue body, comments, labels, assignees, linked PRs, dependencies and
-   relevant branches/worktrees.
-2. Check for a claim comment, `status:in-progress`/`status:review`, an assignee,
-   and a branch/PR containing the NNT-ID.
-3. Claim by posting a comment with worker, branch, worktree and start time, then
-   set exactly one `status:in-progress` label and assign the responsible account.
-4. Read the issue back and recheck for competing claims before editing code.
-5. Use an isolated branch/worktree, implement one task, and record verification
-   on the issue/PR.
-6. Set `status:review` when implementation is ready. Do not close until
-   acceptance is verified and the user approves.
+Read the PAT only inside protected runtime code; never print tokens, headers,
+credential URLs or secrets. Do not add credential material to repository files.
+Discover fields/options with ProjectV2 queries; paginate items and issue lists,
+exclude PR objects from issue enumeration, match repository and issue node ID,
+and add missing items without duplicates. Use addProjectV2ItemById and
+updateProjectV2ItemFieldValue, then read the exact item back. Project reads can
+lag successful writes: bounded read retries are appropriate, not blind repeated
+mutations or treating a mutation response as verification.
 
-If claims race or records disagree, stop and ask the coordinator. Never take an
-issue already claimed or awaiting review.
+## Migration audit (2026-11-05)
 
-## MCP verification
+Fresh issue bodies/comments and PRs were reconciled after the old worker
+completed at 16:53:24 UTC. SQLite executions were inspected read-only: no
+claimed/running execution of this job remained. PR #39 / NNT-005 at `d4ef2fd`
+remains Ready For Review; NNT-020 (#5) remains Review pending acceptance, not
+Done merely because implementation is on main. NNT-004 (#9) has an explicit
+accepted-and-merged closure comment. Historical completed issues retain their
+recorded completion evidence; this migration asserts no new acceptance.
 
-Configured client in this environment: OpenCode, GitHub remote MCP endpoint
-`https://api.githubcopilot.com/mcp/`. The exported tools match the official
-`github/github-mcp-server` issue tool family.
+All 30 real task issues (#5–#34), 19 open and 11 closed completed, are members
+exactly once. Cutover phases: Todo 12 (3 Ready, 9 Backlog), In Progress 0,
+Ready For Review 2, Blocked 5, Done 11. Readiness: Ready 10, Backlog 20 (including
+11 closed tasks). No issues were closed/reopened or PRs merged by this cutover.
+All five obsolete status label definitions were deleted only after membership
+and phase readback per issue and zero status-label usage across issues **and
+PRs**. Thirteen non-status definitions, issue non-status labels, assignees and
+original body text were preserved. Existing mapping NNT-ID → issue number is
+unchanged; use the live board, not a dated duplicate phase table.
 
-Verified through MCP on 2026-11-05:
+## Scheduled worker policy
 
-| Capability | Tool | Result |
-|---|---|---|
-| List issues | `github_list_issues` | 22 open / 9 closed (including test issue) |
-| Search issues | `github_search_issues` | Returned issue #24 for `NNT-019` |
-| Read issue | `github_issue_read` | Body, labels, assignees, state |
-| Read comments | `github_issue_read` (`get_comments`) | 2 comments on test issue |
-| Create issue | `github_issue_write` (`create`) | Issue #4 created |
-| Update body | `github_issue_write` (`update`) | Body changed and read back |
-| Update labels | `github_issue_write` (`labels`) | `status:in-progress`, `priority:P1` applied |
-| Assign | `github_issue_write` (`assignees`) | `ravand1990` assigned |
-| Comment | `github_add_issue_comment` | Claim and closure comments added |
-| Close / reopen | `github_issue_write` (`state`) | Closed, reopened, closed again |
-
-Temporary verification issue #4 was closed as a test and is not a project task.
-All 30 migrated task issues were read back through MCP and have the required
-sections. The 22 open issues each have exactly one status and one priority
-label; the 8 closed task issues each have one priority label and no status label.
-`github_search_issues` correctly filters by label, for example
-`repo:ravand1990/nntdrive is:issue is:open label:"status:ready"`. In this client,
-`github_list_issues` returned label entries as `null`, so use `search_issues` or
-`issue_read` when label names matter.
-
-Label creation and bulk issue creation used the authenticated GitHub REST API as
-a fallback. That is not MCP proof; the MCP write/read operations above are.
-
-Other clients:
-
-- **Codex**: no GitHub MCP server entry found in
-  `C:\Users\ravand\.codex\config.toml`. Unverified. To add the official server,
-  export `GITHUB_PERSONAL_ACCESS_TOKEN` in the Codex process environment (do not
-  commit it) and add:
-
-  ```toml
-  [mcp_servers.github]
-  command = "docker"
-  args = ["run", "-i", "--rm", "-e", "GITHUB_PERSONAL_ACCESS_TOKEN",
-          "ghcr.io/github/github-mcp-server"]
-  env = { GITHUB_TOOLSETS = "issues" }
-  ```
-
-  Restart Codex, verify the exported tools, and repeat the issue write/read
-  checks before treating Codex as verified.
-
-- **Hermes**: the scheduled job was accessible and is paused for cutover. Its
-  config has no GitHub MCP server entry. The job prompt prefers MCP but falls
-  back to its existing authenticated GitHub API skill and must report which path
-  it used. Hermes MCP remains unverified. To add the official server, add a
-  `github` entry under `mcp_servers` using the Docker command above, preserve the
-  configured token in the process environment, restart Hermes, verify the tools,
-  and run the issue write/read checks before resuming the job.
-
-## Migration mapping
-
-30 `TASKS.md` entries migrated exactly once. Issue numbers and NNT-IDs are
-different identifiers.
-
-| NNT-ID | Issue | Status | Title |
-|---|---|---|---|
-| NNT-020 | [#5](https://github.com/ravand1990/nntdrive/issues/5) | Backlog | Protect container development checks against CI drift |
-| NNT-001 | [#6](https://github.com/ravand1990/nntdrive/issues/6) | Backlog | Background sync service |
-| NNT-002 | [#7](https://github.com/ravand1990/nntdrive/issues/7) | Backlog | Secure local key storage |
-| NNT-003 | [#8](https://github.com/ravand1990/nntdrive/issues/8) | Backlog | AMK epoch rotation on device revocation |
-| NNT-004 | [#9](https://github.com/ravand1990/nntdrive/issues/9) | Backlog | Remote folder rename as move |
-| NNT-005 | [#10](https://github.com/ravand1990/nntdrive/issues/10) | Backlog | Per-file sync progress and conflict resolution UI |
-| NNT-006 | [#11](https://github.com/ravand1990/nntdrive/issues/11) | Backlog | Windows installer and clean-VM test |
-| NNT-007 | [#12](https://github.com/ravand1990/nntdrive/issues/12) | Backlog | iOS client |
-| NNT-008 | [#13](https://github.com/ravand1990/nntdrive/issues/13) | Backlog | Sharing and public links |
-| NNT-009 | [#14](https://github.com/ravand1990/nntdrive/issues/14) | Backlog | Virtual drives and native mobile integrations |
-| NNT-010 | [#15](https://github.com/ravand1990/nntdrive/issues/15) | Backlog | Provider/admin operations completion |
-| NNT-011 | [#16](https://github.com/ravand1990/nntdrive/issues/16) | Backlog | Security review and hardening |
-| NNT-012 | [#17](https://github.com/ravand1990/nntdrive/issues/17) | Backlog | Test gaps |
-| NNT-013 | [#18](https://github.com/ravand1990/nntdrive/issues/18) | Backlog | Multi-arch container image |
-| NNT-014 | [#19](https://github.com/ravand1990/nntdrive/issues/19) | Backlog | Mobile update distribution (deferred decision) |
-| NNT-015 | [#20](https://github.com/ravand1990/nntdrive/issues/20) | Backlog | Repository visibility and PAT retirement |
-| NNT-016 | [#21](https://github.com/ravand1990/nntdrive/issues/21) | Backlog | Documentation drift |
-| NNT-018 | [#22](https://github.com/ravand1990/nntdrive/issues/22) | Backlog | Update channels (Default / Nightly) |
-| NNT-017 | [#23](https://github.com/ravand1990/nntdrive/issues/23) | Ready | Check for updates on every startup |
-| NNT-019 | [#24](https://github.com/ravand1990/nntdrive/issues/24) | Done | Containerized local development checks |
-| NNT-100 | [#25](https://github.com/ravand1990/nntdrive/issues/25) | Done | Establish repository-based task management |
-| NNT-095 | [#26](https://github.com/ravand1990/nntdrive/issues/26) | Review | Updater settings and token diagnostics |
-| NNT-102 | [#27](https://github.com/ravand1990/nntdrive/issues/27) | Blocked | Validate private-repository PAT flow |
-| NNT-103 | [#28](https://github.com/ravand1990/nntdrive/issues/28) | Blocked | End-to-end Windows/Linux self-update |
-| NNT-090 | [#29](https://github.com/ravand1990/nntdrive/issues/29) | Done | Streaming sync and remote hash cache |
-| NNT-091 | [#30](https://github.com/ravand1990/nntdrive/issues/30) | Done | Selective sync and conflict review |
-| NNT-092 | [#31](https://github.com/ravand1990/nntdrive/issues/31) | Done | Admin user/provider editing |
-| NNT-093 | [#32](https://github.com/ravand1990/nntdrive/issues/32) | Done | Client builds in GitHub releases |
-| NNT-094 | [#33](https://github.com/ravand1990/nntdrive/issues/33) | Done | Windows/Linux auto-updater |
-| NNT-101 | [#34](https://github.com/ravand1990/nntdrive/issues/34) | Done | Verify v0.4.1 release artifacts and notes |
-
-Counts: 30 source entries, 30 issue mappings, 22 open (18 backlog, 1 ready,
-1 review, 2 blocked), 8 closed. Temporary MCP issue #4 is excluded.
-
-## Reconciliation and exceptions
-
-- `NNT-019` was still `Review` in `TASKS.md`; PR #2 was merged with green CI and
-  the user approved it. It is closed as Done, with `NNT-020` (#5) tracking the
-  remaining CI wiring follow-up.
-- `NNT-100` was still `Review`; the original `AGENTS.md`/`TASKS.md` work was
-  committed in `3e8084e`, and this migration supersedes that tracker. It is
-  closed as Done with the superseding reason recorded.
-- `NNT-101` was already Done in `TASKS.md` and is closed with the release audit
-  evidence.
-- `NNT-095` remains open in `status:review`; PAT validation is still blocked by
-  `NNT-102` (#27).
-- `NNT-102` and `NNT-103` remain open and `status:blocked`.
-
-Links to PR #2 and PR #3 were added to the corresponding issue bodies and the PR
-descriptions.
-
-## Hermes cutover
-
-The sole NNTDrive Hermes cron job was accessed on 2026-11-05. Its schedule,
-model, provider, reasoning, skills, workdir and Git authentication were
-preserved. The job is **paused** until this PR is merged and the cutover is
-authorized.
-
-Preserved settings:
-
-- every-two-hour schedule
-- `gpt-6.1-sol` via `openai-codex`
-- minimal reasoning
-- existing skills, workdir, Git author and authentication
-- one-task-per-run and no-merge policy
-
-The prompt now reads `AGENTS.md`, `docs/GITHUB-TASK-ISSUES.md`, and GitHub Issues
-instead of `TASKS.md`; claims and handoffs go to the issue. It prefers GitHub MCP
-issue tools and may use the existing authenticated GitHub API skill if MCP is not
-configured for Hermes. It must report which path it used and must not fall back
-to `TASKS.md`.
-
-Operator checklist:
-
-1. Keep Hermes paused until this migration PR is merged and the `TASKS.md`
-   pointer is live. Do not allow simultaneous selection from both trackers.
-2. Merge this migration PR only after user review and CI.
-3. Run one Hermes job manually or wait for one scheduled run and verify it
-   selects a `status:ready` issue, posts a claim, updates labels, and never
-   merges or closes without acceptance.
-4. Resume the job only after that verification. Do not change its schedule,
-   model, provider, reasoning, skills, workdir, Git author, or no-merge policy.
-5. Do not create another tracking service, Project board, or schedule.
-
-## Cutover state and remaining blockers
-
-- Issues are live and verified. The repository still contains the old `TASKS.md`
-  until this migration PR (#35) is merged; this is the migration window, not a
-  second authoritative tracker. Hermes is paused.
-- The migration PR must remain unmerged for user review.
-- OpenCode GitHub MCP access is verified. Codex has no GitHub MCP entry and is
-  unverified. Hermes has no GitHub MCP server entry; its existing GitHub API skill
-  is the fallback, and MCP for Hermes remains unverified.
-- No GitHub Project is required, and none is configured. If a Project is added
-  later, it must be a view of these issues and must not introduce conflicting
-  status fields.
-- Labels are not an atomic lock. Multiple agents can share one GitHub account;
-  claim comments and rechecks are mandatory.
+The user authorized live worker cutover and resume independently of merging
+this documentation PR. The scheduled prompt explicitly carries this policy
+while older checked-in instructions remain; it must never revert to labels.
+Preserve the existing 120-minute interval, gpt-6.1-sol/openai-codex, minimal
+reasoning, skills, workdir, protected authentication, repository-local Git
+identity, one-task-per-run and no-merge/no-deploy policy. Do not trigger an extra
+run merely to validate configuration. The scheduler is not an atomic
+cross-machine claim lock. New clients must adopt the same live policy before
+being allowed to compete for work.

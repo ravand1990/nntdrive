@@ -132,8 +132,8 @@ For the existing scheduled job, recommend (do not create another schedule):
 
 > Read AGENTS.md and the open GitHub Issues, then read the issue body,
 > comments, labels, assignees, dependencies and linked PRs before claiming a
-> task. Claim one highest-priority status:ready issue with satisfied
-> dependencies by posting a claim comment and setting status:in-progress. Use an
+> task. Claim one highest-priority Project Todo + Scheduling readiness Ready issue with satisfied
+> dependencies by posting a claim comment and setting Project Status In Progress. Use an
 > isolated task worktree. Reuse installed toolchain images; run
 > `bash scripts/dev-check.sh rust` and/or `bash scripts/dev-check.sh flutter`
 > from that worktree (or `all` for cross-stack work). Do not install host SDKs,
@@ -141,7 +141,7 @@ For the existing scheduled job, recommend (do not create another schedule):
 > Report exact command exit codes and baseline failures; never modify unrelated
 > product code to make checks green. Do not commit/push/open PR without the
 > user's explicit scope; when authorized open a PR for review and never merge.
-> Move implementation to status:review; never close the issue until acceptance
+> Move implementation to Project Status Ready For Review; never close the issue until acceptance
 > is verified and the user approves.
 
 A new worktree needs its own dependency fetch/target cache (performed by the
