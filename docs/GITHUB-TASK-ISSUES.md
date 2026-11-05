@@ -155,41 +155,46 @@ descriptions.
 
 ## Hermes cutover
 
-The Hermes scheduled worker was not accessible from this environment, so its
-configuration is unverified. Preserve these settings:
+The sole NNTDrive Hermes cron job was accessed on 2026-11-05. Its schedule,
+model, provider, reasoning, skills, workdir and Git authentication were
+preserved. The job is **paused** until this PR is merged and the cutover is
+authorized.
+
+Preserved settings:
 
 - every-two-hour schedule
 - `gpt-6.1-sol` via `openai-codex`
 - minimal reasoning
-- existing Git author and authentication
+- existing skills, workdir, Git author and authentication
 - one-task-per-run and no-merge policy
+
+The prompt now reads `AGENTS.md`, `docs/GITHUB-TASK-ISSUES.md`, and GitHub Issues
+instead of `TASKS.md`; claims and handoffs go to the issue. It prefers GitHub MCP
+issue tools and may use the existing authenticated GitHub API skill if MCP is not
+configured for Hermes. It must report which path it used and must not fall back
+to `TASKS.md`.
 
 Operator checklist:
 
-1. **Pause Hermes before merging this migration PR.** Do not allow simultaneous
-   selection from `TASKS.md` and GitHub Issues.
-2. Update only task discovery, claiming, and handoff instructions:
-   > Read `AGENTS.md` and the open GitHub Issues. Before working, read the issue
-   > body, comments, labels, assignees, dependencies and linked PRs. Claim one
-   > highest-priority `status:ready` issue with satisfied dependencies by posting
-   > a claim comment, setting `status:in-progress`, and assigning the account.
-   > Use an isolated task branch/worktree. One task per run. Never take an issue
-   > already claimed, in progress, in review, or blocked. Use MCP issue tools;
-   > if MCP is unavailable, stop and report rather than falling back silently.
-   > Record verification on the issue/PR, move implementation to
-   > `status:review`, never merge, and never weaken acceptance criteria.
-3. Resume Hermes only after this PR is merged, the `TASKS.md` pointer is live,
-   and the first issue-driven run has been verified.
-4. Do not create another tracking service, Project board, or schedule.
+1. Keep Hermes paused until this migration PR is merged and the `TASKS.md`
+   pointer is live. Do not allow simultaneous selection from both trackers.
+2. Merge this migration PR only after user review and CI.
+3. Run one Hermes job manually or wait for one scheduled run and verify it
+   selects a `status:ready` issue, posts a claim, updates labels, and never
+   merges or closes without acceptance.
+4. Resume the job only after that verification. Do not change its schedule,
+   model, provider, reasoning, skills, workdir, Git author, or no-merge policy.
+5. Do not create another tracking service, Project board, or schedule.
 
 ## Cutover state and remaining blockers
 
 - Issues are live and verified. The repository still contains the old `TASKS.md`
-  until this migration PR is merged; this is the migration window, not a second
-  authoritative tracker. Pause Hermes before merging.
+  until this migration PR (#35) is merged; this is the migration window, not a
+  second authoritative tracker. Hermes is paused.
 - The migration PR must remain unmerged for user review.
-- Codex MCP configuration is unverified; add and test the official GitHub MCP
-  server before assigning implementation work to Codex.
+- OpenCode GitHub MCP access is verified. Codex has no GitHub MCP entry and is
+  unverified. Hermes has no GitHub MCP server entry; its existing GitHub API skill
+  is the fallback, and MCP for Hermes remains unverified.
 - No GitHub Project is required, and none is configured. If a Project is added
   later, it must be a view of these issues and must not introduce conflicting
   status fields.
