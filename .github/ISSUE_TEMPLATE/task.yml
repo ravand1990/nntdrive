@@ -1,12 +1,23 @@
 name: Task
 description: Actionable NNTDrive task tracked in GitHub Issues
 title: "NNT-___ — "
-labels: ["status:backlog", "priority:P2"]
+labels: ["priority:P2"]
 body:
+  - type: dropdown
+    id: readiness
+    attributes:
+      label: Scheduling readiness
+      description: Queue authorization, not phase; Ready never overrides dependencies or ownership.
+      options:
+        - Backlog
+        - Ready
+      default: 0
+    validations:
+      required: true
   - type: markdown
     attributes:
       value: |
-        Keep exactly one `status:*` and one `priority:*` label. Change the
+        Use Project Status (not status labels), default Todo + Backlog. Change the
         default `priority:P2` label if this task is P0 or P1. Existing NNT IDs
         stay in the title; new tasks may use the issue number instead.
   - type: textarea

@@ -1,16 +1,12 @@
-# TASKS.md — moved to GitHub Issues
+# TASKS.md — task tracker pointers
 
-Task tracking moved to GitHub Issues on 2026-11-05.
+- **Issues / requirements / ownership:** <https://github.com/ravand1990/nntdrive/issues>
+- **Project / phase:** <https://github.com/users/ravand1990/projects/2>
+- **Workflow and live cutover policy:** [docs/GITHUB-TASK-ISSUES.md](docs/GITHUB-TASK-ISSUES.md)
+- **Shared agent rules:** [AGENTS.md](AGENTS.md)
 
-- **Open tasks / board view:** <https://github.com/ravand1990/nntdrive/issues>
-- **Labels:** `status:backlog`, `status:ready`, `status:in-progress`,
-  `status:review`, `status:blocked`; `priority:P0`, `priority:P1`, `priority:P2`.
-- **Workflow, labels, MCP tools, and migration mapping:**
-  [docs/GITHUB-TASK-ISSUES.md](docs/GITHUB-TASK-ISSUES.md)
-- **Agent rules:** [AGENTS.md](AGENTS.md)
-
-Do not add tasks here. Create an issue with the task or bug template, set exactly
-one status and one priority label, and link dependencies to their issues.
-
-The previous Markdown backlog remains available in Git history; it is not an
-active tracker.
+Do not add tasks here or recreate status labels. New task issues use Project
+Status Todo, issue-body Scheduling readiness Backlog, one priority label and
+linked dependencies. Todo alone is not scheduling authorization. Follow the
+explicit live Project policy in the workflow document if older checked-in
+label instructions disagree. The historical Markdown backlog is in Git history.
