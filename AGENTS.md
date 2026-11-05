@@ -175,15 +175,16 @@ issue's acceptance criteria:
 1. Do not implement it inside the current task.
 2. Check open/closed issues, comments, branches, and PRs for an existing entry;
    never create a duplicate.
-3. Create one issue using the task or bug template, with exactly one
-   `status:backlog` label and exactly one `priority:P0`, `P1`, or `P2` label.
+3. Create one issue using the task or bug template, with exactly one priority
+   label. Add it to NNTDrive Board with Status Todo and Scheduling readiness
+   Backlog. Project Status is authoritative; never recreate status labels.
 4. Include Outcome, Scope / exclusions, Acceptance criteria, Dependencies,
    Verification, Ownership, and Handoff / blockers in the issue body. Link
    dependency issues explicitly.
 5. Priority: `P0` for security, data loss, or release blockers; `P1` if it
    belongs to the current milestone; `P2` otherwise.
 6. If it blocks the current task, link the dependency and set the current issue's
-   status to `status:blocked`. Do not silently widen scope.
+   Project Status to Blocked. Do not silently widen scope.
 7. For security-sensitive findings, do not put secrets, exploit details, or
    private infrastructure in the repository; notify the user/coordinator first.
 8. Post the handoff/evidence on the issue before stopping.
@@ -191,16 +192,22 @@ issue's acceptance criteria:
 ## Ownership and Git
 
 - Read the issue, comments, assignees, dependencies, and linked/open PRs first.
-  Never take an issue already claimed or in `status:in-progress`/`status:review`
+  Never take an issue already claimed or in Project In Progress/Ready For Review
   without coordinating with the user.
 - One sustained session per task where practical. If you must stop, leave the
   handoff fields described below on the issue.
 - Concurrent agents use separate branches and separate checkouts/worktrees, for
   example `task/<NNT-ID>-<slug>`, never the same working tree.
-- GitHub issue comments and labels are coordination, not an atomic distributed
+- GitHub issue comments, assignees and Project fields are coordination, not an atomic distributed
   lock. They are also shared by multiple agents using one account. If claims
   race, stop and coordinate.
-- **Require explicit user approval before** committing, pushing, tagging,
+- Task-scoped commits, branch pushes and PRs are authorized. Automatically merge
+  only after all applicable required tests/checks pass for the exact head,
+  acceptance requirements are met, and no blocking reviews or conflicts remain.
+  Missing, pending, failed or unverifiable required checks block merging; never
+  bypass protections. Informational unsupported-platform jobs are not required.
+  Verify merged state and issue acceptance afterward; merge alone is not Done.
+- **Require explicit user approval before** direct main pushes, tagging,
   deploying, force-pushing, moving/deleting tags, resetting data, deleting
   files, or any other destructive operation.
 
@@ -211,7 +218,7 @@ Use the GitHub MCP issue tools and repository state before writing code. Replace
 
 A task is already being worked on if **any** of these is true:
 
-- The issue has `status:in-progress` or `status:review`.
+- The issue has Project Status In Progress or Ready For Review.
 - The issue has an assignee, a claim comment, or an open linked PR.
 - A local or remote branch contains the task ID.
 - A commit or PR contains the task ID.
@@ -232,11 +239,12 @@ not treat a failed lookup as proof that the issue is free.
 
 Decision:
 
-- **`status:in-progress`/`status:review`, a claim comment, an assignee, or any
-  branch/PR hit** — treat as owned. Stop and ask the coordinator/user.
-- **`status:blocked`** — not actively worked on, but do not claim until the
+- **In Progress/Ready For Review, a claim comment, an assignee, or any
+  branch/PR hit** — treat as owned; skip and consider independent candidates.
+- **Blocked** — not actively worked on, but do not claim until the
   blocker is resolved.
-- **`status:ready` with no claim and no branch/PR hit** — safe to claim.
+- **Todo with Scheduling readiness Ready**, accepted dependencies, no claim and
+  no branch/PR hit — safe to claim. Todo alone does not authorize backlog work.
 - **Records disagree** — stop and ask; never delete, force-push, or reuse an
   unrecorded branch.
 - **Unrecorded branch/worktree exists** — treat it as owned and ask.
@@ -245,8 +253,8 @@ When claiming, before implementation:
 
 1. Add a claim comment with the worker/agent name, task branch, worktree, and
    start time.
-2. Set `status:in-progress` and add the responsible GitHub account as assignee
-   where appropriate. Remove `status:ready`.
+2. Set Project Status In Progress and add the responsible GitHub account as
+   assignee where appropriate. Discover field/option IDs and verify readback.
 3. Create or use a branch named `task/<NNT-ID>-<short-slug>`.
 4. Include `<NNT-ID>` in commit and PR titles so later checks find it.
 5. Read the issue back and recheck for competing claims.
@@ -256,12 +264,12 @@ When claiming, before implementation:
 ## Status and handoff
 
 - **Review** when implementation and evidence are ready for acceptance: set
-  `status:review`, remove other status labels, open/link the PR, and post the
+  Project Status Ready For Review, open/link the PR, and post the
   verification summary. Do not close the issue.
 - **Done** only after acceptance is verified, changes are integrated, and the
   user approves: leave a closure comment with the evidence and close the issue.
-  Do not keep an open status label on a closed issue.
-- **Blocked**: set `status:blocked` and record the exact blocker and next action.
+  Set Project Status Done; never equate automatic PR merge with issue acceptance.
+- **Blocked**: set Project Status Blocked and record the exact blocker and next action.
 - Before stopping or handing off, update the issue with: owner/worker, branch and
   commit/uncommitted state, completed work, exact checks and results, remaining
   work, blockers, and the exact next step.
