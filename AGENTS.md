@@ -1,8 +1,13 @@
 # AGENTS.md — shared working rules
 
-This file is for OpenCode, Codex, Hermes, and human maintainers. Read it, then
-`TASKS.md`, before starting work. `TASKS.md` owns task status; this file owns
-shared rules. Detailed design stays in `docs/`.
+This file is for OpenCode, Codex, Hermes, and human maintainers. Read it, then the
+GitHub Issues for the repository, before starting work. GitHub Issues own task
+requirements, status, priority, dependencies, and ownership; this file owns
+shared rules. `TASKS.md` is only a pointer.
+
+Detailed architecture and procedures stay in `docs/`:
+`docs/GITHUB-TASK-ISSUES.md` describes the issue workflow, labels, MCP tools,
+migration mapping, and cutover.
 
 ## Project
 
@@ -24,7 +29,9 @@ Invariants that must not be weakened:
 
 ## Read first
 
-1. `TASKS.md` — claim/ownership rules and current work.
+1. **GitHub Issues** — open tasks, claims, dependencies, and linked PRs:
+   <https://github.com/ravand1990/nntdrive/issues>.
+   Read `docs/GITHUB-TASK-ISSUES.md` for labels and the MCP tool workflow.
 2. `docs/STATUS.md` — verified capabilities, known limits, next priorities.
 3. `docs/DEVELOPMENT.md` — commands, code map, conventions.
 4. The task-relevant doc: `docs/ARCHITECTURE.md`, `docs/API.md`,
@@ -47,6 +54,8 @@ Invariants that must not be weakened:
 - `deploy/` — Dockerfile, Compose, env examples, provider examples.
 - `scripts/` — client builds, backup/restore, bootstrap, release notes.
 - `.github/workflows/` — `ci.yml`, `clients.yml`, `release.yml`.
+- `.github/ISSUE_TEMPLATE/` and `.github/pull_request_template.md` — task and PR
+  structure.
 
 ## Environment and verified commands
 
@@ -89,8 +98,8 @@ Reference or CI-only commands (not re-run during the last setup pass):
 - `scripts/release-notes.sh <tag>` (verified for v0.4.1 notes extraction)
 - Docker image/release workflows and iOS builds (CI; iOS is non-blocking and
   unbuilt)
-- `gh` CLI is not installed on the current Windows host; use the GitHub API/UI
-  or Git commands instead.
+- `gh` CLI is not installed on the current Windows host; use the GitHub MCP
+  issue tools or the GitHub API/UI instead.
 
 Do not paste machine-specific temporary paths, credentials, or helper scripts
 into handoff notes. Use repository-relative paths and environment variable names.
@@ -115,8 +124,9 @@ into handoff notes. Use repository-relative paths and environment variable names
 
 ## Scope and completion
 
-- Work only inside the claimed task. Do not mix opportunistic refactors or
-  features into it. Record unrelated findings in `TASKS.md` Backlog instead.
+- Work only inside the claimed issue. Do not mix opportunistic refactors or
+  features into it. Record unrelated findings as new GitHub issues instead
+  (see below).
 - A task is complete only when its acceptance criteria are met and evidence is
   recorded: commands run, results, and any manual checks. Never claim a test,
   build, release, or manual verification that was not actually run.
@@ -126,78 +136,104 @@ into handoff notes. Use repository-relative paths and environment variable names
 - Do not declare success from a merged commit alone. Update docs/changelog,
   confirm no secrets, and hand off remaining risks.
 
+### Bugs and feature requests found during work
+
+When you find a bug, missing requirement, or feature request outside the claimed
+issue's acceptance criteria:
+
+1. Do not implement it inside the current task.
+2. Check open/closed issues, comments, branches, and PRs for an existing entry;
+   never create a duplicate.
+3. Create one issue using the task or bug template, with exactly one
+   `status:backlog` label and exactly one `priority:P0`, `P1`, or `P2` label.
+4. Include Outcome, Scope / exclusions, Acceptance criteria, Dependencies,
+   Verification, Ownership, and Handoff / blockers in the issue body. Link
+   dependency issues explicitly.
+5. Priority: `P0` for security, data loss, or release blockers; `P1` if it
+   belongs to the current milestone; `P2` otherwise.
+6. If it blocks the current task, link the dependency and set the current issue's
+   status to `status:blocked`. Do not silently widen scope.
+7. For security-sensitive findings, do not put secrets, exploit details, or
+   private infrastructure in the repository; notify the user/coordinator first.
+8. Post the handoff/evidence on the issue before stopping.
+
 ## Ownership and Git
 
-- Read `TASKS.md` first. Claim a task by moving it to **In Progress** and
-  recording owner, branch/worktree, and start date. Never take a task already
-  owned by another agent or in Review without coordinating with the user.
+- Read the issue, comments, assignees, dependencies, and linked/open PRs first.
+  Never take an issue already claimed or in `status:in-progress`/`status:review`
+  without coordinating with the user.
 - One sustained session per task where practical. If you must stop, leave the
-  handoff fields described below.
+  handoff fields described below on the issue.
 - Concurrent agents use separate branches and separate checkouts/worktrees, for
-  example `task/NNT-001-background-sync`, never the same working tree.
-- Markdown is not a lock. With multiple agents, require manual assignment or a
-  single coordinator; do not assume another checkout has the latest ownership.
-- Edit only the relevant task in `TASKS.md`; never replace the whole file from a
-  stale copy or overwrite another agent's work.
+  example `task/<NNT-ID>-<slug>`, never the same working tree.
+- GitHub issue comments and labels are coordination, not an atomic distributed
+  lock. They are also shared by multiple agents using one account. If claims
+  race, stop and coordinate.
 - **Require explicit user approval before** committing, pushing, tagging,
   deploying, force-pushing, moving/deleting tags, resetting data, deleting
   files, or any other destructive operation.
 
 ### Before claiming: is the task already being worked on?
 
-Run these checks from the primary checkout **before** writing code. Replace
+Use the GitHub MCP issue tools and repository state before writing code. Replace
 `<NNT-ID>` with the task ID, for example `NNT-017`.
 
 A task is already being worked on if **any** of these is true:
 
-- `TASKS.md` lists it under **In Progress** or **Review**, or the task entry has
-  an `Owner`, `Branch`, or `Started` field.
+- The issue has `status:in-progress` or `status:review`.
+- The issue has an assignee, a claim comment, or an open linked PR.
 - A local or remote branch contains the task ID.
-- An open PR or a commit contains the task ID.
+- A commit or PR contains the task ID.
 - A worktree is checked out for it.
+
+Through MCP, list/search the issue and read its body, labels, comments,
+assignees, and linked PRs. Then check Git state:
 
 ```bash
 git worktree list
 git branch -a --list "*<NNT-ID>*"
 git ls-remote --heads origin "*<NNT-ID>*"
 git log --all --oneline --grep="<NNT-ID>"
-# Only if the GitHub CLI is installed:
-gh pr list --search "<NNT-ID>" --state open
 ```
 
-If `git ls-remote` or `gh` is unavailable, check the repository's branches and
-open PRs in the GitHub UI. Do not treat a failed lookup as proof that the task is
-free.
+If `git ls-remote` is unavailable, check branches and PRs in the GitHub UI. Do
+not treat a failed lookup as proof that the issue is free.
 
 Decision:
 
-- **Any hit, or In Progress/Review in `TASKS.md`** — treat the task as owned.
-  Stop and ask the coordinator/user; do not start a parallel implementation.
-- **Blocked in `TASKS.md`** — not actively worked on, but do not claim it until
-  the blocker is resolved.
-- **Ready and no hits** — safe to claim.
+- **`status:in-progress`/`status:review`, a claim comment, an assignee, or any
+  branch/PR hit** — treat as owned. Stop and ask the coordinator/user.
+- **`status:blocked`** — not actively worked on, but do not claim until the
+  blocker is resolved.
+- **`status:ready` with no claim and no branch/PR hit** — safe to claim.
 - **Records disagree** — stop and ask; never delete, force-push, or reuse an
   unrecorded branch.
-- **Unrecorded branch/worktree exists** — treat it as owned and ask. It may be
-  stale, but that is a coordinator decision.
+- **Unrecorded branch/worktree exists** — treat it as owned and ask.
 
 When claiming, before implementation:
 
-1. Move the task to **In Progress** in `TASKS.md`.
-2. Record `Owner`, `Branch/worktree`, `Started`, and `Updated` (ISO date/time).
+1. Add a claim comment with the worker/agent name, task branch, worktree, and
+   start time.
+2. Set `status:in-progress` and add the responsible GitHub account as assignee
+   where appropriate. Remove `status:ready`.
 3. Create or use a branch named `task/<NNT-ID>-<short-slug>`.
 4. Include `<NNT-ID>` in commit and PR titles so later checks find it.
-5. If you are allowed to push, push the claim; otherwise tell the coordinator
+5. Read the issue back and recheck for competing claims.
+6. If you are allowed to push, push the claim; otherwise tell the coordinator
    that the claim exists only in your checkout.
 
 ## Status and handoff
 
-- **Review** when implementation and evidence are ready for acceptance.
+- **Review** when implementation and evidence are ready for acceptance: set
+  `status:review`, remove other status labels, open/link the PR, and post the
+  verification summary. Do not close the issue.
 - **Done** only after acceptance is verified, changes are integrated, and the
-  user approves.
-- Before stopping or handing off, update the task with: owner, branch and
+  user approves: leave a closure comment with the evidence and close the issue.
+  Do not keep an open status label on a closed issue.
+- **Blocked**: set `status:blocked` and record the exact blocker and next action.
+- Before stopping or handing off, update the issue with: owner/worker, branch and
   commit/uncommitted state, completed work, exact checks and results, remaining
   work, blockers, and the exact next step.
 - Use repository-relative references so handoffs work on Windows and Linux.
 - Internal agent todos are temporary steps. Do not create a second persistent
-  backlog outside `TASKS.md`.
+  backlog outside GitHub Issues. `TASKS.md` must remain only a pointer.
