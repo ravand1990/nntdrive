@@ -5,9 +5,28 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
+  wrapper-contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - run: python3 scripts/test-dev-check.py
+      - run: python3 scripts/test-ci-contracts.py
+      - name: Validate all workflow schemas and expressions
+        run: docker run --rm -v "$PWD:/repo:ro" -w /repo rhysd/actionlint:1.7.7@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9 -shellcheck=
+      - run: bash -n scripts/ci-rust-tests.sh scripts/dev-check.sh
+
   rust:
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     services:
       postgres:
         image: postgres:16-alpine
@@ -26,29 +45,30 @@ jobs:
       DATABASE_URL: postgres://nntdrive:nntdrive_test@127.0.0.1:5432/nntdrive_test
       RUST_BACKTRACE: 1
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - name: Format
         run: cargo fmt --all -- --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test (includes real PostgreSQL and the mock NNTP server)
-        run: cargo test --workspace --all-targets
+        run: bash scripts/ci-rust-tests.sh
       - name: Build release binaries
-        run: cargo build --release -p nntdrive-backend -p nntdrive-cli
+        run: cargo build --locked --release -p nntdrive-backend -p nntdrive-cli
       - name: Storage demo (Phase 1/2 end-to-end)
         run: ./target/release/nntdrive demo --keyfile-out /tmp/demo.keyfile.json
 
   docker:
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     needs: rust
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: deploy/Dockerfile

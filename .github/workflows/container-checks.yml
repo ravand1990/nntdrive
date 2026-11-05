@@ -1,0 +1,31 @@
+name: Container checks (manual)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: container-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pinned-linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Require build headroom
+        run: |
+          df -h .
+          available=$(df -Pk . | tail -n 1 | tr -s ' ' | cut -d ' ' -f4)
+          (( available >= 20 * 1024 * 1024 )) || { echo 'Need 20 GiB free for pinned SDK images and checks'; exit 1; }
+      - run: python3 scripts/test-dev-check.py
+      - name: Build isolated pinned toolchains
+        run: bash scripts/dev-check.sh build
+      - name: Rust, database, native FFI and Flutter checks
+        run: bash scripts/dev-check.sh all
+      - name: Cleanup only this check project
+        if: always()
+        run: bash scripts/dev-check.sh config > /dev/null

@@ -5,53 +5,55 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths:
-      - "clients/flutter/**"
-      - "crates/**"
-      - ".github/workflows/clients.yml"
   pull_request:
-    paths:
-      - "clients/flutter/**"
-      - "crates/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clients-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
   analyze:
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: clients/flutter
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: subosito/flutter-action@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           channel: stable
           flutter-version: "3.47.9"
           cache: true
       - name: Build native core
         working-directory: .
-        run: cargo build --release -p nntdrive-ffi
+        run: cargo build --locked --release -p nntdrive-ffi
       - run: |
           mkdir -p linux/lib
           cp ../../target/release/libnntdrive_ffi.so linux/lib/libnntdrive_ffi.so
       - run: flutter pub get
       - run: flutter analyze
-      - run: flutter test
+      - run: flutter test --reporter expanded
         env:
           NNTDRIVE_FFI_PATH: ${{ github.workspace }}/clients/flutter/linux/lib/libnntdrive_ffi.so
 
   build-linux:
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     needs: analyze
     defaults:
       run:
         working-directory: clients/flutter
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: subosito/flutter-action@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           channel: stable
           flutter-version: "3.47.9"
@@ -59,7 +61,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
       - name: Build native core
         working-directory: .
-        run: cargo build --release -p nntdrive-ffi
+        run: cargo build --locked --release -p nntdrive-ffi
       - run: |
           mkdir -p linux/lib
           cp ../../target/release/libnntdrive_ffi.so linux/lib/libnntdrive_ffi.so
@@ -67,13 +69,14 @@ jobs:
       - run: flutter build linux --release
       - run: cp linux/lib/libnntdrive_ffi.so build/linux/x64/release/bundle/lib/
       - run: tar -czf nntdrive-linux-x64.tar.gz -C build/linux/x64/release/bundle .
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: nntdrive-linux-x64
           path: clients/flutter/nntdrive-linux-x64.tar.gz
 
   build-android:
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     needs: analyze
     defaults:
       run:
@@ -82,16 +85,16 @@ jobs:
       ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
       ANDROID_HOME: /usr/local/lib/android/sdk
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
           java-version: "17"
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
-      - uses: Swatinem/rust-cache@v2
-      - uses: subosito/flutter-action@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           channel: stable
           flutter-version: "3.47.9"
@@ -100,15 +103,19 @@ jobs:
       - name: Build native core
         working-directory: .
         run: |
-          NDK_HOME="$(ls -d "$ANDROID_SDK_ROOT"/ndk/* | sort -V | tail -1)"
+          NDK_HOME="$(find "$ANDROID_SDK_ROOT/ndk" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          test -n "$NDK_HOME"
           export NDK_HOME
           cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 \
             -o clients/flutter/android/app/src/main/jniLibs \
-            build --release -p nntdrive-ffi
+            build --locked --release -p nntdrive-ffi
       - run: flutter pub get
       - run: flutter build apk --release
+      - name: Verify APK native ABI coverage
+        working-directory: .
+        run: python3 scripts/check-android-apk.py clients/flutter/build/app/outputs/flutter-apk/app-release.apk
       - run: cp build/app/outputs/flutter-apk/app-release.apk nntdrive-android.apk
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: nntdrive-android
           path: clients/flutter/nntdrive-android.apk
@@ -116,46 +123,97 @@ jobs:
   # Requires Developer Mode (symlink support) on the Windows runner.
   build-windows:
     runs-on: windows-2022
+    timeout-minutes: 45
     needs: analyze
-    continue-on-error: true
     defaults:
       run:
         working-directory: clients/flutter
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: subosito/flutter-action@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           channel: stable
           flutter-version: "3.47.9"
           cache: true
       - name: Build native core
         working-directory: .
-        run: cargo build --release -p nntdrive-ffi
+        run: cargo build --locked --release -p nntdrive-ffi
       - run: |
           mkdir windows/runner -Force
           copy ..\..\target\release\nntdrive_ffi.dll windows\runner\
       - run: flutter pub get
+      - name: Test Windows native bridge and unit suite
+        run: |
+          $env:NNTDRIVE_FFI_PATH = Join-Path $env:GITHUB_WORKSPACE "target\release\nntdrive_ffi.dll"
+          flutter test --reporter expanded
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - run: flutter build windows --release
+      - name: Verify bundled native DLL
+        run: |
+          if (!(Test-Path build\windows\x64\runner\Release\nntdrive_ffi.dll)) { throw "Native DLL missing from bundle" }
       - run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath nntdrive-windows-x64.zip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: nntdrive-windows-x64
           path: clients/flutter/nntdrive-windows-x64.zip
+
+  # Runtime smoke, not backend/sync E2E. Reuse the actual packaged x86_64 core.
+  android-native-smoke:
+    runs-on: ubuntu-24.04
+    needs: build-android
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: "3.47.9"
+          cache: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: nntdrive-android
+          path: android-apk
+      - name: Reuse packaged native core
+        run: |
+          unzip -q android-apk/nntdrive-android.apk 'lib/x86_64/libnntdrive_ffi.so' -d "$RUNNER_TEMP/native"
+          mkdir -p clients/flutter/android/app/src/main/jniLibs/x86_64
+          cp "$RUNNER_TEMP/native/lib/x86_64/libnntdrive_ffi.so" clients/flutter/android/app/src/main/jniLibs/x86_64/
+      - name: Enable and require hosted-runner KVM
+        run: |
+          test -c /dev/kvm
+          sudo chown "$(id -u):$(id -g)" /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
+      - uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          cores: 2
+          ram-size: 2048M
+          disable-linux-hw-accel: false
+          emulator-boot-timeout: 300
+          working-directory: clients/flutter
+          script: flutter test integration_test/android_native_test.dart -d emulator-5554 --reporter expanded
 
   # Requires macOS/Xcode; unsigned compile only until the Rust static library is
   # packaged as an XCFramework and the File Provider extension exists.
   build-ios:
     runs-on: macos-14
+    timeout-minutes: 20
     needs: analyze
     continue-on-error: true
     defaults:
       run:
         working-directory: clients/flutter
     steps:
-      - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
         with:
           channel: stable
           flutter-version: "3.47.9"

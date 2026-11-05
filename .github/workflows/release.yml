@@ -44,7 +44,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         run: bash scripts/release-notes.sh "$GITHUB_REF_NAME" > /dev/null
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace --all-targets
+      - run: bash scripts/ci-rust-tests.sh
       - run: cargo build --release -p nntdrive-cli
       - run: ./target/release/nntdrive demo --keyfile-out /tmp/demo-keyfile.json
 

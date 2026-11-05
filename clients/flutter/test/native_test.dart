@@ -7,11 +7,11 @@ import 'package:nntdrive/native.dart';
 void main() {
   test('native bridge creates keys and seals names', () {
     final path = Platform.environment['NNTDRIVE_FFI_PATH'];
-    if (path == null || path.isEmpty) {
-      // The regular unit test run does not build the Rust core; the client
-      // build script sets NNTDRIVE_FFI_PATH and enables this test.
-      return;
-    }
+    expect(path, isNotNull,
+        reason: 'Build the Rust core and set NNTDRIVE_FFI_PATH');
+    expect(path, isNotEmpty);
+    expect(File(path!).existsSync(), isTrue,
+        reason: 'Native library must exist');
     final bridge = NativeBridge.instance;
     final account = bridge.generateAccount('correct horse battery staple');
     final code = account['recovery_code'] as String;

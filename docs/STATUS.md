@@ -199,8 +199,10 @@ provider when both aws-lc-rs and ring are in the dependency graph.
   not perform client-side key rotation automatically.
 - The release image is `linux/amd64` only. Native arm runners or a successful
   QEMU build are needed for `linux/arm64`; no multi-arch manifest is published yet.
-- Client CI builds and tests Linux/Android; Windows/iOS jobs stay non-blocking
-  (Windows is verified locally; iOS needs macOS).
+- Client CI builds Linux/Android/Windows; Windows native unit tests and release
+  packaging are blocking, iOS remains informational and unimplemented. Android
+  ABI packaging checks are not emulator runtime tests. See [CI coverage](CI.md)
+  for exact contracts and unverified branch-protection enforcement.
 - The app's "upload" of a new file creates the node first; if the upload fails it
   tombstones the node. An interrupted version upload leaves the previous version
   intact (the manifest commits last).

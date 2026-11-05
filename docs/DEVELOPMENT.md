@@ -30,8 +30,10 @@ export DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/nntdrive_test
 ```
 
 Each test creates an isolated PostgreSQL schema, runs all migrations, and drops
-it afterwards. Tests skip (with a printed notice) if no database is reachable;
-CI sets `TEST_DATABASE_URL` and therefore always runs them.
+it afterwards. Tests can skip (with a printed notice) if no database is reachable locally.
+CI requires a successful SQL query and rejects every PostgreSQL skip notice;
+merely setting `TEST_DATABASE_URL` is not sufficient. See [CI coverage](CI.md)
+for exact supported-platform checks, required-check recommendations and gaps.
 
 ## Commands
 

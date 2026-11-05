@@ -43,11 +43,7 @@ rust_checks() {
     cargo check --offline --locked --workspace
     cargo clippy --offline --locked --workspace --all-targets -- -D warnings
     set -o pipefail
-    cargo test --offline --locked --workspace --all-targets -- --nocapture 2>&1 | tee /state/rust-tests.log
-    if grep -Fq "skipping PostgreSQL-backed test:" /state/rust-tests.log; then
-      echo "A PostgreSQL-backed test skipped; refusing a false green" >&2
-      exit 1
-    fi
+    CARGO_NET_OFFLINE=true bash scripts/ci-rust-tests.sh 2>&1 | tee /state/rust-tests.log
   '
 }
 flutter_checks() {
