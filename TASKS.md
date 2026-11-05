@@ -311,21 +311,6 @@ anonymous links), then mobile and platform packaging.
 
 ## Ready
 
-### NNT-101 — Verify v0.4.1 release artifacts and notes
-
-- Priority: P0
-- Outcome: confirm the tag produced the expected image, clients, checksums, and
-  categorized release notes.
-- Scope: release run, assets, SHA-256 digests, iOS non-blocking behavior.
-- Acceptance: all expected assets exist; checksums match; notes contain Features
-  and Bug fixes; no unexplained job failure.
-- Depends on: release workflow completing.
-- Verify: GitHub release page/API, download assets and compare
-  `SHA256SUMS.txt`, inspect workflow jobs.
-- Owner: — · Branch: —
-- Handoff: tag `v0.4.1` points at `eb6beca`; local Windows build verified; CI
-  result needs confirmation.
-
 ### NNT-017 — Check for updates on every startup
 
 - Priority: P1
@@ -480,6 +465,13 @@ _None._
 - Outcome: GitHub release check, checksum verification, staged in-place replace,
   restart.
 - Evidence: commit `4183689`; `v0.3.0` release includes `SHA256SUMS.txt`.
+
+### NNT-101 — Verify v0.4.1 release artifacts and notes
+
+- Priority: P0
+- Outcome: v0.4.1 tag, image, clients, checksums and release notes audited.
+- Evidence: `docs/RELEASE-AUDIT-v0.4.1.md`; PR #3; release tag `v0.4.1`
+  (`eb6beca`); PR checks green at `67ce5dd` (run `41963613892`).
 
 ## Focused questions
 
