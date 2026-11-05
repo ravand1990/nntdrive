@@ -96,8 +96,7 @@ Reference or CI-only commands (not re-run during the last setup pass):
 - full `flutter test` with `NNTDRIVE_FFI_PATH` set (CI and CI-built artifacts)
 - `cargo fmt --all -- --check` (CI enforces it; local run may rewrite files)
 - `scripts/release-notes.sh <tag>` (verified for v0.4.1 notes extraction)
-- Docker image/release workflows and iOS builds (CI; iOS is non-blocking and
-  unbuilt)
+- Docker image/release workflows (CI); iOS builds are not currently run in CI
 - `gh` CLI is not installed on the current Windows host; use the GitHub MCP
   issue tools or the GitHub API/UI instead.
 
@@ -241,8 +240,16 @@ Decision:
 
 - **In Progress/Ready For Review, a claim comment, an assignee, or any
   branch/PR hit** — treat as owned; skip and consider independent candidates.
-- **Blocked** — not actively worked on, but do not claim until the
-  blocker is resolved.
+- **Blocked** — do not treat as new work. On each scheduled run, first review
+  blocked issues for this worker and check whether the recorded blocker has
+  objectively cleared (for example, restored CI quota or completed dependency).
+  Verify the exact evidence and recheck claims/branch/PR state. If clear and no
+  decision or acceptance remains, resume only this worker's existing branch and
+  worktree, comment with the evidence, and move Project Status to In Progress.
+  Do not create a second claim/branch. If blocked work belongs to another agent,
+  or needs user judgment, credentials, policy changes, or unverified evidence,
+  leave it Blocked and report the next action. A blocker is not resolved merely
+  because time passed or a new run started.
 - **Todo with Scheduling readiness Ready**, accepted dependencies, no claim and
   no branch/PR hit — safe to claim. Todo alone does not authorize backlog work.
 - **Records disagree** — stop and ask; never delete, force-push, or reuse an
@@ -270,6 +277,15 @@ When claiming, before implementation:
   user approves: leave a closure comment with the evidence and close the issue.
   Set Project Status Done; never equate automatic PR merge with issue acceptance.
 - **Blocked**: set Project Status Blocked and record the exact blocker and next action.
+- At the start of each run, before claiming new work, review Blocked issues that
+  are not currently In Progress. Check the recorded blocker against fresh,
+  objective evidence, even if another agent is assigned; this is blocker
+  triage, not permission to take over that agent's implementation. If resolved,
+  update the handoff and unblock the issue. Resume implementation only when no
+  other agent is actively In Progress and ownership/resumption is coordinated;
+  otherwise leave it Ready for its owner. If unresolved or requiring a human
+  decision, leave it Blocked with the exact next action. Never auto-resolve a
+  blocker based only on elapsed time.
 - Before stopping or handing off, update the issue with: owner/worker, branch and
   commit/uncommitted state, completed work, exact checks and results, remaining
   work, blockers, and the exact next step.
