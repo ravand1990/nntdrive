@@ -348,6 +348,11 @@ docs/             architecture, security, operations, recovery, status
 
 ## Development
 
+For checks without installing Rust/Flutter on the host:
+`bash scripts/dev-check.sh build` once, then `bash scripts/dev-check.sh all`.
+See [container development](docs/CONTAINER-DEVELOPMENT.md) for isolated PostgreSQL,
+per-worktree dependency caches, resource limits, and scheduled-run guidance.
+
 ```bash
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets

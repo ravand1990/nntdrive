@@ -1,5 +1,12 @@
 # Development
 
+## Container-only checks (no host SDK installation)
+
+Use `bash scripts/dev-check.sh build` once, then `bash scripts/dev-check.sh all`.
+See [container development](CONTAINER-DEVELOPMENT.md) for versions, per-worktree
+caches, bounded disposable containers, and isolated test PostgreSQL. This does
+not start or change the deployment/evaluation stack.
+
 ## Prerequisites
 
 - Rust stable (1.82+; CI uses current stable)

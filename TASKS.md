@@ -330,6 +330,28 @@ _None._
 
 ## Review
 
+### NNT-104 — Containerized local development checks
+
+- Priority: P1 (explicit user authorization for toolchain setup).
+- Owner: Hermes
+- Branch/worktree: `task/NNT-104-container-toolchains`; submitted for PR review.
+- Started: 2026-11-05T01:40:42Z
+- Updated: 2026-11-05
+- Outcome: reusable Rust/Flutter images, disposable checks, isolated PostgreSQL 16,
+  persistent per-worktree caches; no host SDKs or production changes.
+- Scope: development Compose, Dockerfile, wrapper and setup documentation only.
+- Acceptance/evidence: `bash scripts/dev-check.sh build` exited 0;
+  `bash scripts/dev-check.sh all` exited 0 twice (cold then warm). Rust 1.99.1:
+  fmt, check, clippy `-D warnings`, all 86 tests passed without DB skips.
+  Flutter 3.47.9/Dart 3.13.7: release FFI build, analyze and all 6 tests passed.
+  PostgreSQL 16.15: healthy/query verified; no published ports, internal network,
+  bounded tmpfs/resources, cleanup verified; overlap lock exits 75.
+- Issues: non-root smoke execution was not run; checks ran as invoking root UID.
+  Native Windows, Android and iOS packaging are outside this Linux check setup.
+- Handoff: see `docs/CONTAINER-DEVELOPMENT.md` for commands, limitations and job
+  prompt recommendation. No production changes or host SDK installs.
+- Next step: review the PR, confirm CI results and merge only with user approval.
+
 ### NNT-100 — Establish repository-based task management
 
 - Priority: P1
