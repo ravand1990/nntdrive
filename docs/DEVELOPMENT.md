@@ -131,6 +131,20 @@ built from Windows or Linux.
 
 ## Testing philosophy
 
+The two-device Dart FFI smoke can run without a deployment or provider account.
+In the existing Flutter check container (with the isolated test database ready,
+`TEST_DATABASE_URL` and `NNTDRIVE_FFI_PATH` configured), run from repository root:
+
+```bash
+cargo run --offline --locked -p nntdrive-client --example sync_ffi_smoke
+```
+
+The fixture fails closed without PostgreSQL, starts an in-process mock NNTP and
+real HTTP API on loopback, runs `tool/sync_smoke.dart`, then drops its test schema.
+It checks incremental byte events across Dart/Rust, two-device edit propagation,
+all three conflict choices and recovery of both versions. It is a separate smoke
+command, not implicitly run by `cargo test` or the default check wrapper.
+
 - The NNTP mock is a real TCP server; client tests use the real protocol,
   yEnc, pooling and retry code. No real provider is ever contacted.
 - Storage tests use real PostgreSQL and the mock provider. They cover upload,

@@ -148,6 +148,96 @@ async fn sync_excluded(
 }
 
 #[tokio::test]
+async fn real_byte_progress_and_all_conflict_choices_converge() {
+    let Some(s) = stack().await else { return };
+    for choice in ["mine", "theirs", "both"] {
+        let root = make_root(&s, &api(&s), choice).await;
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        let journals = tempfile::tempdir().unwrap();
+        let ja = journals.path().join("a.sqlite");
+        let jb = journals.path().join("b.sqlite");
+        // Exceeds FastCDC's maximum chunk size, guaranteeing incremental events.
+        let data = vec![42u8; nntdrive_storage::ChunkConfig::default().max_size as usize + 123];
+        tokio::fs::write(a.path().join("f.txt"), &data)
+            .await
+            .unwrap();
+        tokio::fs::write(a.path().join("empty"), []).await.unwrap();
+        let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+        for (dir, journal, direction) in [(a.path(), &ja, "upload"), (b.path(), &jb, "download")] {
+            let observed = events.clone();
+            let mut remote = HttpRemote::new(api(&s), s.master.clone(), root).with_progress(
+                move |path, dir, done, total, complete| {
+                    observed.lock().unwrap().push((
+                        path.to_string(),
+                        dir.to_string(),
+                        done,
+                        total,
+                        complete,
+                    ));
+                },
+            );
+            let journal = Journal::open(journal).await.unwrap();
+            let r = SyncEngine::new("dev")
+                .run_once(&mut remote, dir, &journal, "T")
+                .await
+                .unwrap();
+            assert!(r.errors.is_empty(), "{r:?}");
+            let events = events.lock().unwrap();
+            let file: Vec<_> = events
+                .iter()
+                .filter(|(p, d, _, _, _)| p == "f.txt" && d == direction)
+                .collect();
+            assert_eq!(file.first().unwrap().2, 0);
+            assert_eq!(file.last().unwrap().2, data.len() as u64);
+            assert!(file.last().unwrap().4);
+            assert!(file.iter().any(|e| e.2 > 0 && e.2 < e.3 && !e.4));
+            assert!(file.windows(2).all(|w| w[0].2 <= w[1].2));
+            assert!(file.iter().all(|e| e.3 == data.len() as u64));
+            assert!(events.iter().any(|(p, d, n, t, c)| p == "empty"
+                && d == direction
+                && *n == 0
+                && *t == 0
+                && *c));
+        }
+        tokio::fs::write(a.path().join("f.txt"), b"theirs")
+            .await
+            .unwrap();
+        assert!(sync(&s, root, a.path(), &ja, "a").await.errors.is_empty());
+        tokio::fs::write(b.path().join("f.txt"), b"mine")
+            .await
+            .unwrap();
+        let r = sync(&s, root, b.path(), &jb, "b").await;
+        assert!(r.errors.is_empty(), "{r:?}");
+        assert_eq!(r.conflicts, 1);
+        let copy = "f (conflict b 2026-11-04T120000Z).txt";
+        let mut remote = HttpRemote::new(api(&s), s.master.clone(), root);
+        let journal = Journal::open(&jb).await.unwrap();
+        SyncEngine::new("b")
+            .resolve_conflict(&mut remote, b.path(), &journal, "f.txt", copy, choice)
+            .await
+            .unwrap();
+        assert!(sync(&s, root, a.path(), &ja, "a").await.errors.is_empty());
+        assert!(sync(&s, root, b.path(), &jb, "b").await.errors.is_empty());
+        let expected: &[u8] = if choice == "mine" { b"mine" } else { b"theirs" };
+        for dir in [a.path(), b.path()] {
+            assert_eq!(tokio::fs::read(dir.join("f.txt")).await.unwrap(), expected);
+            let files: Vec<_> = std::fs::read_dir(dir)
+                .unwrap()
+                .map(|e| e.unwrap().path())
+                .collect();
+            assert!(files
+                .iter()
+                .all(|p| !p.to_string_lossy().contains(" (conflict ")));
+            for version in [b"mine".as_slice(), b"theirs".as_slice()] {
+                assert!(files.iter().any(|p| std::fs::read(p).unwrap() == version));
+            }
+        }
+        assert_eq!(sync(&s, root, b.path(), &jb, "b").await.uploaded, 0);
+    }
+}
+
+#[tokio::test]
 async fn two_devices_sync_versions_conflicts_and_deletes() {
     let Some(s) = stack().await else { return };
     let api = api(&s);

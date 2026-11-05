@@ -37,10 +37,14 @@ class SyncFolderConfig {
   String? lastSync;
   String? lastError;
   Map<String, dynamic>? lastReport;
+
   /// Relative local paths excluded from synchronization.
   List<String> excluded;
+
   /// Discovered conflict copies under this root (computed, not persisted).
   List<String> conflictFiles = [];
+  Map<String, dynamic>? progress;
+  bool running = false;
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -69,7 +73,9 @@ class SyncFolderConfig {
   int get uploaded => (lastReport?['uploaded'] as int?) ?? 0;
   int get downloaded => (lastReport?['downloaded'] as int?) ?? 0;
   int get conflicts => (lastReport?['conflicts'] as int?) ?? 0;
-  bool get hasErrors => (lastError?.isNotEmpty ?? false) || (lastReport?['errors'] as List?)?.isNotEmpty == true;
+  bool get hasErrors =>
+      (lastError?.isNotEmpty ?? false) ||
+      (lastReport?['errors'] as List?)?.isNotEmpty == true;
 }
 
 class SyncController extends ChangeNotifier {
@@ -106,7 +112,8 @@ class SyncController extends ChangeNotifier {
         final list = jsonDecode(raw) as List;
         folders
           ..clear()
-          ..addAll(list.map((e) => SyncFolderConfig.fromJson(e as Map<String, dynamic>)));
+          ..addAll(list.map(
+              (e) => SyncFolderConfig.fromJson(e as Map<String, dynamic>)));
       } catch (_) {
         folders.clear();
       }
@@ -117,7 +124,8 @@ class SyncController extends ChangeNotifier {
 
   Future<void> _save() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_prefsKey, jsonEncode(folders.map((f) => f.toJson()).toList()));
+    await prefs.setString(
+        _prefsKey, jsonEncode(folders.map((f) => f.toJson()).toList()));
     await prefs.setBool(_pausedKey, paused);
     notifyListeners();
   }
@@ -141,7 +149,8 @@ class SyncController extends ChangeNotifier {
         p.isWithin(f.localPath, path) ||
         p.isWithin(path, f.localPath));
     if (overlaps) {
-      lastStatus = 'That folder overlaps an existing sync folder. Choose a separate tree.';
+      lastStatus =
+          'That folder overlaps an existing sync folder. Choose a separate tree.';
       notifyListeners();
       return false;
     }
@@ -178,7 +187,8 @@ class SyncController extends ChangeNotifier {
     return true;
   }
 
-  Future<void> removeFolder(SyncFolderConfig folder, {bool deleteJournal = true}) async {
+  Future<void> removeFolder(SyncFolderConfig folder,
+      {bool deleteJournal = true}) async {
     folders.removeWhere((f) => f.id == folder.id);
     if (deleteJournal) {
       try {
@@ -199,9 +209,11 @@ class SyncController extends ChangeNotifier {
     if (enabled) await syncFolder(folder);
   }
 
-  Future<void> setExcluded(SyncFolderConfig folder, List<String> excluded) async {
+  Future<void> setExcluded(
+      SyncFolderConfig folder, List<String> excluded) async {
     folder.excluded = excluded
-        .map((e) => e.trim().replaceAll('\\', '/').replaceAll(RegExp(r'^/+|/+$'), ''))
+        .map((e) =>
+            e.trim().replaceAll('\\', '/').replaceAll(RegExp(r'^/+|/+$'), ''))
         .where((e) => e.isNotEmpty)
         .toSet()
         .toList();
@@ -222,8 +234,8 @@ class SyncController extends ChangeNotifier {
           final rel = p
               .relative(entity.path, from: folder.localPath)
               .replaceAll('\\', '/');
-          if (folder.excluded.any((ex) =>
-              rel == ex || rel.startsWith('$ex/'))) {
+          if (folder.excluded
+              .any((ex) => rel == ex || rel.startsWith('$ex/'))) {
             continue;
           }
           folder.conflictFiles.add(rel);
@@ -278,14 +290,19 @@ class SyncController extends ChangeNotifier {
     await _save();
   }
 
-  Future<Map<String, dynamic>?> syncFolder(SyncFolderConfig folder, {bool silent = false}) async {
+  Future<Map<String, dynamic>?> syncFolder(SyncFolderConfig folder,
+      {bool silent = false}) async {
     if (paused || !folder.enabled || _running.contains(folder.id)) return null;
     if (!Directory(folder.localPath).existsSync()) {
-      folder.lastError = 'Local folder is missing (external drive disconnected?)';
+      folder.lastError =
+          'Local folder is missing (external drive disconnected?)';
       await _save();
       return null;
     }
     _running.add(folder.id);
+    folder.running = true;
+    folder.progress = null;
+    notifyListeners();
     if (!silent) {
       lastStatus = 'Syncing ${folder.name}…';
       notifyListeners();
@@ -295,21 +312,24 @@ class SyncController extends ChangeNotifier {
       final syncDir = Directory(p.join(support.path, 'sync'));
       if (!syncDir.existsSync()) syncDir.createSync(recursive: true);
       final journal = p.join(syncDir.path, '${folder.id}.sqlite');
-      final report = await NativeBridge.instance.syncRunAsync(
-        handle: handle,
-        baseUrl: server,
-        token: token,
-        remoteRootId: folder.remoteRootId,
-        localPath: folder.localPath,
-        journalPath: journal,
-        deviceName: Platform.localHostname,
-        excludedJson: jsonEncode(folder.excluded),
-      );
+      final report = await NativeBridge.instance.syncRequestAsync(handle, {
+        'baseUrl': server,
+        'token': token,
+        'remoteRootId': folder.remoteRootId,
+        'localPath': folder.localPath,
+        'journalPath': journal,
+        'deviceName': Platform.localHostname,
+        'excluded': folder.excluded,
+      }, onProgress: (event) {
+        folder.progress = event;
+        notifyListeners();
+      });
       folder.lastReport = report;
       folder.lastSync = DateTime.now().toIso8601String();
       final errors = report['errors'];
-      folder.lastError =
-          (errors is List && errors.isNotEmpty) ? errors.map((e) => e.toString()).join('\n') : null;
+      folder.lastError = (errors is List && errors.isNotEmpty)
+          ? errors.map((e) => e.toString()).join('\n')
+          : null;
       if (!silent) {
         lastStatus = '${folder.name}: ${report['uploaded']} uploaded, '
             '${report['downloaded']} downloaded, ${report['conflicts']} conflict(s).';
@@ -321,6 +341,8 @@ class SyncController extends ChangeNotifier {
       return null;
     } finally {
       _running.remove(folder.id);
+      folder.running = false;
+      folder.progress = null;
       await _save();
       await scanConflicts();
     }
@@ -331,4 +353,55 @@ class SyncController extends ChangeNotifier {
     _timer?.cancel();
     super.dispose();
   }
+
+  Future<void> resolveConflict(
+      SyncFolderConfig folder, String copy, String choice) async {
+    if (_running.contains(folder.id) || syncing) {
+      throw StateError('Wait for sync to finish');
+    }
+    final original = originalConflictPath(copy);
+    if (original == null) throw StateError('Cannot identify the original file');
+    _running.add(folder.id);
+    folder.running = true;
+    notifyListeners();
+    try {
+      final support = await getApplicationSupportDirectory();
+      await NativeBridge.instance.syncRequestAsync(handle, {
+        'baseUrl': server,
+        'token': token,
+        'remoteRootId': folder.remoteRootId,
+        'localPath': folder.localPath,
+        'journalPath': p.join(support.path, 'sync', '${folder.id}.sqlite'),
+        'deviceName': Platform.localHostname,
+        'excluded': folder.excluded,
+        'original': original,
+        'copy': copy,
+        'choice': choice,
+      }, onProgress: (event) {
+        folder.progress = event;
+        notifyListeners();
+      });
+      folder.lastError = null;
+      lastStatus =
+          'Conflict resolved; both versions remain recoverable in synced files.';
+    } catch (e) {
+      folder.lastError = e.toString();
+      rethrow;
+    } finally {
+      _running.remove(folder.id);
+      folder.running = false;
+      folder.progress = null;
+      await _save();
+      await scanConflicts();
+    }
+  }
+}
+
+/// Only propose a pair; the dialog shows both paths and the core revalidates
+/// local hashes and remote revisions before applying a choice.
+String? originalConflictPath(String copy) {
+  final marker = copy.lastIndexOf(' (conflict ');
+  if (marker < 0) return null;
+  final end = copy.indexOf(')', marker);
+  return end < 0 ? null : copy.substring(0, marker) + copy.substring(end + 1);
 }
