@@ -142,10 +142,12 @@ For the existing scheduled job, recommend (do not create another schedule):
 > Reuse installed toolchain images; run
 > `bash scripts/dev-check.sh rust` and/or `bash scripts/dev-check.sh flutter`
 > from that worktree (or `all` for cross-stack work). Do not install host SDKs,
-> run deployment Compose, contact real providers, change schedules, or merge.
+> run deployment Compose, contact real providers, or change schedules.
 > Report exact command exit codes and baseline failures; never modify unrelated
-> product code to make checks green. Do not commit/push/open PR without the
-> user's explicit scope; when authorized open a PR for review and never merge.
+> product code to make checks green. Task-scoped commits, branch pushes and PRs
+> are user-authorized. Automatically merge only after the exact-head required
+> checks, review and acceptance gate in docs/GITHUB-TASK-ISSUES.md is satisfied;
+> never deploy, force/admin merge or bypass protection.
 > Move implementation to Project Status Ready For Review; never close the issue until acceptance
 > is verified and the user approves.
 
