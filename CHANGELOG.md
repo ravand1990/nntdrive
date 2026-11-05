@@ -6,6 +6,11 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Features
+
+- Sync shows per-file logical byte progress from confirmed encrypted chunk publication/deduplication and verified download writes through the native bridge, with commit/verification distinguished from byte completion.
+- Conflict review offers Keep mine, Keep theirs and Keep both. Both versions remain in ordinary synced recovery/kept files; stale local hashes or remote revisions require another sync/review instead of overwriting edits.
+
 ### Bug fixes
 
 - Remote folder renames now move the local subtree using stable remote node IDs, preserving baseline revisions and empty directories instead of deleting/recreating children. Interrupted local moves recover from a durable journal intent; destination collisions and selective-sync intersections stop safely without overwriting content.

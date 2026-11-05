@@ -74,6 +74,134 @@ pub struct SyncEngine {
 }
 
 impl SyncEngine {
+    /// Resolve an already synchronized conflict pair. Both sides must still
+    /// match the journal and the freshly fetched remote revisions; stale review
+    /// never overwrites an edit. Recovery files are ordinary encrypted synced
+    /// files, not an untracked trash directory.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn resolve_conflict<R: Remote>(
+        &self,
+        remote: &mut R,
+        root: &Path,
+        journal: &Journal,
+        original: &str,
+        copy: &str,
+        choice: &str,
+    ) -> Result<SyncReport> {
+        let marker = copy.rfind(" (conflict ");
+        let inferred = marker.and_then(|start| {
+            copy[start..]
+                .find(')')
+                .map(|end| format!("{}{}", &copy[..start], &copy[start + end + 1..]))
+        });
+        if !matches!(choice, "mine" | "theirs" | "both")
+            || original == copy
+            || inferred.as_deref() != Some(original)
+            || self.is_excluded(original)
+            || self.is_excluded(copy)
+        {
+            return Err(SyncError::Remote("invalid conflict selection".into()));
+        }
+        let baseline = journal.load().await?;
+        let snapshot = remote.snapshot().await?;
+        for path in [original, copy] {
+            let local = local_path(root, path)?;
+            ensure_no_symlinks(root, path).await?;
+            let base = baseline.get(path).ok_or_else(|| {
+                SyncError::Remote("sync this conflict before resolving it".into())
+            })?;
+            let current = snapshot
+                .iter()
+                .find(|entry| entry.path == path && !entry.deleted && !entry.is_dir)
+                .ok_or_else(|| {
+                    SyncError::Remote("conflict changed remotely; sync and review again".into())
+                })?;
+            if base.is_dir
+                || base.deleted
+                || base.revision != current.revision
+                || base.revision.is_none()
+                || base.content_hash.as_deref() != Some(scanner::hash_file(&local)?.as_str())
+            {
+                return Err(SyncError::Remote(
+                    "conflict changed; sync and review again".into(),
+                ));
+            }
+        }
+        let mut report = SyncReport::default();
+        // Publish the other version as a separate recoverable file BEFORE
+        // replacing the canonical version. A failed operation retains originals.
+        if choice == "mine" {
+            let recovery = format!("{original}.recovered-{}", Uuid::new_v4());
+            let source = local_path(root, original)?;
+            let dest = local_path(root, &recovery)?;
+            tokio::fs::copy(&source, &dest).await?;
+            self.apply(
+                remote,
+                root,
+                journal,
+                Action::Upload {
+                    path: recovery,
+                    base_revision: None,
+                },
+                "",
+                &mut report,
+            )
+            .await?;
+            let source = local_path(root, copy)?;
+            let target = local_path(root, original)?;
+            let temp = target.with_extension(format!("resolve-{}.nntdrive-part", Uuid::new_v4()));
+            let size = tokio::fs::copy(&source, &temp).await?;
+            let hash = scanner::hash_file(&temp)?;
+            if baseline[copy].content_hash.as_deref() != Some(hash.as_str()) {
+                return Err(SyncError::Remote(
+                    "conflict copy changed during resolution; sync and review again".into(),
+                ));
+            }
+            // Upload a stable staged copy, not a file an editor can modify
+            // halfway through encryption. Keep originals if commit fails.
+            let entry = remote
+                .upload(original, &temp, baseline[original].revision)
+                .await?;
+            if baseline[original].content_hash.as_deref()
+                != Some(scanner::hash_file(&target)?.as_str())
+            {
+                return Err(SyncError::Remote(
+                    "original changed during resolution; sync and review again".into(),
+                ));
+            }
+            #[cfg(windows)]
+            tokio::fs::remove_file(&target).await?;
+            tokio::fs::rename(&temp, &target).await?;
+            journal
+                .upsert(&BaselineEntry {
+                    path: original.into(),
+                    revision: entry.revision,
+                    size,
+                    content_hash: Some(hash),
+                    is_dir: false,
+                    deleted: false,
+                })
+                .await?;
+            report.uploaded += 1;
+            report.uploaded_bytes += size;
+        }
+        let suffix = if choice == "both" {
+            "kept"
+        } else {
+            "recovered"
+        };
+        let resolved = format!("{original}.{suffix}-{}", Uuid::new_v4());
+        // Move only the preserved version; no physical or logical deletion.
+        remote.move_path(copy, &resolved).await?;
+        tokio::fs::rename(local_path(root, copy)?, local_path(root, &resolved)?).await?;
+        let mut base = baseline[copy].clone();
+        base.path = resolved;
+        journal.upsert(&base).await?;
+        journal.remove(copy).await?;
+        report.moved += 1;
+        Ok(report)
+    }
+
     pub fn new(device_name: impl Into<String>) -> Self {
         Self {
             device_name: device_name.into(),
@@ -663,6 +791,8 @@ mod tests {
     struct FakeState {
         files: HashMap<String, (Vec<u8>, Uuid)>,
         uploads: usize,
+        fail_upload: bool,
+        fail_move: bool,
     }
 
     #[derive(Clone, Default)]
@@ -694,6 +824,9 @@ mod tests {
         ) -> Result<RemoteEntry> {
             let content = tokio::fs::read(source).await?;
             let mut state = self.0.lock().await;
+            if state.fail_upload {
+                return Err(SyncError::Remote("injected upload failure".into()));
+            }
             state.uploads += 1;
             let rev = Uuid::new_v4();
             state.files.insert(path.to_string(), (content.clone(), rev));
@@ -740,6 +873,9 @@ mod tests {
 
         async fn move_path(&mut self, from: &str, to: &str) -> Result<()> {
             let mut state = self.0.lock().await;
+            if state.fail_move {
+                return Err(SyncError::Remote("injected move failure".into()));
+            }
             if let Some(v) = state.files.remove(from) {
                 state.files.insert(to.to_string(), v);
             }
@@ -827,6 +963,118 @@ mod tests {
         run(&engine, &mut remote.clone(), dir_a.path(), &ja).await;
         run(&engine, &mut remote.clone(), dir_b.path(), &jb).await;
         assert!(!dir_b.path().join("hello.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn explicit_resolution_preserves_versions_and_rejects_stale_review() {
+        for choice in ["mine", "theirs", "both"] {
+            let mut remote = FakeRemote::default();
+            let a = tempfile::tempdir().unwrap();
+            let b = tempfile::tempdir().unwrap();
+            let ja = Journal::in_memory().await.unwrap();
+            let jb = Journal::in_memory().await.unwrap();
+            let engine = SyncEngine::new("dev");
+            tokio::fs::write(a.path().join("f.txt"), b"base")
+                .await
+                .unwrap();
+            run(&engine, &mut remote, a.path(), &ja).await;
+            run(&engine, &mut remote, b.path(), &jb).await;
+            tokio::fs::write(a.path().join("f.txt"), b"theirs")
+                .await
+                .unwrap();
+            run(&engine, &mut remote, a.path(), &ja).await;
+            tokio::fs::write(b.path().join("f.txt"), b"mine")
+                .await
+                .unwrap();
+            run(&engine, &mut remote, b.path(), &jb).await;
+            let copy = "f (conflict dev 2026-11-04T101500Z).txt";
+            // Changes after the review baseline must not be overwritten.
+            tokio::fs::write(b.path().join(copy), b"new edit")
+                .await
+                .unwrap();
+            assert!(engine
+                .resolve_conflict(&mut remote, b.path(), &jb, "f.txt", copy, choice)
+                .await
+                .is_err());
+            assert_eq!(remote.0.lock().await.files.len(), 2);
+            tokio::fs::write(b.path().join(copy), b"mine")
+                .await
+                .unwrap();
+            let rev = remote.0.lock().await.files["f.txt"].1;
+            remote.0.lock().await.files.get_mut("f.txt").unwrap().1 = Uuid::new_v4();
+            assert!(engine
+                .resolve_conflict(&mut remote, b.path(), &jb, "f.txt", copy, choice)
+                .await
+                .is_err());
+            remote.0.lock().await.files.get_mut("f.txt").unwrap().1 = rev;
+            engine
+                .resolve_conflict(&mut remote, b.path(), &jb, "f.txt", copy, choice)
+                .await
+                .unwrap();
+            let expected: &[u8] = if choice == "mine" { b"mine" } else { b"theirs" };
+            assert_eq!(
+                tokio::fs::read(b.path().join("f.txt")).await.unwrap(),
+                expected
+            );
+            assert!(!b.path().join(copy).exists());
+            run(&engine, &mut remote, a.path(), &ja).await;
+            run(&engine, &mut remote, b.path(), &jb).await;
+            let state = remote.0.lock().await;
+            assert_eq!(state.files["f.txt"].0, expected);
+            for bytes in [b"mine".as_slice(), b"theirs".as_slice()] {
+                let (path, _) = state
+                    .files
+                    .iter()
+                    .find(|(_, (data, _))| data == bytes)
+                    .unwrap();
+                assert_eq!(tokio::fs::read(a.path().join(path)).await.unwrap(), bytes);
+                assert_eq!(tokio::fs::read(b.path().join(path)).await.unwrap(), bytes);
+            }
+            assert!(state.files.keys().all(|p| !p.contains(" (conflict ")));
+        }
+    }
+
+    #[tokio::test]
+    async fn resolution_failures_leave_both_versions_recoverable() {
+        for failure in ["upload", "move"] {
+            let mut remote = FakeRemote::default();
+            let dir = tempfile::tempdir().unwrap();
+            let journal = Journal::in_memory().await.unwrap();
+            let engine = SyncEngine::new("dev");
+            let copy = "f (conflict dev T).txt";
+            tokio::fs::write(dir.path().join("f.txt"), b"theirs")
+                .await
+                .unwrap();
+            tokio::fs::write(dir.path().join(copy), b"mine")
+                .await
+                .unwrap();
+            run(&engine, &mut remote, dir.path(), &journal).await;
+            {
+                let mut state = remote.0.lock().await;
+                state.fail_upload = failure == "upload";
+                state.fail_move = failure == "move";
+            }
+            assert!(engine
+                .resolve_conflict(&mut remote, dir.path(), &journal, "f.txt", copy, "mine")
+                .await
+                .is_err());
+            assert_eq!(
+                tokio::fs::read(dir.path().join(copy)).await.unwrap(),
+                b"mine"
+            );
+            {
+                let state = remote.0.lock().await;
+                for version in [b"mine".as_slice(), b"theirs".as_slice()] {
+                    assert!(state.files.values().any(|(data, _)| data == version));
+                }
+            }
+            {
+                let mut state = remote.0.lock().await;
+                state.fail_upload = false;
+                state.fail_move = false;
+            }
+            run(&engine, &mut remote, dir.path(), &journal).await;
+        }
     }
 
     #[tokio::test]

@@ -5,6 +5,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nntdrive/native.dart';
 
 void main() {
+  test('sync callback lifetime terminates even on native errors', () async {
+    final events = <Map<String, dynamic>>[];
+    await expectLater(
+        NativeBridge.instance.syncRequestAsync(0, {}, onProgress: events.add),
+        throwsA(isA<NativeException>()));
+    expect(events, isEmpty);
+    // A second request proves the first listener was closed without poisoning ABI state.
+    await expectLater(NativeBridge.instance.syncRequestAsync(0, {}),
+        throwsA(isA<NativeException>()));
+  });
   test('native bridge creates keys and seals names', () {
     final path = Platform.environment['NNTDRIVE_FFI_PATH'];
     expect(path, isNotNull,

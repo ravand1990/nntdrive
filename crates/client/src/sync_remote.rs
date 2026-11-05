@@ -4,7 +4,7 @@
 //! walking the encrypted tree and decrypting names locally; the server only
 //! sees opaque node ids and sealed name blobs.
 
-use crate::{download_file, upload_file, ApiClient, ClientError};
+use crate::{download_file_with_progress, upload_file_with_progress, ApiClient, ClientError};
 use nntdrive_crypto::{Envelope, MasterKey};
 use nntdrive_storage::manifest::FileManifest;
 use nntdrive_sync::{Remote, RemoteEntry, SyncError};
@@ -30,6 +30,8 @@ struct CachedHash {
 /// against a pathological or malicious remote tree.
 const MAX_NODES: usize = 100_000;
 
+type ProgressObserver = std::sync::Arc<dyn Fn(&str, &str, u64, u64, bool) + Send + Sync>;
+
 pub struct HttpRemote {
     api: ApiClient,
     master: MasterKey,
@@ -37,9 +39,18 @@ pub struct HttpRemote {
     nodes: HashMap<String, Node>,
     cache_path: Option<PathBuf>,
     hashes: HashMap<String, CachedHash>,
+    progress: ProgressObserver,
 }
 
 impl HttpRemote {
+    /// Installs a device-local observer; paths and byte counts never go to the server.
+    pub fn with_progress(
+        mut self,
+        observer: impl Fn(&str, &str, u64, u64, bool) + Send + Sync + 'static,
+    ) -> Self {
+        self.progress = std::sync::Arc::new(observer);
+        self
+    }
     pub fn new(api: ApiClient, master: MasterKey, root_id: Uuid) -> Self {
         Self {
             api,
@@ -48,6 +59,7 @@ impl HttpRemote {
             nodes: HashMap::new(),
             cache_path: None,
             hashes: HashMap::new(),
+            progress: std::sync::Arc::new(|_, _, _, _, _| {}),
         }
     }
 
@@ -322,13 +334,14 @@ impl Remote for HttpRemote {
             let revision = Uuid::new_v4();
             let parent_revision =
                 base_revision.or_else(|| existing.as_ref().and_then(|n| n.revision));
-            upload_file(
+            upload_file_with_progress(
                 &self.api,
                 &self.master,
                 file_id,
                 revision,
                 parent_revision,
                 source,
+                &|done, total, complete| (self.progress)(path, "upload", done, total, complete),
             )
             .await
             .map_err(Self::remote_error)?;
@@ -378,12 +391,13 @@ impl Remote for HttpRemote {
         if node.is_dir {
             return Err(Self::remote_error(format!("{path} is a folder")));
         }
-        download_file(
+        download_file_with_progress(
             &self.api,
             &self.master,
             node.id,
             Some(revision),
             destination,
+            &|done, total, complete| (self.progress)(path, "download", done, total, complete),
         )
         .await
         .map_err(Self::remote_error)?;

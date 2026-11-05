@@ -117,7 +117,7 @@ provider when both aws-lc-rs and ring are in the dependency graph.
 |---|---|
 | 1. Working storage engine | **Done and tested** (CLI demo uploads, downloads, decrypts, verifies) |
 | 2. Self-healing storage | **Done and tested** (health, repair, refresh, snapshots via sealed manifests, simulated loss) |
-| 3. Desktop synchronization | **Core done: multi-folder bidirectional sync, automatic 5-min runs while open, streaming transfers, selective sync, conflict copies and review, remote folder moves. Remaining: background service, per-file progress, virtual drives** |
+| 3. Desktop synchronization | **Core done: multi-folder bidirectional sync, automatic 5-min runs while open, streaming transfers, selective sync, explicit conflict resolution with recoverable copies, per-file logical byte progress, remote folder moves. Remaining: background service, virtual drives** |
 | 4. Virtual filesystem | **Not implemented** (WinFsp/FUSE design only) |
 | 5. Mobile clients | **Android app builds, browses and syncs (same Flutter UI); iOS unbuilt; no DocumentsProvider/File Provider/photo backup or reliable background sync** |
 | 6. Sharing & production readiness | **Partial**: backend, admin dashboard, auth, jobs, Docker, backups, CI done; sharing/link endpoints absent; hardening/audit pending |
@@ -153,7 +153,9 @@ provider when both aws-lc-rs and ring are in the dependency graph.
    - run sync in a background service (desktop autostart) instead of only while
      the UI process is open;
 
-   - per-file progress and explicit conflict keep-mine/keep-theirs actions.
+   Per-file progress and explicit conflict actions are implemented (NNT-005);
+   container Rust/Flutter suites and a two-device Dart FFI smoke exercise real
+   HTTP + mock NNTP. New platform-specific release validation remains with CI.
 2. **Secure local key storage**: move the password-wrapped keyfile from shared
    preferences into Keychain (iOS/macOS), Android Keystore, Windows Credential
    Manager and Secret Service (Linux); keep the recovery kit policy documented.
@@ -211,8 +213,14 @@ provider when both aws-lc-rs and ring are in the dependency graph.
   is made public; configure a read-only token in update settings in the meantime.
 - Android and iOS have no in-app updater; Android requires the system package
   installer and iOS requires App Store/TestFlight or a signed enterprise install.
-- Sync conflicts are preserved as files and listed in the sync screen's review
-  panel; there are no explicit keep-mine/keep-theirs merge actions yet.
+- Sync conflict review supports Keep mine (the preserved conflict copy), Keep
+  theirs (the canonical path) and Keep both. Recovery/kept files remain synced;
+  no version is deleted. Changed local hashes or remote revisions reject stale
+  review. Partial failures may require sync and another review; this is not a
+  distributed transaction or automatic content merge.
+- Per-file progress counts logical plaintext bytes after chunk publication or
+  deduplication, and after verified download writes, not encrypted wire traffic.
+  A full byte count is not success until manifest commit / final verification.
 
 - The sync `Remote` adapter caches remote content hashes on disk; without cached
   entries it fetches and decrypts manifests (bounded per run), so large first

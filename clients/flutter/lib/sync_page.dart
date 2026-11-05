@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
 import 'sync_controller.dart';
+import 'sync_widgets.dart';
 
 class SyncPage extends StatefulWidget {
   const SyncPage({super.key, required this.controller});
@@ -38,7 +39,8 @@ class _SyncPageState extends State<SyncPage> {
   Future<void> _addFolder() async {
     setState(() => _adding = true);
     try {
-      final path = await getDirectoryPath(confirmButtonText: 'Sync this folder');
+      final path =
+          await getDirectoryPath(confirmButtonText: 'Sync this folder');
       if (path == null) return;
       final ok = await c.addFolder(path);
       if (!mounted) return;
@@ -60,7 +62,8 @@ class _SyncPageState extends State<SyncPage> {
     _toast(c.lastStatus ?? 'Sync finished.');
   }
 
-  Future<void> _remove(SyncFolderConfig folder) async {    final ok = await showDialog<bool>(
+  Future<void> _remove(SyncFolderConfig folder) async {
+    final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Remove sync folder?'),
@@ -69,8 +72,12 @@ class _SyncPageState extends State<SyncPage> {
           'remote copy are kept; only the sync relationship and its local journal are removed.',
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Remove')),
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Remove')),
         ],
       ),
     );
@@ -79,7 +86,8 @@ class _SyncPageState extends State<SyncPage> {
 
   void _toast(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _selectiveSync(SyncFolderConfig folder) async {
@@ -109,7 +117,8 @@ class _SyncPageState extends State<SyncPage> {
                     children: excluded
                         .map((path) => InputChip(
                               label: Text(path),
-                              onDeleted: () => setDialogState(() => excluded.remove(path)),
+                              onDeleted: () =>
+                                  setDialogState(() => excluded.remove(path)),
                             ))
                         .toList(),
                   ),
@@ -125,8 +134,11 @@ class _SyncPageState extends State<SyncPage> {
                       final rel = p
                           .relative(picked, from: folder.localPath)
                           .replaceAll('\\', '/');
-                      if (rel == '.' || rel.startsWith('../') || p.isAbsolute(rel)) {
-                        _toast('Choose a subfolder inside ${folder.localPath}.');
+                      if (rel == '.' ||
+                          rel.startsWith('../') ||
+                          p.isAbsolute(rel)) {
+                        _toast(
+                            'Choose a subfolder inside ${folder.localPath}.');
                         return;
                       }
                       if (!excluded.contains(rel)) {
@@ -143,7 +155,9 @@ class _SyncPageState extends State<SyncPage> {
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel')),
             FilledButton(
               onPressed: () => Navigator.pop(context, excluded),
               child: const Text('Save'),
@@ -196,17 +210,43 @@ class _SyncPageState extends State<SyncPage> {
                       dense: true,
                       title: Text(path),
                       subtitle: Text('${folder.name} · conflict copy'),
-                      trailing: TextButton.icon(
-                        onPressed: () => _reveal(absolute),
-                        icon: const Icon(Icons.folder_open, size: 18),
-                        label: const Text('Show'),
-                      ),
+                      trailing: Wrap(children: [
+                        TextButton(
+                            onPressed: () => _reveal(absolute),
+                            child: const Text('Show')),
+                        TextButton(
+                            onPressed: folder.running || c.syncing
+                                ? null
+                                : () async {
+                                    Navigator.pop(context);
+                                    final original = originalConflictPath(path);
+                                    if (original == null || !mounted) return;
+                                    final choice = await showDialog<String>(
+                                        context: this.context,
+                                        builder: (_) => ConflictChoiceDialog(
+                                            original: original, copy: path));
+                                    if (choice == null || !mounted) return;
+                                    try {
+                                      await c.resolveConflict(
+                                          folder, path, choice);
+                                    } catch (e) {
+                                      if (mounted) {
+                                        ScaffoldMessenger.of(this.context)
+                                            .showSnackBar(
+                                                SnackBar(content: Text('$e')));
+                                      }
+                                    }
+                                  },
+                            child: const Text('Resolve')),
+                      ]),
                     );
                   },
                 ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Close')),
         ],
       ),
     );
@@ -232,7 +272,10 @@ class _SyncPageState extends State<SyncPage> {
             tooltip: 'Sync all now',
             onPressed: c.syncing ? null : _syncAll,
             icon: c.syncing
-                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2))
                 : const Icon(Icons.sync),
           ),
         ],
@@ -247,7 +290,8 @@ class _SyncPageState extends State<SyncPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Bidirectional folder sync', style: theme.textTheme.titleMedium),
+                  Text('Bidirectional folder sync',
+                      style: theme.textTheme.titleMedium),
                   const SizedBox(height: 6),
                   const Text(
                     'The first folder is your base folder; add as many additional folders as you like. '
@@ -287,9 +331,10 @@ class _SyncPageState extends State<SyncPage> {
               color: theme.colorScheme.errorContainer,
               child: ListTile(
                 leading: const Icon(Icons.warning_amber_outlined),
-                title: Text('${c.conflictCount} conflict copy(ies) need review'),
+                title:
+                    Text('${c.conflictCount} conflict copy(ies) need review'),
                 subtitle: const Text(
-                  'Both versions were kept. Open a copy, merge or delete it, then run sync to propagate your choice.',
+                  'Both versions were kept. Review and choose Keep mine, Keep theirs, or Keep both; recovery files stay synced.',
                 ),
                 trailing: TextButton(
                   onPressed: _showConflicts,
@@ -306,7 +351,8 @@ class _SyncPageState extends State<SyncPage> {
                 children: [
                   const Icon(Icons.folder_copy_outlined, size: 56),
                   const SizedBox(height: 12),
-                  Text('Choose your base folder', style: theme.textTheme.titleLarge),
+                  Text('Choose your base folder',
+                      style: theme.textTheme.titleLarge),
                   const SizedBox(height: 6),
                   const Text(
                     'Pick a folder on this device. Its contents will be encrypted and mirrored to your '
@@ -317,7 +363,10 @@ class _SyncPageState extends State<SyncPage> {
                   FilledButton.icon(
                     onPressed: _adding ? null : _addFolder,
                     icon: _adding
-                        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2))
                         : const Icon(Icons.create_new_folder_outlined),
                     label: const Text('Select base folder'),
                   ),
@@ -325,7 +374,8 @@ class _SyncPageState extends State<SyncPage> {
               ),
             )
           else ...[
-            for (var i = 0; i < c.folders.length; i++) _folderCard(c.folders[i], i),
+            for (var i = 0; i < c.folders.length; i++)
+              _folderCard(c.folders[i], i),
             const SizedBox(height: 12),
             Row(
               children: [
@@ -333,7 +383,10 @@ class _SyncPageState extends State<SyncPage> {
                   child: OutlinedButton.icon(
                     onPressed: _adding ? null : _addFolder,
                     icon: _adding
-                        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2))
                         : const Icon(Icons.add),
                     label: const Text('Add another folder'),
                   ),
@@ -387,9 +440,11 @@ class _SyncPageState extends State<SyncPage> {
                 ),
                 Switch(
                   value: folder.enabled,
-                  onChanged: (v) => c.setEnabled(folder, v),
+                  onChanged:
+                      folder.running ? null : (v) => c.setEnabled(folder, v),
                 ),
                 PopupMenuButton<String>(
+                  enabled: !folder.running,
                   onSelected: (value) {
                     if (value == 'sync') c.syncFolder(folder);
                     if (value == 'selective') _selectiveSync(folder);
@@ -398,8 +453,10 @@ class _SyncPageState extends State<SyncPage> {
                   },
                   itemBuilder: (context) => const [
                     PopupMenuItem(value: 'sync', child: Text('Sync now')),
-                    PopupMenuItem(value: 'selective', child: Text('Selective sync…')),
-                    PopupMenuItem(value: 'conflicts', child: Text('Review conflicts…')),
+                    PopupMenuItem(
+                        value: 'selective', child: Text('Selective sync…')),
+                    PopupMenuItem(
+                        value: 'conflicts', child: Text('Review conflicts…')),
                     PopupMenuItem(value: 'remove', child: Text('Remove')),
                   ],
                 ),
@@ -407,6 +464,10 @@ class _SyncPageState extends State<SyncPage> {
             ),
             const SizedBox(height: 6),
             Text('$lastSync$counts', style: theme.textTheme.bodySmall),
+            if (folder.progress != null)
+              SyncTransferProgress(event: folder.progress!),
+            if (folder.running && folder.progress == null)
+              const LinearProgressIndicator(),
             if (folder.hasErrors) ...[
               const SizedBox(height: 6),
               Text(

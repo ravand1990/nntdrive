@@ -449,6 +449,81 @@ pub unsafe extern "C" fn nntdrive_sync_run_ex(
     })
 }
 
+/// Sync/resolve request with live events. Callback strings are owned by the
+/// receiver and MUST be freed with `nntdrive_string_free`. The final event is
+/// `{"finished":true}` even on an error; no callback occurs after it.
+///
+/// # Safety
+/// `request` is NUL-terminated UTF-8 JSON. Callback must accept calls from any
+/// thread, remain valid through the final event, and never unwind into Rust.
+#[no_mangle]
+pub unsafe extern "C" fn nntdrive_sync_request(
+    handle: u64,
+    request: *const c_char,
+    callback: Option<extern "C" fn(*mut c_char)>,
+) -> *mut c_char {
+    let result = guard(|| {
+        let config: serde_json::Value =
+            serde_json::from_str(&arg(request)?).map_err(|e| e.to_string())?;
+        let text = |name: &str| {
+            config[name]
+                .as_str()
+                .ok_or_else(|| format!("missing {name}"))
+        };
+        let master = key(handle)?;
+        let root_id = text("remoteRootId")?
+            .parse()
+            .map_err(|_| "invalid remote root id")?;
+        let local = text("localPath")?;
+        let journal_path = text("journalPath")?;
+        if !Path::new(local).is_dir() {
+            return Err("sync folder is missing".into());
+        }
+        let mut api = ApiClient::new(text("baseUrl")?).map_err(|e| e.to_string())?;
+        api.set_token(text("token")?);
+        let mut remote = nntdrive_client::HttpRemote::with_cache(api, master, root_id,
+            format!("{journal_path}.remote-hashes.json")).with_progress(move |path, direction, bytes, total, complete| {
+                if let Some(cb) = callback {
+                    let event = json!({"path":path,"direction":direction,"bytes":bytes,"total":total,"complete":complete});
+                    cb(CString::new(event.to_string()).expect("JSON contains no NUL").into_raw());
+                }
+            });
+        let excluded: Vec<String> =
+            serde_json::from_value(config.get("excluded").cloned().unwrap_or(json!([])))
+                .map_err(|e| e.to_string())?;
+        let engine = nntdrive_sync::SyncEngine::new(text("deviceName")?).with_exclusions(excluded);
+        let report = runtime().block_on(async {
+            let journal = nntdrive_sync::Journal::open(journal_path)
+                .await
+                .map_err(|e| e.to_string())?;
+            if let Some(choice) = config.get("choice").and_then(|v| v.as_str()) {
+                engine
+                    .resolve_conflict(
+                        &mut remote,
+                        Path::new(local),
+                        &journal,
+                        text("original")?,
+                        text("copy")?,
+                        choice,
+                    )
+                    .await
+                    .map_err(|e| e.to_string())
+            } else {
+                let now = chrono::Utc::now().format("%Y-%m-%dT%H%M%SZ").to_string();
+                engine
+                    .run_once(&mut remote, Path::new(local), &journal, &now)
+                    .await
+                    .map_err(|e| e.to_string())
+            }
+        })?;
+        serde_json::to_value(report).map_err(|e| e.to_string())
+    });
+    if let Some(cb) = callback {
+        cb(CString::new("{\"finished\":true}").unwrap().into_raw());
+    }
+    result
+}
+
 /// Creates a recovery kit for an unlocked account.
 ///
 /// # Safety

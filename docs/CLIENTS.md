@@ -56,8 +56,14 @@ Dart never implements crypto; it passes UTF-8 JSON to the native core.
 
 Dart (`lib/native.dart`) wraps this with `dart:ffi`; long calls run in an
 isolate. The Flutter sync controller drives `crates/sync` through the
-`nntdrive_sync_run_ex` FFI call, and `tool/sync_smoke.dart` verifies two-folder
-sync against a running backend.
+`nntdrive_sync_request` FFI call; older `sync_run`/`sync_run_ex` exports remain
+compatible. Request callbacks carry owned JSON event strings, freed exactly once
+with `nntdrive_string_free`. A terminal `finished` event is sent even on errors;
+Dart waits for it before closing its receiving-isolate NativeCallable listener.
+The blocking request runs in a worker isolate. Events stay device-local and
+contain path, direction, logical bytes/total and commit/verification completion.
+`tool/sync_smoke.dart` verifies two-folder progress and all conflict choices
+against a real HTTP backend and mock NNTP fixture (see Development).
 
 ## Build instructions
 
@@ -225,8 +231,19 @@ App Store/TestFlight or a signed enterprise install).
 - `pause/resume` only pauses the scheduler; in-flight transfers complete or
   cancel safely.
 - Conflict copies are preserved under `name (conflict device timestamp).ext`.
-  The sync screen lists them and can reveal each file in the OS file manager;
-  explicit keep-mine/keep-theirs/keep-both merge actions are still future work.
+  Review shows both exact paths before offering Keep mine (preserved conflict
+  version), Keep theirs (canonical version), or Keep both. Mine saves theirs as
+  a synced `.recovered-<uuid>` file before replacing the canonical path; theirs
+  archives mine under a synced `.recovered-<uuid>` name; both retains mine under
+  `.kept-<uuid>` and theirs at the original path. No files/revisions are deleted.
+  These names use UUID suffixes to avoid overwriting earlier recovery copies.
+  Local hashes and fresh remote revisions must match the journal: sync first if
+  review is stale, a prior operation was interrupted, or the baseline is missing.
+  Legacy filename-based pairs are proposed visibly, not resolved automatically.
+- Per-file progress measures actual logical plaintext bytes, including deduped
+  chunks, rather than compressed/encrypted network bytes or estimated percentages.
+  Full bytes with no completion flag means still verifying/committing; an error
+  is not displayed as success. Empty files complete only after manifest commit.
 - Selective sync is a per-folder exclusion list stored with the client config.
   Excluded folders are skipped while scanning local files and filtering the
   remote snapshot; they are not deleted on either side, and their sync history

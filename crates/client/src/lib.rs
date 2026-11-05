@@ -353,6 +353,32 @@ pub async fn upload_file(
     parent_revision: Option<Uuid>,
     path: &Path,
 ) -> Result<UploadResult> {
+    upload_file_with_progress(
+        api,
+        master,
+        file_id,
+        revision_id,
+        parent_revision,
+        path,
+        &|_, _, _| {},
+    )
+    .await
+}
+
+/// Logical plaintext bytes confirmed by chunk publication (or deduplication),
+/// not estimated wire bytes. Completion is emitted only after manifest commit.
+#[allow(clippy::too_many_arguments)]
+pub async fn upload_file_with_progress(
+    api: &ApiClient,
+    master: &MasterKey,
+    file_id: Uuid,
+    revision_id: Uuid,
+    parent_revision: Option<Uuid>,
+    path: &Path,
+    progress: &(dyn Fn(u64, u64, bool) + Send + Sync),
+) -> Result<UploadResult> {
+    let total = tokio::fs::metadata(path).await?.len();
+    progress(0, total, false);
     let file = tokio::fs::File::open(path).await?;
     let mut stream = ChunkStream::new(file, nntdrive_storage::ChunkConfig::default());
     let mut entries = Vec::new();
@@ -368,6 +394,7 @@ pub async fn upload_file(
             existing.offset = chunk.offset;
             entries.push(existing);
             chunks_reused += 1;
+            progress(chunk.offset + chunk.len() as u64, total, false);
             continue;
         }
         let prepared = prepare_chunk(master, &chunk, COMPRESSION_LEVEL)
@@ -376,6 +403,7 @@ pub async fn upload_file(
         entries.push(entry);
         chunks_new += 1;
         articles_posted += articles;
+        progress(chunk.offset + chunk.len() as u64, total, false);
     }
     let size = stream.total_bytes();
     let content_hash = stream.content_hash();
@@ -389,6 +417,7 @@ pub async fn upload_file(
         .to_bytes();
     api.commit(file_id, revision_id, parent_revision, size, &sealed)
         .await?;
+    progress(size, size, true);
     Ok(UploadResult {
         revision_id,
         size,
@@ -405,6 +434,19 @@ pub async fn download_file(
     file_id: Uuid,
     revision: Option<Uuid>,
     destination: &Path,
+) -> Result<DownloadResult> {
+    download_file_with_progress(api, master, file_id, revision, destination, &|_, _, _| {}).await
+}
+
+/// Verified plaintext bytes written to the temporary destination. Completion
+/// follows whole-file verification and atomic materialization.
+pub async fn download_file_with_progress(
+    api: &ApiClient,
+    master: &MasterKey,
+    file_id: Uuid,
+    revision: Option<Uuid>,
+    destination: &Path,
+    progress: &(dyn Fn(u64, u64, bool) + Send + Sync),
 ) -> Result<DownloadResult> {
     let (sealed, revision_id) = api.manifest(file_id, revision).await?;
     let envelope = Envelope::from_bytes(&sealed)?;
@@ -433,6 +475,8 @@ pub async fn download_file(
     let mut out = tokio::fs::File::create(&tmp).await?;
     let mut whole = blake3::Hasher::new();
     let mut shards_fetched = 0usize;
+    let mut completed = 0;
+    progress(0, manifest.size, false);
     for chunk in &manifest.chunks {
         let locations = api.chunk_locations(chunk.id).await?;
         let mut ciphertext = Vec::with_capacity(chunk.ciphertext_len as usize);
@@ -507,6 +551,8 @@ pub async fn download_file(
         }
         whole.update(&plain);
         out.write_all(&plain).await?;
+        completed += plain.len() as u64;
+        progress(completed, manifest.size, false);
     }
     out.flush().await?;
     drop(out);
@@ -521,6 +567,7 @@ pub async fn download_file(
         let _ = tokio::fs::remove_file(destination).await;
     }
     tokio::fs::rename(&tmp, destination).await?;
+    progress(completed, manifest.size, true);
     Ok(DownloadResult {
         revision_id,
         size: manifest.size,
