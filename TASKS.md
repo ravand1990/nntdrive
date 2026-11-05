@@ -329,7 +329,7 @@ anonymous links), then mobile and platform packaging.
 
 _None._
 
-## Blocked — release audit
+## Review
 
 ### NNT-101 — Verify v0.4.1 release artifacts and notes
 
@@ -337,31 +337,36 @@ _None._
 - Outcome: confirm the tag produced the expected image, clients, checksums, and
   categorized release notes.
 - Scope: release run, assets, SHA-256 digests, iOS non-blocking behavior.
-- Acceptance: all expected assets exist; checksums match; notes contain Features
-  and Bug fixes; no unexplained job failure.
+- Acceptance: all expected assets exist; checksums match; notes accurately use
+  Features and/or Bug fixes for categories actually present (at least one bullet,
+  no invented features); no unexplained job failure.
 - Depends on: release workflow completing.
 - Verify: GitHub release page/API, download assets and compare
   `SHA256SUMS.txt`, inspect workflow jobs.
 - Owner: Hermes scheduled worker
 - Branch/worktree: `task/NNT-101-release-audit`; isolated task worktree.
 - Started: 2026-11-05T03:11:10Z
-- Updated: 2026-11-05T03:13:22Z
-- Handoff: claim published as `9e38e3f`; audit evidence and this handoff are
-  committed on the same branch (see branch HEAD). No product changes.
+- Updated: 2026-11-05T03:44:04Z
+- Handoff: claim published as `9e38e3f`; original audit committed as `3fbef50`.
+  User authorized the acceptance correction and submission of PR #3 for review;
+  this handoff is committed on the same branch (see branch HEAD). No product or
+  historical release changes; awaiting acceptance, not Done.
 - Evidence: `docs/RELEASE-AUDIT-v0.4.1.md`; all seven assets downloaded and
   API digests matched; all three client SHA256SUMS entries matched. Release,
   Clients and CI workflows succeeded; iOS failure explained by log message
   `Application not configured for iOS` and explicit non-blocking job policy.
   Image job logs confirm versioned manifest pushes. `git diff --check` passed;
   Rust/Flutter checks not applicable to this Markdown-only release audit.
-- Blocker: literal acceptance requires Features AND Bug fixes, but published
-  0.4.1 notes contain Bug fixes only, accurately matching the tagged changelog.
-  Existing release policy allows either category; no feature was invented.
-- Next step: coordinator must accept bug-fix-only notes and explicitly adjust
-  acceptance, or supply an accurate missing feature and authorize notes changes.
-  Draft PR preserves evidence; no release changes, merge or deployment.
-
-## Review
+- Blocker: resolved by user-authorized acceptance correction: include only
+  release-note categories actually present. Bug-fix-only v0.4.1 notes satisfy it.
+- Review checks: release API metadata, tag target, assets/digests and historical
+  workflow/job results rechecked; release-note extraction and Markdown/task
+  structure checks passed, as did `git diff --check`. Current PR status and
+  check-run endpoints return HTTP 403 (`Resource not accessible by personal
+  access token`); current-head CI is unverified, not claimed green.
+- Next step: review [PR #3](https://github.com/ravand1990/nntdrive/pull/3), obtain
+  current-head CI evidence with sufficient permissions, and accept the audit.
+  No merge, deployment, scheduling, or release rewrite is authorized.
 
 ### NNT-019 — Containerized local development checks
 

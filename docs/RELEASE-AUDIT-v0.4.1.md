@@ -41,19 +41,31 @@ sets `continue-on-error: true`; iOS has no upload step and is not promised in
 the release notes. The standalone Clients run has the same failed step.
 This is an existing documented platform limitation, not a successful iOS build.
 
-## Acceptance discrepancy: coordinator decision required
+## Acceptance resolved: ready for review
 
-NNT-101 literally requires notes containing **Features and Bug fixes**. The
-published notes contain **Bug fixes only**, matching the tagged `CHANGELOG.md`
-0.4.1 section (two bug-fix bullets). The changelog's stated release policy
-allows Features **and/or** Bug fixes, so publishing succeeded legitimately,
-but the stricter task acceptance is not met.
+The user authorized correcting NNT-101 acceptance on 2026-11-05: release notes
+must accurately include Features and/or Bug fixes for categories actually
+present, with at least one bullet. Both headings are not mandatory. This matches
+the existing changelog policy; no features should be invented or historical
+release rewritten to satisfy a category check.
 
-Do not invent a feature or rewrite the historical release to make the check
-pass. Next action: the coordinator must either accept bug-fix-only categorized
-notes for this patch release and explicitly adjust NNT-101 acceptance, or
-provide an accurate missing feature and authorize correcting release notes.
-Until then NNT-101 remains Blocked, not Review/Done. No second task was started.
+Published v0.4.1 notes contain **Bug fixes only**, accurately matching the tagged
+`CHANGELOG.md` 0.4.1 section (two bug-fix bullets). They satisfy the corrected
+acceptance. The notes blocker is resolved and NNT-101 is in Review, awaiting
+acceptance, not Done. No second task was started.
+
+Authenticated API reads during review preparation reconfirmed the annotated tag
+target, published non-draft/non-prerelease release, seven asset names/sizes/API
+digests, and successful historical Release, CI and Clients runs. Release jobs
+still show only the explained non-blocking iOS failure. Assets were not downloaded
+again; download/hash and image-log evidence above is from the original audit.
+
+Current PR commit status and check-run reads return HTTP 403 (`Resource not
+accessible by personal access token`). Historical release workflow success does
+not prove current PR CI; current-head CI remains unverified. Review
+[PR #3](https://github.com/ravand1990/nntdrive/pull/3) and obtain current-head CI
+evidence with sufficient permissions. No merge, deployment or scheduling is
+authorized.
 
 ## Local verification scope
 
