@@ -28,5 +28,5 @@ RUN curl -fL --retry 3 "https://storage.googleapis.com/flutter_infra_release/rel
     && flutter config --no-analytics --enable-linux-desktop \
     && flutter precache --linux --no-android --no-web --no-ios --no-macos --no-windows \
     && rm -rf /opt/flutter/bin/cache/artifacts/engine/android* /opt/flutter/bin/cache/flutter_web_sdk \
-    && chmod -R a+rwX /opt/flutter/bin/cache
+    && chmod -R a+rwX /opt/flutter/bin/cache /opt/flutter/packages/flutter_tools/.dart_tool
 CMD ["flutter", "--version"]

@@ -184,8 +184,12 @@ jobs:
           unzip -q android-apk/nntdrive-android.apk 'lib/x86_64/libnntdrive_ffi.so' -d "$RUNNER_TEMP/native"
           mkdir -p clients/flutter/android/app/src/main/jniLibs/x86_64
           cp "$RUNNER_TEMP/native/lib/x86_64/libnntdrive_ffi.so" clients/flutter/android/app/src/main/jniLibs/x86_64/
-      - name: Enable and require hosted-runner KVM
+      - name: Require KVM and reclaim unused hosted-runner SDK space
         run: |
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          # Android stays installed; this job does not use .NET.
+          sudo rm -rf /usr/share/dotnet
+          df -h .
           test -c /dev/kvm
           sudo chown "$(id -u):$(id -g)" /dev/kvm
           test -r /dev/kvm && test -w /dev/kvm
@@ -196,6 +200,7 @@ jobs:
           arch: x86_64
           cores: 2
           ram-size: 2048M
+          disk-size: 2048M
           disable-linux-hw-accel: false
           emulator-boot-timeout: 300
           working-directory: clients/flutter

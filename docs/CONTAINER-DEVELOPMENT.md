@@ -112,10 +112,19 @@ All three original root-run logs were parsed independently: each contains 86 Rus
 and 6 Flutter passes (the suggested reviewer total of 82 was not reproduced).
 `bash -n scripts/dev-check.sh`, `git diff --check` and
 `python3 scripts/test-dev-check.py` passed (4 wrapper/Compose contracts).
-CI wiring remains blocked: GitHub rejected a push that edited `ci.yml` because
-the available token lacks `workflow` scope. The workflow edit was removed before
-publication; existing CI is unchanged. With suitable authorization, a lightweight
-Ubuntu job can run the two commands above without building SDK images.
+CI wiring is now implemented under NNT-020 (#5); the normal authorized main push
+succeeded with the current token. Four wrapper contracts and the fail-closed DB
+gate run automatically, and the pinned container suite has an explicit manual
+workflow. See [CI coverage](CI.md) for contracts and limitations; inspect exact
+run results before claiming hosted-container success.
+
+The first manual hosted run correctly rejected 14 GiB free disk; its workflow
+now removes unused Android/.NET SDKs only from its disposable GitHub runner.
+The next run exposed a fresh-image non-root Flutter write failure at
+`/opt/flutter/packages/flutter_tools/.dart_tool/version` (also reproduced locally
+as UID/GID 10001:10001). The Dockerfile grants runtime writes to that generated
+tool directory as well as `bin/cache`, in the SDK extraction layer. Do not infer
+fresh-image non-root compatibility from a root-run or a previously warmed SDK.
 
 ## Automated task runner guidance
 
