@@ -90,10 +90,29 @@ a fallback. That is not MCP proof; the MCP write/read operations above are.
 
 Other clients:
 
-- **Codex**: no GitHub MCP server entry found in `C:\Users\ravand\.codex\config.toml`
-  during discovery. Unverified.
-- **Hermes**: scheduled worker configuration was not accessible from this
-  environment. Unverified; see the cutover section.
+- **Codex**: no GitHub MCP server entry found in
+  `C:\Users\ravand\.codex\config.toml`. Unverified. To add the official server,
+  export `GITHUB_PERSONAL_ACCESS_TOKEN` in the Codex process environment (do not
+  commit it) and add:
+
+  ```toml
+  [mcp_servers.github]
+  command = "docker"
+  args = ["run", "-i", "--rm", "-e", "GITHUB_PERSONAL_ACCESS_TOKEN",
+          "ghcr.io/github/github-mcp-server"]
+  env = { GITHUB_TOOLSETS = "issues" }
+  ```
+
+  Restart Codex, verify the exported tools, and repeat the issue write/read
+  checks before treating Codex as verified.
+
+- **Hermes**: the scheduled job was accessible and is paused for cutover. Its
+  config has no GitHub MCP server entry. The job prompt prefers MCP but falls
+  back to its existing authenticated GitHub API skill and must report which path
+  it used. Hermes MCP remains unverified. To add the official server, add a
+  `github` entry under `mcp_servers` using the Docker command above, preserve the
+  configured token in the process environment, restart Hermes, verify the tools,
+  and run the issue write/read checks before resuming the job.
 
 ## Migration mapping
 
