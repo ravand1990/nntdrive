@@ -13,13 +13,14 @@ bash scripts/dev-check.sh rust
 bash scripts/dev-check.sh flutter
 ```
 
-CI remains authoritative. Images use Ubuntu 24.04, Rust **stable** with rustfmt
-and clippy (CI is rolling, not pinned to the workspace's minimum 1.83), Flutter
-**3.47.9 / Dart 3.13.7** with the official archive's SHA-256, and PostgreSQL
-**16-alpine**, matching `.github/workflows/{ci,clients}.yml`. Rust stable is
-resolved when building and retained in the image; `versions` records the actual
-version. Explicitly rebuild without cache when intentionally refreshing rolling
-stable; normal checks never rebuild or update SDKs. These are Linux amd64
+CI remains authoritative and uses rolling Rust stable. These local images are a
+reviewed snapshot: Ubuntu **24.04** and PostgreSQL **16-alpine** are pinned by
+registry digest in the Dockerfile/Compose; Rust **1.99.1** includes rustfmt and
+clippy; Flutter **3.47.9 / Dart 3.13.7** uses the official archive's SHA-256.
+`versions` records the actual SDK versions. Refresh pins deliberately and rebuild;
+normal checks never rebuild or update SDKs. Apt dependencies and the rustup
+installer are fetched from live repositories, not snapshot/checksum-pinned, so
+this is not a bit-for-bit reproducible image build. These are Linux amd64
 checks, not Android/iOS/Windows release builders. Flutter tests load a real
 `cargo build --release -p nntdrive-ffi` library directly from the target cache.
 
@@ -90,9 +91,28 @@ by combining extraction/permissions/pruning into one layer and removing unused
 Android/web artifacts. Only the failed toolchain image and its exact build-cache
 records were cleaned up; no global prune was used. Additional disk capacity was
 provisioned before publication. Continue checking headroom before cold builds.
-Tests were run as the invoking root UID; a separate non-root smoke command required
-additional tool approval and was not executed, so non-root runtime behavior is
-configured but not independently verified here.
+Review fixes rebuilt both pinned image targets and reran the entire `all` command
+twice as non-root UID/GID **10001:10001** in a separate writable workspace with
+its own copied caches (never sharing/chowning the original cache). The second run
+used a fresh HOME. Both runs passed **86 Rust / 6 Flutter** tests, formatting,
+check, clippy, release FFI build and analysis; no PostgreSQL skips. Programmatic
+ownership inspection found no workspace/cache entries owned by another UID.
+The wrapper now configures Flutter in each worktree HOME before pub get; fresh
+HOME settings confirmed `enable-linux-desktop: true`. Build-time Flutter config
+alone is insufficient because the runtime HOME differs. Non-root Docker access
+requires socket group membership and a writable host HOME; retaining root's HOME
+initially prevented Docker CLI configuration/plugin discovery, before any checks
+ran. Retrying with a dedicated HOME passed. Cleanup left no project containers or
+networks.
+
+All three original root-run logs were parsed independently: each contains 86 Rust
+and 6 Flutter passes (the suggested reviewer total of 82 was not reproduced).
+`bash -n scripts/dev-check.sh`, `git diff --check` and
+`python3 scripts/test-dev-check.py` passed (4 wrapper/Compose contracts).
+CI wiring remains blocked: GitHub rejected a push that edited `ci.yml` because
+the available token lacks `workflow` scope. The workflow edit was removed before
+publication; existing CI is unchanged. With suitable authorization, a lightweight
+Ubuntu job can run the two commands above without building SDK images.
 
 ## Automated task runner guidance
 

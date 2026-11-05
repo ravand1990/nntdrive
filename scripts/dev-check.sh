@@ -30,7 +30,10 @@ case "${1:-all}" in
     ;;
 esac
 rust_deps() { run rust-fetch cargo fetch --locked; }
-flutter_deps() { run flutter-fetch flutter pub get; }
+flutter_deps() {
+  # Flutter settings live in HOME, not the shared SDK: initialize each worktree.
+  run flutter-fetch bash -ec 'flutter config --no-analytics --enable-linux-desktop; flutter pub get'
+}
 rust_checks() {
   "${compose[@]}" up -d --wait test-db
   run rust bash -ec '

@@ -330,11 +330,17 @@ _None._
 
 ## Review
 
-### NNT-104 — Containerized local development checks
+### NNT-019 — Containerized local development checks
 
 - Priority: P1 (explicit user authorization for toolchain setup).
 - Owner: Hermes
-- Branch/worktree: `task/NNT-104-container-toolchains`; submitted for PR review.
+- Branch/worktree: `task/NNT-104-container-toolchains`; PR #1 retained to preserve
+  review continuity after the user-authorized rename from NNT-104 to NNT-019.
+  NNT-019 was unused in fetched `origin/main`, branches, commits and all PRs.
+- Setup exception (retrospective): the user authorized toolchain setup outside
+  the normal priority/claim sequence and authorized these review fixes. The task
+  record was added with the implementation, not pushed as a pre-implementation
+  claim. This note records the exception; it does not rewrite that history.
 - Started: 2026-11-05T01:40:42Z
 - Updated: 2026-11-05
 - Outcome: reusable Rust/Flutter images, disposable checks, isolated PostgreSQL 16,
@@ -346,8 +352,17 @@ _None._
   Flutter 3.47.9/Dart 3.13.7: release FFI build, analyze and all 6 tests passed.
   PostgreSQL 16.15: healthy/query verified; no published ports, internal network,
   bounded tmpfs/resources, cleanup verified; overlap lock exits 75.
-- Issues: non-root smoke execution was not run; checks ran as invoking root UID.
-  Native Windows, Android and iOS packaging are outside this Linux check setup.
+- Review verification: rebuilt both pinned toolchain targets successfully. Full
+  `all` passed twice as UID/GID 10001:10001 in an isolated workspace/cache; the
+  second run used a fresh HOME. Rust 86/Flutter 6 passed with no database skips;
+  all workspace/cache entries remained owned by UID 10001. Flutter HOME settings
+  confirmed Linux desktop enabled. Four fast wrapper/Compose tests passed.
+  Wiring them into CI was attempted but GitHub rejected the push for missing
+  token `workflow` scope; the workflow edit was removed before publication.
+- Pinning: Ubuntu and PostgreSQL use inspected immutable image digests; Rust is
+  exact 1.99.1; Flutter archive SHA-256 retained. Apt packages/rustup installer
+  are not snapshot-pinned; this is not a bit-for-bit reproducible build.
+- Issues: native Windows, Android and iOS packaging are outside this Linux setup.
 - Handoff: see `docs/CONTAINER-DEVELOPMENT.md` for commands, limitations and job
   prompt recommendation. No production changes or host SDK installs.
 - Next step: review the PR, confirm CI results and merge only with user approval.

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
-# CI uses Ubuntu 24.04 and rolling Rust stable, not the manifest's minimum Rust.
-FROM ubuntu:24.04 AS rust
+# Deliberate local snapshot; CI still follows rolling Rust stable.
+FROM ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852 AS rust
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl git xz-utils unzip build-essential pkg-config libssl-dev \
@@ -9,9 +9,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV RUSTUP_HOME=/opt/rust/rustup CARGO_HOME=/opt/rust/cargo
 ENV PATH=/opt/rust/cargo/bin:$PATH
 RUN curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs -o /tmp/rustup.sh \
-    && sh /tmp/rustup.sh -y --profile minimal --default-toolchain stable --component rustfmt,clippy \
+    && sh /tmp/rustup.sh -y --profile minimal --default-toolchain 1.99.1 --component rustfmt,clippy \
     && rm /tmp/rustup.sh && chmod -R a+rX /opt/rust
-ENV RUSTUP_TOOLCHAIN=stable CARGO_HOME=/state/cargo HOME=/state/home
+ENV RUSTUP_TOOLCHAIN=1.99.1 CARGO_HOME=/state/cargo HOME=/state/home
 WORKDIR /src
 CMD ["rustc", "--version"]
 
