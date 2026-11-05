@@ -1,0 +1,50 @@
+name: Bug report
+description: Something is broken or behaves unexpectedly
+title: "Bug: "
+labels: ["status:backlog", "priority:P2"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Keep exactly one `status:*` and one `priority:*` label. Triage the
+        priority after filing. Do not include secrets, tokens, recovery codes or
+        private infrastructure details.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What is broken?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction
+      description: Minimal steps, inputs, platform, and version.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the error text. Redact secrets.
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification / regression test
+      description: How should a fix be proven? Commands, tests, or manual checks.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Logs, related issues, screenshots, environment.

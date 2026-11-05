@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security-sensitive report
+    url: https://github.com/ravand1990/nntdrive/security/advisories/new
+    about: Do not post secrets, exploit details, or private infrastructure in a public issue.

@@ -1,0 +1,56 @@
+name: Task
+description: Actionable NNTDrive task tracked in GitHub Issues
+title: "NNT-___ — "
+labels: ["status:backlog", "priority:P2"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Keep exactly one `status:*` and one `priority:*` label. Change the
+        default `priority:P2` label if this task is P0 or P1. Existing NNT IDs
+        stay in the title; new tasks may use the issue number instead.
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: What changes for users or maintainers when this is done?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope / exclusions
+      description: What is in scope, and what is explicitly not?
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Observable conditions that prove the task is complete.
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: Link blocking issues as #123, or write "None".
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification
+      description: Commands, tests, builds, or manual checks required.
+    validations:
+      required: true
+  - type: textarea
+    id: ownership
+    attributes:
+      label: Ownership / branch / linked PR
+      description: Worker, branch/worktree, assignee, and PR once claimed.
+  - type: textarea
+    id: handoff
+    attributes:
+      label: Handoff / blockers
+      description: Current state, exact checks and results, blockers, next step.
