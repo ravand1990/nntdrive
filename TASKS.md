@@ -71,6 +71,22 @@ anonymous links), then mobile and platform packaging.
 
 ## Backlog
 
+### NNT-020 — Protect container development checks against CI drift
+
+- Priority: P2
+- Outcome: wrapper contracts and container checks detect future toolchain drift.
+- Scope: run `python3 scripts/test-dev-check.py` in Linux CI; add a deliberate
+  manual or scheduled container-check job with documented cache/resource limits.
+- Acceptance: wrapper tests run on relevant PRs; a container-check workflow can
+  build the pinned images and run `bash scripts/dev-check.sh all`; failures are
+  visible without starting deployment services or exposing credentials.
+- Depends on: NNT-019 integration and authorization to edit workflow files.
+- Verify: actual GitHub Actions runs for wrapper tests and container checks.
+- Handoff: workflow wiring was deferred because GitHub rejected workflow-file
+  updates under the available token permissions. Local verification is not CI
+  coverage; obtain the required workflow permission before implementation.
+- Owner: — · Branch: —
+
 ### NNT-001 — Background sync service
 
 - Priority: P1
@@ -332,7 +348,7 @@ _None._
 
 ### NNT-019 — Containerized local development checks
 
-- Priority: P1 (explicit user authorization for toolchain setup).
+- Priority: P1
 - Owner: Hermes
 - Branch/worktree: `task/NNT-019-container-toolchains`; replaces the original
   NNT-104 branch and PR #1 to align the branch with the corrected task ID.
@@ -364,7 +380,8 @@ _None._
   are not snapshot-pinned; this is not a bit-for-bit reproducible build.
 - Issues: native Windows, Android and iOS packaging are outside this Linux setup.
 - Handoff: see `docs/CONTAINER-DEVELOPMENT.md` for commands, limitations and job
-  prompt recommendation. No production changes or host SDK installs.
+  prompt recommendation. No production changes or host SDK installs. CI wiring
+  remains deferred and is tracked separately as NNT-020.
 - Next step: review the PR, confirm CI results and merge only with user approval.
 
 ### NNT-100 — Establish repository-based task management

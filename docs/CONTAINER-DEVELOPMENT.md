@@ -1,7 +1,10 @@
 # Containerized development checks
 
 Linux/WSL requires Docker Engine + Compose v2+, Bash, `flock`, and access to the
-Docker socket. No host Rust, Flutter, PostgreSQL or provider credentials needed.
+Docker socket. The fast wrapper tests (`python3 scripts/test-dev-check.py`)
+additionally require Python 3 with its Unix `fcntl` module: run them on Linux
+or inside WSL, not native Windows Python. No third-party Python packages are
+required. No host Rust, Flutter, PostgreSQL or provider credentials needed.
 Docker access is privileged: use only with trusted checkout code.
 
 ```bash
