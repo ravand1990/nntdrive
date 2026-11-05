@@ -96,8 +96,7 @@ Reference or CI-only commands (not re-run during the last setup pass):
 - full `flutter test` with `NNTDRIVE_FFI_PATH` set (CI and CI-built artifacts)
 - `cargo fmt --all -- --check` (CI enforces it; local run may rewrite files)
 - `scripts/release-notes.sh <tag>` (verified for v0.4.1 notes extraction)
-- Docker image/release workflows and iOS builds (CI; iOS is non-blocking and
-  unbuilt)
+- Docker image/release workflows (CI); iOS builds are not currently run in CI
 - `gh` CLI is not installed on the current Windows host; use the GitHub MCP
   issue tools or the GitHub API/UI instead.
 
@@ -278,13 +277,15 @@ When claiming, before implementation:
   user approves: leave a closure comment with the evidence and close the issue.
   Set Project Status Done; never equate automatic PR merge with issue acceptance.
 - **Blocked**: set Project Status Blocked and record the exact blocker and next action.
-- At the start of each run, before claiming new work, recheck only Blocked issues
-  explicitly assigned to this agent/worker and bearing its claim/handoff. Do not
-  take over another agent's blocked issue. Resume its existing work first only
-  when the recorded blocker is demonstrably resolved and ownership is still
-  clear; document the evidence and transition to In Progress. Otherwise preserve
-  Blocked and consider other eligible tasks. Never auto-resolve a blocker
-  requiring a human decision.
+- At the start of each run, before claiming new work, review Blocked issues that
+  are not currently In Progress. Check the recorded blocker against fresh,
+  objective evidence, even if another agent is assigned; this is blocker
+  triage, not permission to take over that agent's implementation. If resolved,
+  update the handoff and unblock the issue. Resume implementation only when no
+  other agent is actively In Progress and ownership/resumption is coordinated;
+  otherwise leave it Ready for its owner. If unresolved or requiring a human
+  decision, leave it Blocked with the exact next action. Never auto-resolve a
+  blocker based only on elapsed time.
 - Before stopping or handing off, update the issue with: owner/worker, branch and
   commit/uncommitted state, completed work, exact checks and results, remaining
   work, blockers, and the exact next step.

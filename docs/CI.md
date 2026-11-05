@@ -21,7 +21,6 @@ workflow, not proof of repository branch protection.
 | `Clients / build-windows` | Native MSVC DLL, full Flutter unit/native bridge suite on Windows, release build, bundled DLL existence check, ZIP artifact. Failures are no longer allowed. Not installer, process restart, clean-machine or signed-distribution verification. |
 | `Clients / build-android` | Rust libraries for arm64-v8a, armeabi-v7a and x86_64, release APK; inspect all three packaged libraries for ELF headers before artifact upload. Debug signing remains. This is packaging coverage, NOT emulator/device runtime or E2E. |
 | `Clients / android-native-smoke` | KVM-required Ubuntu emulator (API 35, x86_64), reusing the release APK's actual Rust library: account/keyfile unlock, encrypted filename round-trip, wrong-password rejection, real path_provider platform channel and app-private file round-trip. Not backend sync, installed release APK launch, or full E2E. 25-minute job/5-minute boot limit, 2 cores/2 GiB RAM/2 GiB userdata. It reclaims only unused .NET on the disposable hosted runner; first boot failed because default userdata requested 7.4 GiB with only 6.1 GiB free, not because KVM was absent. |
-| `Clients / build-ios` | Informational/non-blocking unsigned compile attempt; iOS implementation/FFI/signing is incomplete (#12). Do not require it or claim iOS support. |
 
 macOS client delivery is not covered. Windows/Linux updater replacement and
 restart remain #28; installer/signing/clean-machine validation remains #11.
@@ -58,7 +57,8 @@ Recommended required checks: `wrapper-contracts`, `rust`, `docker`, `analyze`,
 confirming the first hosted KVM run. Confirm exact check names in the
 repository UI before configuring. Branch-protection inspection returned HTTP
 403 with the current token: enforcement is **not verified or configured here**.
-Manual container checks and informational iOS are not required checks.
+Manual container checks are not required checks. iOS builds are not currently
+part of the workflow; this does not imply iOS support.
 
 External actions changed in CI/Clients and the new manual workflow are pinned
 to exact commit SHAs resolved using GitHub's commit API. Other existing release
