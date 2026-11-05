@@ -205,23 +205,3 @@ jobs:
           emulator-boot-timeout: 300
           working-directory: clients/flutter
           script: flutter test integration_test/android_native_test.dart -d emulator-5554 --reporter expanded
-
-  # Requires macOS/Xcode; unsigned compile only until the Rust static library is
-  # packaged as an XCFramework and the File Provider extension exists.
-  build-ios:
-    runs-on: macos-14
-    timeout-minutes: 20
-    needs: analyze
-    continue-on-error: true
-    defaults:
-      run:
-        working-directory: clients/flutter
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
-        with:
-          channel: stable
-          flutter-version: "3.47.9"
-          cache: true
-      - run: flutter pub get
-      - run: flutter build ios --no-codesign --debug

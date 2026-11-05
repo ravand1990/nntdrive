@@ -96,8 +96,7 @@ Reference or CI-only commands (not re-run during the last setup pass):
 - full `flutter test` with `NNTDRIVE_FFI_PATH` set (CI and CI-built artifacts)
 - `cargo fmt --all -- --check` (CI enforces it; local run may rewrite files)
 - `scripts/release-notes.sh <tag>` (verified for v0.4.1 notes extraction)
-- Docker image/release workflows and iOS builds (CI; iOS is non-blocking and
-  unbuilt)
+- Docker image/release workflows (CI); iOS builds are not currently run in CI
 - `gh` CLI is not installed on the current Windows host; use the GitHub MCP
   issue tools or the GitHub API/UI instead.
 
