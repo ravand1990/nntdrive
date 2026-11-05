@@ -10,11 +10,11 @@ This live user-authorized policy supersedes older label instructions, including
 any still present in `AGENTS.md`. It does not waive security, scope, ownership,
 checks or acceptance. These workflow/template changes were consolidated directly
 onto main by explicit user authorization; PR #40 is superseded, not merged.
-The protected-instruction write guard still denies the requested `AGENTS.md`
-alignment. That file was not changed or bypassed; an operator must resolve that
-specific guard before its obsolete tracker rules can be removed. Until then,
-other agents must explicitly adopt this user-authorized phase policy before
-competing for work, and the scheduled prompt retains its narrow precedence.
+The tracker and merge alignment in `AGENTS.md` is published at `cc5a753`.
+A renewed normal attempt to update its remaining separate-approval closure
+clause was guard-denied; no bypass was attempted. Only that closure clause
+remains an operator follow-up. The explicit standing completion authorization
+below supersedes it narrowly; all other checked-in rules apply.
 
 Discover the Project by its owner/number from the URL above, then discover its
 current Status field and option IDs at runtime. Do not hardcode field/option
@@ -79,9 +79,11 @@ and Scheduling readiness. Link dependency issues, not a duplicate task list.
    PR link and exact next action on the issue. Set Ready For Review after
    implementation; Blocked for a genuine blocker. Read back every write.
 6. Automatically merge code PRs only under the user-authorized merge gate below.
-   Never automatically close, deploy or set Done. Done requires verified
-   acceptance, integration and user approval with a closure evidence comment.
-   Avoid automatic-closing keywords in PRs.
+   Mandatory post-merge reconciliation follows the completion transaction below.
+   The user grants standing approval to close verified completed tasks and set
+   Done once ALL acceptance criteria and applicable checks are satisfied. This
+   is not permission to waive manual acceptance, deploy, or close incidental refs.
+   Avoid relying on automatic-closing keywords; they do not reconcile the board.
 
 ## User-authorized automatic merge gate (NNTDrive only)
 
@@ -89,10 +91,9 @@ Effective 2026-11-05, the user explicitly authorizes future code PR merges only
 in `ravand1990/nntdrive` after every applicable required test/check passes for
 the exact current head SHA. This supersedes prior NEVER MERGE instructions in
 worker prompts and PR handoffs, not security, scope, ownership or acceptance.
-The root `AGENTS.md` policy update was attempted once under this new explicit
-consent but the protected-instruction guard denied it again. No bypass was
-attempted; root alignment remains an operator follow-up. The scheduled worker
-must explicitly adopt this narrow user-authorized precedence.
+The root tracker/merge policy is aligned at `cc5a753`; only the remaining
+separate-approval completion clause is superseded by the standing authorization
+below, with the denied normal alignment attempt retained as an operator follow-up.
 
 Before each merge:
 
@@ -116,8 +117,8 @@ Before each merge:
   Release/tag-only publishing is not an invented PR requirement.
 - Tests do not replace required manual acceptance. Merge only when PR acceptance
   is satisfied, or the user explicitly approves a documented follow-up; never
-  invent approval. A draft is not automatically ready. Issue closure/Done still
-  follows its separate acceptance and user-approval policy.
+  invent approval. A draft is not automatically ready. Issue closure/Done follows
+  the mandatory completion transaction and standing authorization below.
 - Use an allowed merge method and expected head SHA; verify merged state, merge
   commit and main remotely. Merge sequentially and fast-forward only a clean
   local main. Enable GitHub auto-merge only if its enforced gates cover every
@@ -130,6 +131,40 @@ This permission does not authorize deployment, destructive operations, branch
 or tag deletion, force pushes, or direct-main code changes. The present scoped
 policy/documentation update on main is separately user-authorized. A merged PR
 is not issue acceptance and does not automatically satisfy dependency acceptance.
+
+## Mandatory post-merge completion transaction
+
+The user's standing authorization covers closing completed issues and setting
+Project Done after every acceptance criterion and applicable check is verified;
+no separate user approval is required for such tasks. This supersedes the old
+separate-approval clause in AGENTS.md only. Its alignment was attempted normally
+under renewed explicit consent, but the protected-instruction guard denied it;
+no alternate write or bypass was attempted. That file remains an operator fix.
+
+1. Verify actual merged state, expected PR head and merge SHA, and the merge
+   commit's inclusion on remote main. For authorized direct-main work, verify
+   the integrated commits and their applicable exact-head evidence instead.
+2. Identify genuinely linked task issues using PR metadata, task scope and issue
+   history; a `Refs` mention alone is not permission to close unrelated work.
+   Read full bodies and paginated latest comments. Map ALL acceptance criteria
+   to actual check/runtime/manual evidence. Missing evidence fails closed.
+3. Post a completion comment with PR/commit links, exact-head check URLs/results,
+   acceptance evidence and any nonblocking limitations. Preserve prior history,
+   priorities, readiness and assignees. Close with reason `completed` and set the
+   exact Project item Status to Done using freshly discovered field/option IDs.
+4. Read back issue state/reason, evidence comment and exact Project item. If
+   GitHub already auto-closed the issue, still reconcile Done. Closing keywords
+   are not a substitute for board reconciliation. Use bounded read retries for
+   eventual consistency; report incomplete handoff and retry appropriately if
+   either closure or board update fails. Never claim Done from a mutation alone.
+5. Leave incomplete criteria open in Ready For Review or Blocked with exact
+   missing acceptance and next action. Correct premature automatic closure and
+   verify the correction. Never waive manual/device criteria merely because CI
+   passes. Exclude verification issue #4 and cancelled work from completed tasks.
+
+This transaction is mandatory after merging and during reconciliation of older
+merged work, before claiming task completion or choosing new implementation.
+It does not authorize extra merges, deployment, releases or destructive cleanup.
 
 ## API capability and protected credentials
 
@@ -168,14 +203,31 @@ PRs**. Thirteen non-status definitions, issue non-status labels, assignees and
 original body text were preserved. Existing mapping NNT-ID → issue number is
 unchanged; use the live board, not a dated duplicate phase table.
 
+## Completion reconciliation (2026-11-05)
+
+A fully paginated fresh audit covered 31 issues (30 real task issues and excluded
+verification issue #4), all 9 PRs and all 30 Project items before any GitHub write.
+19 task issues were open. Only two were newly closed completed and read back as
+Done: #10 / NNT-005 (PR #39, merge `9895961`, exact-head CI/Clients plus recorded
+two-device acceptance), and #5 / NNT-020 (authorized direct-main `be1c5f1`,
+exact-head CI/Clients and successful manual pinned-container run at `fb4b91b`).
+Their closure comments contain evidence links and criterion reconciliation.
+#9 / NNT-004 was already closed completed/Done; PR #38 merge `215fcfa` was verified
+on main, so no duplicate closure was performed. The audit leaves 17 tasks open,
+13 completed tasks Done, and preserves 30 unique real task Project members.
+#28 remains Blocked: actual Windows/Linux self-update process exit, replacement,
+restart/version and data/journal preservation plus manual UI checks remain
+unperformed. Other incomplete tasks were not closed from incidental references.
+No PR merge, release, deployment or extra scheduler run was performed here.
+
 ## Scheduled worker policy
 
 The user authorized live worker cutover and resume independently of PR #40.
-The documentation/template cutover is now published directly on main. Because
-`AGENTS.md` remains guard-blocked, the scheduled prompt retains only the narrow
-precedence required to override its obsolete tracker rules; remove that
-exception only after the instruction file is successfully aligned. It must never
-revert to labels.
+The documentation/template cutover is published directly on main. The scheduled
+prompt retains only narrow precedence for the standing completion authorization
+while AGENTS.md's remaining separate-approval clause is guard-blocked; its
+tracker/merge rules are already aligned. Never revert to labels or a blanket
+no-close policy for fully verified completed tasks.
 Preserve the existing 120-minute interval, gpt-6.1-sol/openai-codex, minimal
 reasoning, skills, workdir, protected authentication, repository-local Git
 identity, one-task-per-run and no-deploy policy. Automatic merging is authorized

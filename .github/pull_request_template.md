@@ -21,8 +21,15 @@ Task issue: #
 
 ## Acceptance
 
-Do not use a closing keyword. The issue stays open until acceptance is verified
-and the user approves; merge alone does not mark the task Done.
+Do not rely on a closing keyword. After merging, the worker MUST verify all
+issue acceptance criteria and applicable checks, post merged-commit/check and
+acceptance evidence, close the genuinely linked completed issue with reason
+completed, set Project Status Done, and read back both. The user's standing
+authorization covers verified completed tasks; separate approval is not needed.
+Merge alone is not acceptance. Missing runtime/manual evidence leaves the issue
+open in Review/Blocked; report the exact next action, never silently waive it.
+Even automatically closed issues require board reconciliation; a failed closure
+or board write is an incomplete handoff until readbacks succeed.
 
 Automatic code PR merge is user-authorized for NNTDrive only under the complete
 exact-head required-check, review and acceptance gate in
