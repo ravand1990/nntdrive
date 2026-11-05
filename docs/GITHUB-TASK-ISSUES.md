@@ -84,6 +84,10 @@ Temporary verification issue #4 was closed as a test and is not a project task.
 All 30 migrated task issues were read back through MCP and have the required
 sections. The 22 open issues each have exactly one status and one priority
 label; the 8 closed task issues each have one priority label and no status label.
+`github_search_issues` correctly filters by label, for example
+`repo:ravand1990/nntdrive is:issue is:open label:"status:ready"`. In this client,
+`github_list_issues` returned label entries as `null`, so use `search_issues` or
+`issue_read` when label names matter.
 
 Label creation and bulk issue creation used the authenticated GitHub REST API as
 a fallback. That is not MCP proof; the MCP write/read operations above are.
