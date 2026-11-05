@@ -148,8 +148,13 @@ no alternate write or bypass was attempted. That file remains an operator fix.
    history; a `Refs` mention alone is not permission to close unrelated work.
    Read full bodies and paginated latest comments. Map ALL acceptance criteria
    to actual check/runtime/manual evidence. Missing evidence fails closed.
-3. Post a completion comment with PR/commit links, exact-head check URLs/results,
-   acceptance evidence and any nonblocking limitations. Preserve prior history,
+3. Post a durable completion handoff on each linked issue with: worker/owner,
+   outcome and changes, branch and integrated commit/PR links, exact commands
+   and check URLs/results, acceptance evidence, remaining limitations or
+   follow-up issue links, and the exact next action (or explicitly none).
+   Keep repository-relative references; never publish credentials or private
+   infrastructure paths. For blocked/interrupted work, record saved/uncommitted
+   state, blocker and resumption instructions before stopping. Preserve prior history,
    priorities, readiness and assignees. Close with reason `completed` and set the
    exact Project item Status to Done using freshly discovered field/option IDs.
 4. Read back issue state/reason, evidence comment and exact Project item. If
