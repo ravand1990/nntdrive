@@ -336,6 +336,166 @@ async fn excluded_paths_are_skipped_in_both_directions() {
     assert!(!dir_a.path().join("skip/local.txt (conflict").exists());
 }
 
+#[tokio::test]
+async fn remote_folder_rename_moves_subtree_without_transfers() {
+    let Some(s) = stack().await else { return };
+    let api = api(&s);
+    let root = make_root(&s, &api, "FolderRenameRoot").await;
+    let a = tempfile::tempdir().unwrap();
+    let b = tempfile::tempdir().unwrap();
+    let journals = tempfile::tempdir().unwrap();
+    let ja = journals.path().join("a.sqlite");
+    let jb = journals.path().join("b.sqlite");
+    std::fs::create_dir_all(a.path().join("old/nested/empty")).unwrap();
+    std::fs::write(a.path().join("old/nested/file.txt"), b"preserve me").unwrap();
+    assert!(sync(&s, root, a.path(), &ja, "a").await.errors.is_empty());
+    assert!(sync(&s, root, b.path(), &jb, "b").await.errors.is_empty());
+    let node = api.list_files(Some(root)).await.unwrap().remove(0);
+    let sealed = s.master.seal_name(node.id, "new").unwrap().to_bytes();
+    api.rename_file(node.id, &b64(&sealed)).await.unwrap();
+    let report_a = sync(&s, root, a.path(), &ja, "a").await;
+    assert!(report_a.errors.is_empty(), "{report_a:?}");
+    assert_eq!(report_a.moved, 1, "{report_a:?}");
+    assert_eq!(
+        report_a.deleted_local + report_a.downloaded + report_a.uploaded,
+        0,
+        "{report_a:?}"
+    );
+    let report = sync(&s, root, b.path(), &jb, "b").await;
+    assert!(report.errors.is_empty(), "{report:?}");
+    assert_eq!(report.moved, 1, "{report:?}");
+    assert_eq!(report.downloaded, 0, "{report:?}");
+    assert_eq!(report.uploaded, 0, "{report:?}");
+    assert_eq!(report.deleted_local, 0, "{report:?}");
+    assert_eq!(report.deleted_remote, 0, "{report:?}");
+    assert_eq!(report.conflicts, 0, "{report:?}");
+    assert!(!b.path().join("old").exists());
+    assert!(b.path().join("new/nested/empty").is_dir());
+    assert_eq!(
+        std::fs::read(b.path().join("new/nested/file.txt")).unwrap(),
+        b"preserve me"
+    );
+    let baseline = Journal::open(&jb).await.unwrap().load().await.unwrap();
+    assert!(baseline.contains_key("new/nested/file.txt"));
+    assert!(!baseline.keys().any(|p| p == "old" || p.starts_with("old/")));
+    let report = sync(&s, root, b.path(), &jb, "b").await;
+    assert!(report.errors.is_empty(), "{report:?}");
+    assert_eq!(
+        report.moved
+            + report.uploaded
+            + report.downloaded
+            + report.deleted_local
+            + report.deleted_remote
+            + report.conflicts,
+        0,
+        "{report:?}"
+    );
+}
+
+#[tokio::test]
+async fn folder_move_recovers_interruption_and_preserves_offline_conflicts() {
+    let Some(s) = stack().await else { return };
+    let api = api(&s);
+    let root = make_root(&s, &api, "RecoveryRoot").await;
+    let a = tempfile::tempdir().unwrap();
+    let b = tempfile::tempdir().unwrap();
+    let journals = tempfile::tempdir().unwrap();
+    let ja = journals.path().join("a.sqlite");
+    let jb = journals.path().join("b.sqlite");
+    std::fs::create_dir(a.path().join("old")).unwrap();
+    std::fs::write(a.path().join("old/file.txt"), b"baseline").unwrap();
+    sync(&s, root, a.path(), &ja, "a").await;
+    sync(&s, root, b.path(), &jb, "b").await;
+    std::fs::write(a.path().join("old/file.txt"), b"remote edit").unwrap();
+    sync(&s, root, a.path(), &ja, "a").await;
+    std::fs::write(b.path().join("old/file.txt"), b"offline edit").unwrap();
+    let node = api.list_files(Some(root)).await.unwrap().remove(0);
+    let sealed = s.master.seal_name(node.id, "new").unwrap().to_bytes();
+    api.rename_file(node.id, &b64(&sealed)).await.unwrap();
+    // Simulate cancellation after the filesystem rename, before SQLite remap.
+    Journal::open(&jb)
+        .await
+        .unwrap()
+        .begin_move("old", "new")
+        .await
+        .unwrap();
+    std::fs::rename(b.path().join("old"), b.path().join("new")).unwrap();
+    let report = sync(&s, root, b.path(), &jb, "b").await;
+    assert!(report.errors.is_empty(), "{report:?}");
+    assert_eq!(report.conflicts, 1, "{report:?}");
+    assert_eq!(
+        std::fs::read(b.path().join("new/file.txt")).unwrap(),
+        b"remote edit"
+    );
+    assert_eq!(
+        std::fs::read(
+            b.path()
+                .join("new/file (conflict b 2026-11-04T120000Z).txt")
+        )
+        .unwrap(),
+        b"offline edit"
+    );
+    assert!(Journal::open(&jb)
+        .await
+        .unwrap()
+        .pending_move()
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
+async fn folder_move_blocks_exclusions_and_collisions_without_losing_content() {
+    let Some(s) = stack().await else { return };
+    let api = api(&s);
+    let root = make_root(&s, &api, "SafetyRoot").await;
+    let local = tempfile::tempdir().unwrap();
+    let journals = tempfile::tempdir().unwrap();
+    let jp = journals.path().join("journal.sqlite");
+    std::fs::create_dir_all(local.path().join("old/private")).unwrap();
+    std::fs::write(local.path().join("old/private/file"), b"preserve").unwrap();
+    sync(&s, root, local.path(), &jp, "a").await;
+    let node = api.list_files(Some(root)).await.unwrap().remove(0);
+    let sealed = s.master.seal_name(node.id, "new").unwrap().to_bytes();
+    api.rename_file(node.id, &b64(&sealed)).await.unwrap();
+    let journal = Journal::open(&jp).await.unwrap();
+    let mut remote = HttpRemote::new(api, s.master.clone(), root);
+    let error = SyncEngine::new("a")
+        .with_exclusions(vec![" old\\private ".into()])
+        .run_once(&mut remote, local.path(), &journal, "now")
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("exclusions"), "{error}");
+    assert!(local.path().join("old/private/file").exists());
+    std::fs::create_dir(local.path().join("new")).unwrap();
+    std::fs::write(local.path().join("new/local"), b"destination").unwrap();
+    let error = SyncEngine::new("a")
+        .run_once(&mut remote, local.path(), &journal, "now")
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("collision"), "{error}");
+    assert_eq!(
+        std::fs::read(local.path().join("new/local")).unwrap(),
+        b"destination"
+    );
+    // A concurrent local rename needs manual subtree reconciliation but must
+    // not block unrelated work or turn the remote move into child deletions.
+    std::fs::rename(local.path().join("old"), local.path().join("saved")).unwrap();
+    std::fs::write(local.path().join("unrelated.txt"), b"unrelated").unwrap();
+    let report = SyncEngine::new("a")
+        .run_once(&mut remote, local.path(), &journal, "now")
+        .await
+        .unwrap();
+    assert_eq!(report.errors.len(), 1, "{report:?}");
+    assert!(report.uploaded >= 1, "{report:?}");
+    assert_eq!(
+        report.deleted_remote + report.deleted_local,
+        0,
+        "{report:?}"
+    );
+    assert!(local.path().join("saved/private/file").exists());
+}
+
 fn b64(bytes: &[u8]) -> String {
     use base64::Engine;
     base64::engine::general_purpose::STANDARD.encode(bytes)

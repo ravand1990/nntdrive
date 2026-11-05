@@ -279,6 +279,13 @@ impl HttpRemote {
 }
 
 impl Remote for HttpRemote {
+    fn directory_ids(&self) -> HashMap<String, Uuid> {
+        self.nodes
+            .iter()
+            .filter(|(path, node)| !path.is_empty() && node.is_dir)
+            .map(|(path, node)| (path.clone(), node.id))
+            .collect()
+    }
     async fn snapshot(&mut self) -> Result<Vec<RemoteEntry>, SyncError> {
         self.snapshot_tree().await
     }

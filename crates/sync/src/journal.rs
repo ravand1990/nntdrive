@@ -51,6 +51,12 @@ impl Journal {
         )
         .execute(&pool)
         .await?;
+        sqlx::query("CREATE TABLE IF NOT EXISTS directory_ids (path TEXT PRIMARY KEY, node_id TEXT NOT NULL UNIQUE)")
+            .execute(&pool)
+            .await?;
+        sqlx::query("CREATE TABLE IF NOT EXISTS pending_move (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), source TEXT NOT NULL, destination TEXT NOT NULL)")
+            .execute(&pool)
+            .await?;
         Ok(Self { pool })
     }
 
@@ -123,6 +129,90 @@ impl Journal {
         Ok(())
     }
 
+    /// Stable remote directory identities, separate from the path-keyed baseline.
+    /// Added independently so existing journals upgrade without losing history.
+    pub async fn directory_ids(&self) -> Result<HashMap<String, uuid::Uuid>, JournalError> {
+        let rows = sqlx::query("SELECT path, node_id FROM directory_ids")
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|row| {
+                let id: String = row.get("node_id");
+                id.parse().ok().map(|id| (row.get("path"), id))
+            })
+            .collect())
+    }
+
+    pub async fn remember_directory(&self, path: &str, id: uuid::Uuid) -> Result<(), JournalError> {
+        sqlx::query("INSERT OR REPLACE INTO directory_ids (path, node_id) VALUES ($1, $2)")
+            .bind(path)
+            .bind(id.to_string())
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn begin_move(&self, from: &str, to: &str) -> Result<(), JournalError> {
+        sqlx::query("INSERT INTO pending_move (singleton, source, destination) VALUES (1, $1, $2)")
+            .bind(from)
+            .bind(to)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn pending_move(&self) -> Result<Option<(String, String)>, JournalError> {
+        Ok(
+            sqlx::query("SELECT source, destination FROM pending_move WHERE singleton = 1")
+                .fetch_optional(&self.pool)
+                .await?
+                .map(|row| (row.get("source"), row.get("destination"))),
+        )
+    }
+
+    pub async fn cancel_move(&self) -> Result<(), JournalError> {
+        sqlx::query("DELETE FROM pending_move WHERE singleton = 1")
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Remap the whole subtree atomically, using component boundaries rather
+    /// than SQL LIKE (names may contain literal '%' and '_'). Never overwrite
+    /// destination history. Filesystem moves are checked separately by engine.
+    pub async fn remap_subtree(&self, from: &str, to: &str) -> Result<(), JournalError> {
+        let mut tx = self.pool.begin().await?;
+        for table in ["baseline", "directory_ids"] {
+            let rows = sqlx::query(&format!("SELECT path FROM {table}"))
+                .fetch_all(&mut *tx)
+                .await?;
+            let prefix = format!("{from}/");
+            for row in rows {
+                let path: String = row.get("path");
+                let new_path = if path == from {
+                    to.to_string()
+                } else if let Some(suffix) = path.strip_prefix(&prefix) {
+                    format!("{to}/{suffix}")
+                } else {
+                    continue;
+                };
+                sqlx::query(&format!("UPDATE {table} SET path = $1 WHERE path = $2"))
+                    .bind(new_path)
+                    .bind(path)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+        }
+        sqlx::query("DELETE FROM pending_move WHERE source = $1 AND destination = $2")
+            .bind(from)
+            .bind(to)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
     pub async fn remove(&self, path: &str) -> Result<(), JournalError> {
         sqlx::query("DELETE FROM baseline WHERE path = $1")
             .bind(path)
@@ -153,6 +243,34 @@ mod tests {
         assert_eq!(loaded.get("dir/file.txt"), Some(&entry));
         j.remove("dir/file.txt").await.unwrap();
         assert!(j.load().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn subtree_remap_is_atomic_and_component_aware() {
+        let j = Journal::in_memory().await.unwrap();
+        let id = Uuid::new_v4();
+        for path in ["a_%", "a_%/file", "a_%other/file", "target/file"] {
+            j.upsert(&BaselineEntry {
+                path: path.into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        }
+        j.remember_directory("a_%", id).await.unwrap();
+        j.begin_move("a_%", "target").await.unwrap();
+        assert!(j.remap_subtree("a_%", "target").await.is_err());
+        assert!(j.load().await.unwrap().contains_key("a_%/file"));
+        assert_eq!(j.directory_ids().await.unwrap().get("a_%"), Some(&id));
+        assert!(j.pending_move().await.unwrap().is_some());
+        j.cancel_move().await.unwrap();
+        j.begin_move("a_%", "renamed").await.unwrap();
+        j.remap_subtree("a_%", "renamed").await.unwrap();
+        let baseline = j.load().await.unwrap();
+        assert!(baseline.contains_key("renamed/file"));
+        assert!(baseline.contains_key("a_%other/file"));
+        assert_eq!(j.directory_ids().await.unwrap().get("renamed"), Some(&id));
+        assert!(j.pending_move().await.unwrap().is_none());
     }
 
     #[tokio::test]
