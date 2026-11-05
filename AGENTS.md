@@ -278,11 +278,13 @@ When claiming, before implementation:
   user approves: leave a closure comment with the evidence and close the issue.
   Set Project Status Done; never equate automatic PR merge with issue acceptance.
 - **Blocked**: set Project Status Blocked and record the exact blocker and next action.
-- At the start of each run, before claiming new work, recheck blocked issues
-  owned by this worker. Resume its existing work first only when the recorded
-  blocker is demonstrably resolved and ownership is still clear; document the
-  evidence and transition to In Progress. Otherwise preserve Blocked and consider
-  other eligible tasks. Never auto-resolve a blocker requiring a human decision.
+- At the start of each run, before claiming new work, recheck only Blocked issues
+  explicitly assigned to this agent/worker and bearing its claim/handoff. Do not
+  take over another agent's blocked issue. Resume its existing work first only
+  when the recorded blocker is demonstrably resolved and ownership is still
+  clear; document the evidence and transition to In Progress. Otherwise preserve
+  Blocked and consider other eligible tasks. Never auto-resolve a blocker
+  requiring a human decision.
 - Before stopping or handing off, update the issue with: owner/worker, branch and
   commit/uncommitted state, completed work, exact checks and results, remaining
   work, blockers, and the exact next step.

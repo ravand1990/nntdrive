@@ -66,9 +66,11 @@ and Scheduling readiness. Link dependency issues, not a duplicate task list.
    dependencies. Skip owned/claimed/PR-linked/Review/Blocked candidates and
    continue through independent eligible tasks. One task per run does not limit
    the repository to one open PR. Do not infer acceptance from merge alone.
-   Before selecting new work, recheck issues blocked by this worker: compare the
-   recorded blocker with current evidence (such as a restored CI run or integrated
-   prerequisite), and recheck ownership. If conclusively resolved with no human
+   Before selecting new work, recheck only Blocked issues assigned to this agent
+   and bearing its own claim/handoff; never take over another agent's blocked
+   issue. Compare the recorded blocker with current evidence (such as a restored
+   CI run or integrated prerequisite), and recheck ownership. If conclusively
+   resolved with no human
    decision or acceptance still required, resume that worker's existing branch/
    worktree first, post the evidence, and set In Progress. Never make a duplicate
    claim or branch. If unresolved, ambiguous, owned by another agent, or awaiting
