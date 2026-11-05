@@ -1224,6 +1224,8 @@ class _FilesPageState extends State<FilesPage> {
     final repo = TextEditingController(text: config.repo);
     final token = TextEditingController(text: config.token);
     var autoCheck = prefs.getBool('updateAutoCheck') ?? true;
+    var testing = false;
+    var testMessage = '';
     final saved = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -1267,6 +1269,10 @@ class _FilesPageState extends State<FilesPage> {
                   'repository, and remove it once the repository is public.',
                   style: TextStyle(fontSize: 12),
                 ),
+                if (testMessage.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(testMessage, style: const TextStyle(fontSize: 12)),
+                ],
               ],
             ),
           ),
@@ -1274,6 +1280,37 @@ class _FilesPageState extends State<FilesPage> {
             TextButton(
               onPressed: () => Navigator.pop(context, false),
               child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: testing
+                  ? null
+                  : () async {
+                      setDialogState(() {
+                        testing = true;
+                        testMessage = 'Checking access…';
+                      });
+                      try {
+                        final updater = Updater(UpdateConfig(
+                          repo: repo.text.trim(),
+                          token: token.text.trim(),
+                        ));
+                        final info = await updater.check();
+                        if (!context.mounted) return;
+                        setDialogState(() {
+                          testing = false;
+                          testMessage = info == null
+                              ? 'Access OK — you are on the latest release.'
+                              : 'Access OK — version ${info.version} is available.';
+                        });
+                      } catch (e) {
+                        if (!context.mounted) return;
+                        setDialogState(() {
+                          testing = false;
+                          testMessage = e.toString();
+                        });
+                      }
+                    },
+              child: Text(testing ? 'Testing…' : 'Test access'),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(context, true),

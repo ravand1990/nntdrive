@@ -4,6 +4,13 @@ All notable changes are documented here. Every release tag **must** have an
 entry with `### Features` and/or `### Bug fixes` (at least one bullet). The
 release workflow refuses to publish if the entry is missing.
 
+## [0.4.1] - 2026-11-05
+
+### Bug fixes
+
+- Update settings can test the repository and token before saving, and reports permission errors clearly instead of suggesting a rebuild.
+- A 401 from GitHub now says the token was rejected rather than showing a generic failure.
+
 ## [0.4.0] - 2026-11-05
 
 ### Features

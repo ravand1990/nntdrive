@@ -116,10 +116,13 @@ class Updater {
     );
     if (res.statusCode == 404) {
       throw const UpdateException(
-        'No public release feed was found. The NNTDrive repository is private; '
-        'updates will work once releases are public, or build with '
-        '--dart-define=NNTDRIVE_UPDATE_TOKEN=<read-only token>.',
+        'Could not read the latest release. Check the repository name, and for '
+        'a private repository make sure the access token has Contents: Read '
+        'permission for it.',
       );
+    }
+    if (res.statusCode == 401) {
+      throw const UpdateException('The access token was rejected. Check that it is valid and has not expired.');
     }
     if (res.statusCode != 200) {
       throw UpdateException('GitHub release check failed (${res.statusCode}).');
