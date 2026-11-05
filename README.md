@@ -104,8 +104,8 @@ ghcr.io/ravand1990/nntdrive-backend:latest
 ghcr.io/ravand1990/nntdrive-backend:edge        # main branch
 ```
 
-The package is currently private because the repository is private. Authenticate
-with a GitHub token that has `read:packages`:
+GHCR package visibility is separate from repository visibility. If pulling the
+image requires authentication, use a GitHub token with `read:packages`:
 
 ```bash
 echo "$GHCR_TOKEN" | docker login ghcr.io -u ravand1990 --password-stdin

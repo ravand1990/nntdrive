@@ -2,6 +2,22 @@
 
 Last updated: 2026-11-05. This file is the handoff record for the next agent.
 
+## Current checkout verification (NNT-016)
+
+On 2026-11-05, `bash scripts/dev-check.sh all` on the main-based NNT-016
+checkout passed formatting, workspace check, clippy with `-D warnings`, and
+`cargo test --workspace --all-targets`: **93 Rust tests passed**, none failed,
+ignored or database-skipped. The isolated PostgreSQL 16.15 query succeeded.
+The same run built the release Rust FFI library, passed Flutter analyze with no
+issues, and passed **12 Flutter tests**, including real native bridge tests.
+Toolchains: Rust 1.99.1, Flutter 3.47.9, Dart 3.13.7. Counts describe this
+checkout, not unmerged PRs or earlier verification snapshots.
+
+The latest published release checked via GitHub is **v0.4.1**; Cargo and Flutter
+source versions remain 0.4.1 (`0.4.1+6` for Flutter). Unreleased sync changes
+below are not asserted to be in that release. The historical live-provider,
+desktop and release evidence below was not repeated by this documentation run.
+
 ## Verified working
 
 Everything below is exercised by `cargo test --workspace --all-targets`
@@ -103,7 +119,7 @@ provider when both aws-lc-rs and ring are in the dependency graph.
 - Admin dashboard can edit users (name, quota, role, status) and providers in
   place, with a provider-type dropdown.
 - Windows/Linux auto-update: daily GitHub release check, in-app update settings
-  (repository + optional read-only token for the private repo), SHA-256
+  (repository + optional read-only token for private releases), SHA-256
   verification, detached in-place replacement and restart.
 - Tag-driven release pipeline: tests, GHCR image `0.4.1`/`0.4`/`latest`/`sha-*`,
   and a GitHub release with the image-only Compose files, `SHA256SUMS.txt` and
@@ -203,14 +219,17 @@ provider when both aws-lc-rs and ring are in the dependency graph.
   QEMU build are needed for `linux/arm64`; no multi-arch manifest is published yet.
 - Client CI builds Linux/Android/Windows; Windows native unit tests and release
   packaging are blocking, iOS remains informational and unimplemented. Android
-  ABI packaging checks are not emulator runtime tests. See [CI coverage](CI.md)
+  ABI packaging checks and the KVM native crypto/private-storage smoke are
+  distinct; the smoke is not backend/sync E2E. See [CI coverage](CI.md)
   for exact contracts and unverified branch-protection enforcement.
 - The app's "upload" of a new file creates the node first; if the upload fails it
   tombstones the node. An interrupted version upload leaves the previous version
   intact (the manifest commits last).
 - Client auto-update runs only on Windows and Linux. It needs write access to the
-  install directory, and the GitHub release feed is private until the repository
-  is made public; configure a read-only token in update settings in the meantime.
+  install directory. Public releases do not require a token; private release
+  repositories require read access configured in update settings. Actual
+  Windows/Linux replacement, restart and data/journal preservation acceptance
+  remains tracked in NNT-103 (#28); implementation is not proof of that acceptance.
 - Android and iOS have no in-app updater; Android requires the system package
   installer and iOS requires App Store/TestFlight or a signed enterprise install.
 - Sync conflict review supports Keep mine (the preserved conflict copy), Keep

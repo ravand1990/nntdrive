@@ -12,7 +12,8 @@ ghcr.io/ravand1990/nntdrive-backend:latest
 ghcr.io/ravand1990/nntdrive-backend:edge
 ```
 
-While the repository/package is private:
+If the GHCR package requires authentication (independent of repository visibility),
+use a token with `read:packages`:
 
 ```bash
 echo "$GHCR_TOKEN" | docker login ghcr.io -u ravand1990 --password-stdin
@@ -51,19 +52,21 @@ Tagging `vX.Y.Z` runs `.github/workflows/release.yml`:
 5. creates/updates a GitHub release whose notes come from `CHANGELOG.md`, with the
    image-only Compose files attached.
 
-Before tagging:
+Before tagging, choose a new version; **0.4.2 below is an example, not a
+published release**. Do not reuse the existing v0.4.1 tag.
 
 ```bash
-# 1. bump the workspace version in Cargo.toml
+# 1. bump the workspace version in Cargo.toml and client version in
+#    clients/flutter/pubspec.yaml (including its build number)
 # 2. add a section to CHANGELOG.md:
-#    ## [0.1.1] - 2026-11-05
+#    ## [0.4.2] - YYYY-MM-DD
 #    ### Features
 #    - ...
 #    ### Bug fixes
 #    - ...
-bash scripts/release-notes.sh v0.1.1   # verify the notes extract
-git tag v0.1.1
-git push origin v0.1.1
+bash scripts/release-notes.sh v0.4.2   # after adding the matching changelog entry
+git tag v0.4.2
+git push origin v0.4.2
 ```
 
 The release workflow fails before building the image if the changelog entry is

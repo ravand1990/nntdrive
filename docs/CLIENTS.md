@@ -9,8 +9,9 @@
 | Android | Flutter + Rust FFI | ✅ release APK verified (arm64, armv7, x86_64 libs embedded) | ✅ works end-to-end |
 | iOS | Flutter | Not built (no macOS/Xcode in this environment) | Rust static lib needs an XCFramework; File Provider still missing |
 
-`flutter analyze` is clean, 3 Dart tests pass (including a test that loads the
-real Rust FFI library), and the Linux/Android clients were exercised through the
+The 2026-11-05 NNT-016 container run passed `flutter analyze` and **12 Flutter
+tests**, including tests that load the real Rust FFI library. The historical
+Linux/Android client smoke was exercised through the
 exact Dart FFI layer against a running backend: register → create file → upload →
 download → decrypt → byte-for-byte verify.
 
@@ -211,10 +212,10 @@ also expose **Account → Check for updates**. The updater:
 4. unpacks to a temporary directory and starts a detached helper;
 5. exits, letting the helper replace the install directory and restart the app.
 
-The release repository is private today, so the check returns 404 until releases
-are public. In that case open **Account → Update settings**, set the repository
-and paste a read-only token; it is stored in the app's local settings and used
-for release checks and asset downloads. Agents should reuse the same GitHub PAT
+Public releases do not require a token. For a private release repository, open
+**Account → Update settings**, set the repository and a read-only token; an
+inaccessible private feed can return 404. The token is stored in the app's local
+settings and used for release checks and asset downloads. Agents should reuse the same GitHub PAT
 they use for GitHub MCP/repository access when it has `Contents: Read`, rather
 than creating a second updater token. Clearing the field removes it. **Test
 access** verifies the repository and token before saving. Builds can still
