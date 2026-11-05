@@ -136,4 +136,9 @@ For the existing scheduled job, recommend (do not create another schedule):
 > is verified and the user approves.
 
 A new worktree needs its own dependency fetch/target cache (performed by the
-wrapper). Setup/build is a separate, deliberate action if images are missing.
+wrapper). If the toolchain image is missing, `bash scripts/dev-check.sh build` is
+the approved one-time provisioning step. The wrapper may also build a missing
+image during the first check; let it finish and rerun the checks. Reuse the
+image afterwards and rebuild only when the Dockerfile or pinned toolchains
+change. Missing images are not a task blocker unless the build fails or disk
+headroom is insufficient.

@@ -121,6 +121,20 @@ into handoff notes. Use repository-relative paths and environment variable names
   is available, mark the task blocked with the exact missing capability; never
   claim Windows validation from Linux.
 
+### Containerized checks
+
+- `bash scripts/dev-check.sh build` is an approved one-time provisioning step.
+  Run it before the first check when the toolchain image is absent.
+- The wrapper may build a missing image on first use. Allow that build to finish,
+  then rerun the check; do not block a task merely because the image was absent
+  or was built during the first invocation.
+- Reuse the image and the per-worktree caches. Rebuild only when the Dockerfile
+  or pinned toolchains change, or when the image is missing. Track the one-time
+  build in the issue handoff.
+- Stop and record a blocker only if the image build fails, disk headroom is
+  insufficient, or the container environment is unsafe. Do not install SDKs on
+  the host.
+
 ## Conventions
 
 - Follow `docs/DEVELOPMENT.md`; keep encryption, sync, and NNTP transport
