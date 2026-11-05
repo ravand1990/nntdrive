@@ -51,8 +51,9 @@ release rewritten to satisfy a category check.
 
 Published v0.4.1 notes contain **Bug fixes only**, accurately matching the tagged
 `CHANGELOG.md` 0.4.1 section (two bug-fix bullets). They satisfy the corrected
-acceptance. The notes blocker is resolved and NNT-101 is in Review, awaiting
-acceptance, not Done. No second task was started.
+acceptance. The notes blocker is resolved; the user approved the audit and merge
+on 2026-11-05, so NNT-101 becomes Done when PR #3 merges. No second task was
+started.
 
 Authenticated API reads during review preparation reconfirmed the annotated tag
 target, published non-draft/non-prerelease release, seven asset names/sizes/API
@@ -60,12 +61,11 @@ digests, and successful historical Release, CI and Clients runs. Release jobs
 still show only the explained non-blocking iOS failure. Assets were not downloaded
 again; download/hash and image-log evidence above is from the original audit.
 
-Current PR commit status and check-run reads return HTTP 403 (`Resource not
-accessible by personal access token`). Historical release workflow success does
-not prove current PR CI; current-head CI remains unverified. Review
-[PR #3](https://github.com/ravand1990/nntdrive/pull/3) and obtain current-head CI
-evidence with sufficient permissions. No merge, deployment or scheduling is
-authorized.
+PR #3 CI was green at commit `67ce5dd`: run
+[41963613892](https://github.com/ravand1990/nntdrive/actions/runs/41963613892)
+completed with both `rust` and `docker` jobs successful. The final
+documentation-only commit re-runs the same checks; confirm that run before merge.
+Historical release workflow success remains separate from current PR CI.
 
 ## Local verification scope
 
