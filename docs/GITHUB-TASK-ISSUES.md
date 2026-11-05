@@ -125,9 +125,9 @@ Before each merge:
 - Current PR workflows are CI (`rust`, `wrapper-contracts`, `docker`) and Clients
   (`analyze`, `build-linux`, `build-windows`, `build-android`,
   `android-native-smoke`). Inspect the live workflow definitions each time;
-  this list is not permission to omit newly applicable gates. `build-ios` is
-  explicitly informational (`continue-on-error`) while iOS is unimplemented.
-  Release/tag-only publishing is not an invented PR requirement.
+  this list is not permission to omit newly applicable gates. iOS is not
+  currently built in CI and remains unimplemented. Release/tag-only publishing
+  is not an invented PR requirement.
 - Tests do not replace required manual acceptance. Merge only when PR acceptance
   is satisfied, or the user explicitly approves a documented follow-up; never
   invent approval. A draft is not automatically ready. Issue closure/Done follows
