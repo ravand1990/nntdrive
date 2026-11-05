@@ -38,7 +38,9 @@ Dispatch **Container checks (manual)** explicitly against the desired ref. It
 builds the repository-owned pinned Rust/Flutter images, then runs
 `bash scripts/dev-check.sh all` with real isolated PostgreSQL and native FFI.
 No schedule or automatic SDK rebuild is added. Budget: one Ubuntu runner,
-60-minute timeout, at least 20 GiB initial free disk; Compose limits Rust/Flutter
+60-minute timeout, at least 20 GiB initial free disk after removing unused host
+Android/.NET SDKs **only on the disposable GitHub-hosted Linux runner** (the first
+run exposed just 14 GiB free and correctly failed its headroom gate); Compose limits Rust/Flutter
 to 2 CPUs/6 GiB/512 PIDs, DB to 1 CPU/768 MiB/128 PIDs with 512 MiB tmpfs.
 Per-checkout caches last only for the runner lifetime; no credentials, production
 volumes or Docker socket are mounted inside toolchains. The wrapper owns its

@@ -16,6 +16,11 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Reclaim unused SDKs on this disposable hosted runner
+        run: |
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          # This Linux-only container job uses neither host Android nor .NET.
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet
       - name: Require build headroom
         run: |
           df -h .

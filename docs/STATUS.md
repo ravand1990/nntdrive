@@ -161,8 +161,8 @@ provider when both aws-lc-rs and ring are in the dependency graph.
    re-wrap for remaining devices, and retain old epoch keys for old revisions;
    today the backend only instructs the client to rotate.
 4. **Windows packaging**: code signing, installer/updater, and a clean-VM test
-   without SDKs. The FFI DLL must ship next to the executable. Make the Windows
-   CI job blocking once a hosted runner proves reliable.
+   without SDKs. The FFI DLL must ship next to the executable. Hosted Windows
+   native tests/builds are now blocking; installer/restart validation remains open.
 5. **iOS**: build the Rust static library as an XCFramework, add the File
    Provider extension and BGTaskScheduler integration; requires macOS.
 6. **Sharing**: folder-share endpoints with per-share wrapped keys, public link

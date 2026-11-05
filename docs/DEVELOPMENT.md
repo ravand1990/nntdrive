@@ -86,7 +86,7 @@ flutter config --android-sdk "$ANDROID_SDK_ROOT"
 # Build and test
 cd clients/flutter
 flutter pub get
-flutter analyze && flutter test
+flutter analyze
 NNTDRIVE_FFI_PATH="$PWD/linux/lib/libnntdrive_ffi.so" flutter test
 flutter build linux --release
 flutter build apk --release
