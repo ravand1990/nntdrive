@@ -7,12 +7,18 @@ priority, dependencies, ownership and evidence; the existing
 [NNTDrive Project](https://github.com/users/ravand1990/projects/2) **Status**
 field owns phase. `TASKS.md` is only a pointer. Do not recreate status labels.
 This live user-authorized policy supersedes older label instructions, including
-any still present in `AGENTS.md` or on main while this documentation PR awaits
-review. It does not waive security, scope, ownership, checks or acceptance.
+any still present in `AGENTS.md`. It does not waive security, scope, ownership,
+checks or acceptance. These workflow/template changes were consolidated directly
+onto main by explicit user authorization; PR #40 is superseded, not merged.
+The protected-instruction write guard still denies the requested `AGENTS.md`
+alignment. That file was not changed or bypassed; an operator must resolve that
+specific guard before its obsolete tracker rules can be removed. Until then,
+other agents must explicitly adopt this user-authorized phase policy before
+competing for work, and the scheduled prompt retains its narrow precedence.
 
-Project ID: `PVT_kwHOAGX9p84BqWm7`.
-Status field ID: `PVTSSF_lAHOAGX9p84BqWm7zhouHdE`.
-Discover current field/option IDs at runtime; do not rely on cached option IDs.
+Discover the Project by its owner/number from the URL above, then discover its
+current Status field and option IDs at runtime. Do not hardcode field/option
+IDs or rely on cached options.
 
 | Project Status | Meaning |
 |---|---|
@@ -27,8 +33,9 @@ must not be represented as completed work. Test issue #4 is excluded.
 
 ## Scheduling readiness is not phase
 
-Every task body contains `## Scheduling readiness` followed by exactly `Ready`
-or `Backlog`. This is queue authorization, not a second progress tracker.
+Every task body contains a `Scheduling readiness` heading followed by exactly
+`Ready` or `Backlog` (Markdown `##` for migrated bodies, `###` from GitHub issue
+forms; both are valid). This is queue authorization, not a second progress tracker.
 Both old Backlog and Ready map to Todo, but only Todo **and** readiness Ready
 can be considered for new selection. Missing/ambiguous membership, Status or
 readiness is not permission to work. Never promote Backlog automatically.
@@ -39,8 +46,11 @@ closed tasks remain ineligible regardless of readiness.
 At cutover, old Ready and already active/review/blocked tasks retained Ready;
 old Backlog retained Backlog. Historical closed tasks received conservative
 Backlog, because completion is not authorization for a new run.
-New tasks default to Todo plus Backlog, with one priority label:
-`priority:P0` security/data loss/release blockers, `priority:P1` current milestone,
+New tasks default to Todo plus Backlog, with one priority label. After creating
+an issue, add it to this Project, explicitly set Todo and verify membership,
+Status and readiness; issue forms alone do not enroll it or set Project fields.
+Only the coordinator/user may explicitly authorize readiness Ready.
+Use `priority:P0` security/data loss/release blockers, `priority:P1` current milestone,
 `priority:P2` later work. Preserve other non-status labels.
 
 Task bodies retain Outcome, Scope / exclusions, Acceptance criteria,
@@ -61,7 +71,9 @@ and Scheduling readiness. Link dependency issues, not a duplicate task list.
    appropriate, read back the exact item and issue, and recheck competing claims.
    Comments, assignments and Project transitions are coordination, not locks.
 4. Use an isolated task branch/worktree; resume only your own unfinished work
-   with clear coordinator authorization. Review handoffs are not unfinished
+   with clear coordinator authorization. Name migrated-task branches
+   `task/<NNT-ID>-<slug>` and new-task branches `task/issue-<number>-<slug>`;
+   include the same identifier in commits and PR titles. Review handoffs are not unfinished
    implementation. Preserve other agents' work and existing branches.
 5. Put actual checks/results, owner, branch/commit, remaining work, blockers,
    PR link and exact next action on the issue. Set Ready For Review after
@@ -109,9 +121,12 @@ unchanged; use the live board, not a dated duplicate phase table.
 
 ## Scheduled worker policy
 
-The user authorized live worker cutover and resume independently of merging
-this documentation PR. The scheduled prompt explicitly carries this policy
-while older checked-in instructions remain; it must never revert to labels.
+The user authorized live worker cutover and resume independently of PR #40.
+The documentation/template cutover is now published directly on main. Because
+`AGENTS.md` remains guard-blocked, the scheduled prompt retains only the narrow
+precedence required to override its obsolete tracker rules; remove that
+exception only after the instruction file is successfully aligned. It must never
+revert to labels.
 Preserve the existing 120-minute interval, gpt-6.1-sol/openai-codex, minimal
 reasoning, skills, workdir, protected authentication, repository-local Git
 identity, one-task-per-run and no-merge/no-deploy policy. Do not trigger an extra

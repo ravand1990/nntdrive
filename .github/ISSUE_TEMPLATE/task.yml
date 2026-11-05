@@ -1,6 +1,6 @@
 name: Task
 description: Actionable NNTDrive task tracked in GitHub Issues
-title: "NNT-___ — "
+title: "Task: "
 labels: ["priority:P2"]
 body:
   - type: dropdown
@@ -19,7 +19,9 @@ body:
       value: |
         Use Project Status (not status labels), default Todo + Backlog. Change the
         default `priority:P2` label if this task is P0 or P1. Existing NNT IDs
-        stay in the title; new tasks may use the issue number instead.
+        stay in the title; new tasks use the issue number instead.
+        After filing, add the issue to the NNTDrive Project, explicitly set Todo,
+        and verify membership/Status/readiness. This form does not set Project fields.
   - type: textarea
     id: outcome
     attributes:

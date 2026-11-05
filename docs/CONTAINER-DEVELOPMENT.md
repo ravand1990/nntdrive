@@ -132,9 +132,14 @@ For the existing scheduled job, recommend (do not create another schedule):
 
 > Read AGENTS.md and the open GitHub Issues, then read the issue body,
 > comments, labels, assignees, dependencies and linked PRs before claiming a
-> task. Claim one highest-priority Project Todo + Scheduling readiness Ready issue with satisfied
-> dependencies by posting a claim comment and setting Project Status In Progress. Use an
-> isolated task worktree. Reuse installed toolchain images; run
+> task. Read the Project membership/Status and discover current field/options.
+> Select one highest-priority unowned Todo + Scheduling readiness Ready issue
+> with satisfied, accepted/integrated dependencies. Skip owned/review candidates
+> and consider independent issues; multiple open PRs are allowed. Never promote
+> Backlog automatically. Post an agent-identifying claim, set Project Status
+> In Progress, assign where appropriate, then read back and recheck races.
+> These records coordinate work, not atomic locks. Use an isolated task worktree.
+> Reuse installed toolchain images; run
 > `bash scripts/dev-check.sh rust` and/or `bash scripts/dev-check.sh flutter`
 > from that worktree (or `all` for cross-stack work). Do not install host SDKs,
 > run deployment Compose, contact real providers, change schedules, or merge.
