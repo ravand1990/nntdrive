@@ -4,6 +4,14 @@ All notable changes are documented here. Every release tag **must** have an
 entry with `### Features` and/or `### Bug fixes` (at least one bullet). The
 release workflow refuses to publish if the entry is missing.
 
+## [0.4.0] - 2026-11-05
+
+### Features
+
+- Windows and Linux clients expose **Account → Update settings**: release repository, optional read-only access token for the private repository, and the daily auto-check toggle.
+- The saved token is used for both the release check and private asset downloads; clearing the field removes it.
+- Update checks can now run against private releases without rebuilds that embed a token.
+
 ## [0.3.0] - 2026-11-05
 
 ### Features

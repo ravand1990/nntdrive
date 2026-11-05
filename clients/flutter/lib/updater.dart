@@ -5,9 +5,10 @@
 //! latest release, verifies the download, stages it, then hands off to a small
 //! helper that replaces the running app after it exits and restarts it.
 //!
-//! The repository is private today. Builds can pass a read-only token with
-//! `--dart-define=NNTDRIVE_UPDATE_TOKEN=...`; once releases are public no token
-//! is needed.
+//! The release repository is private today. Users can enter a read-only token
+//! in the client's update settings; it is stored with the app's local settings.
+//! Builds can also provide a fallback with `--dart-define=NNTDRIVE_UPDATE_TOKEN`.
+//! Once releases are public neither is needed.
 
 import 'dart:convert';
 import 'dart:io';
@@ -17,6 +18,14 @@ import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+class UpdateConfig {
+  const UpdateConfig({required this.repo, required this.token});
+
+  final String repo;
+  final String token;
+}
 
 class UpdateInfo {
   const UpdateInfo({
@@ -37,24 +46,58 @@ class UpdateInfo {
 }
 
 class Updater {
-  static const repo = String.fromEnvironment(
+  Updater(this.config);
+
+  final UpdateConfig config;
+
+  static const defaultRepo = String.fromEnvironment(
     'NNTDRIVE_UPDATE_REPO',
     defaultValue: 'ravand1990/nntdrive',
   );
   static const _compileToken = String.fromEnvironment('NNTDRIVE_UPDATE_TOKEN');
+  static const _repoKey = 'updateRepo';
+  static const _tokenKey = 'updateToken';
 
   static bool get supported => Platform.isWindows || Platform.isLinux;
 
-  static String get _token =>
-      _compileToken.isNotEmpty
+  /// Settings are stored per install. The token is optional and only needed
+  /// while the release repository is private; use a read-only token.
+  static Future<UpdateConfig> loadConfig() async {
+    final prefs = await SharedPreferences.getInstance();
+    final repo = (prefs.getString(_repoKey) ?? '').trim();
+    var token = (prefs.getString(_tokenKey) ?? '').trim();
+    if (token.isEmpty) {
+      token = _compileToken.isNotEmpty
           ? _compileToken
           : (Platform.environment['NNTDRIVE_UPDATE_TOKEN'] ?? '');
+    }
+    return UpdateConfig(
+      repo: repo.isEmpty ? defaultRepo : repo,
+      token: token,
+    );
+  }
 
-  static Map<String, String> get _headers => {
+  static Future<void> saveConfig({
+    required String repo,
+    required String token,
+    required bool autoCheck,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_repoKey, repo.trim());
+    await prefs.setBool('updateAutoCheck', autoCheck);
+    final trimmed = token.trim();
+    if (trimmed.isEmpty) {
+      await prefs.remove(_tokenKey);
+    } else {
+      await prefs.setString(_tokenKey, trimmed);
+    }
+  }
+
+  Map<String, String> get _headers => {
         'Accept': 'application/vnd.github+json',
         'X-GitHub-Api-Version': '2022-11-28',
         'User-Agent': 'NNTDrive-updater',
-        if (_token.isNotEmpty) 'Authorization': 'Bearer $_token',
+        if (config.token.isNotEmpty) 'Authorization': 'Bearer ${config.token}',
       };
 
   Future<String> currentVersion() async =>
@@ -68,7 +111,7 @@ class Updater {
     }
     final current = await currentVersion();
     final res = await http.get(
-      Uri.parse('https://api.github.com/repos/$repo/releases/latest'),
+      Uri.parse('https://api.github.com/repos/${config.repo}/releases/latest'),
       headers: _headers,
     );
     if (res.statusCode == 404) {
@@ -117,7 +160,8 @@ class Updater {
     final archive = File(p.join(tmp.path, info.assetName));
     final stage = Directory(p.join(tmp.path, 'nntdrive-update-${info.version}'));
     try {
-      await _download(info.assetUrl, archive, accept: _token.isEmpty ? null : 'application/octet-stream');
+      await _download(info.assetUrl, archive,
+          accept: config.token.isEmpty ? null : 'application/octet-stream');
       if (info.sha256 != null) {
         final actual = await sha256.bind(archive.openRead()).first;
         if (actual.toString().toLowerCase() != info.sha256!.toLowerCase()) {
@@ -142,7 +186,7 @@ class Updater {
   }
 
   Uri _assetUri(Map<String, dynamic> asset) {
-    if (_token.isNotEmpty && asset['url'] is String) {
+    if (config.token.isNotEmpty && asset['url'] is String) {
       return Uri.parse(asset['url'] as String);
     }
     return Uri.parse(asset['browser_download_url'] as String);
@@ -157,7 +201,7 @@ class Updater {
         _assetUri(sumsAsset),
         headers: {
           ..._headers,
-          if (_token.isNotEmpty) 'Accept': 'application/octet-stream',
+          if (config.token.isNotEmpty) 'Accept': 'application/octet-stream',
         },
       );
       if (res.statusCode != 200) return null;

@@ -28,7 +28,7 @@ decrypt, verify) and through the Flutter FFI sync layer.
 | Real Eweka round-trip: post via `post.eweka.nl:563`, retrieve via `news.eweka.nl:563`, decrypt, verify hash | 4 KB live upload; both articles STAT-verified |
 | Live deployment: dev Compose stack with mock NNTP; register/upload/download through the API | `crates/client/examples/smoke.rs` (verified) |
 | Docker image build, Compose stack, healthcheck, admin page, CLI bootstrap, admin API | ✅ verified locally (image built, stack started, `/healthz` 200, admin stats returned) |
-| Versioned image release: tests → GHCR push (`0.3.0`, `0.3`, `latest`, `sha-*`) → GitHub release with Compose files, checksums and Linux/Android/Windows client builds | ✅ v0.3.0 published |
+| Versioned image release: tests → GHCR push (`0.4.0`, `0.4`, `latest`, `sha-*`) → GitHub release with Compose files, checksums and Linux/Android/Windows client builds | ✅ v0.4.0 published |
 | Flutter client analyze/tests, Linux/Android/Windows release builds | ✅ clean analyze, Dart FFI tests pass; Linux/Windows bundles run, Android APK (~77 MB, debug-signed) embeds all ABIs |
 
 Run it yourself:
@@ -102,9 +102,10 @@ provider when both aws-lc-rs and ring are in the dependency graph.
   review panel.
 - Admin dashboard can edit users (name, quota, role, status) and providers in
   place, with a provider-type dropdown.
-- Windows/Linux auto-update: daily GitHub release check, SHA-256 verification,
-  detached in-place replacement and restart.
-- Tag-driven release pipeline: tests, GHCR image `0.3.0`/`0.3`/`latest`/`sha-*`,
+- Windows/Linux auto-update: daily GitHub release check, in-app update settings
+  (repository + optional read-only token for the private repo), SHA-256
+  verification, detached in-place replacement and restart.
+- Tag-driven release pipeline: tests, GHCR image `0.4.0`/`0.4`/`latest`/`sha-*`,
   and a GitHub release with the image-only Compose files, `SHA256SUMS.txt` and
   Linux, Android and Windows client builds. The image is amd64 only; arm64 needs
   native runners or a longer QEMU build. iOS requires macOS/Xcode and is not
@@ -203,7 +204,7 @@ provider when both aws-lc-rs and ring are in the dependency graph.
   intact (the manifest commits last).
 - Client auto-update runs only on Windows and Linux. It needs write access to the
   install directory, and the GitHub release feed is private until the repository
-  is made public (private builds can set a read-only token at compile time).
+  is made public; configure a read-only token in update settings in the meantime.
 - Android and iOS have no in-app updater; Android requires the system package
   installer and iOS requires App Store/TestFlight or a signed enterprise install.
 - Sync conflicts are preserved as files and listed in the sync screen's review

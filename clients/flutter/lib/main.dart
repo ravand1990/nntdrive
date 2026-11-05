@@ -1122,7 +1122,8 @@ class _FilesPageState extends State<FilesPage> {
       }
       await prefs.setString(
           'updateLastCheck', DateTime.now().toIso8601String());
-      final info = await Updater().check();
+      final updater = Updater(await Updater.loadConfig());
+      final info = await updater.check();
       if (info == null || !mounted) return;
       if (prefs.getString('updateSkippedVersion') == info.version) return;
       await _promptUpdate(info);
@@ -1138,13 +1139,14 @@ class _FilesPageState extends State<FilesPage> {
     }
     _showProgress('Checking for updates…');
     try {
-      final info = await Updater().check();
+      final updater = Updater(await Updater.loadConfig());
+      final info = await updater.check();
       if (mounted && Navigator.of(context, rootNavigator: true).canPop()) {
         Navigator.of(context, rootNavigator: true).pop();
       }
       if (!mounted) return;
       if (info == null) {
-        final version = await Updater().currentVersion();
+        final version = await updater.currentVersion();
         _toast('NNTDrive $version is up to date.');
         return;
       }
@@ -1203,13 +1205,98 @@ class _FilesPageState extends State<FilesPage> {
     if (!mounted) return;
     _showProgress('Downloading NNTDrive ${info.version}…');
     try {
-      await Updater().install(info);
+      final updater = Updater(await Updater.loadConfig());
+      await updater.install(info);
       exit(0);
     } catch (e) {
       if (mounted && Navigator.of(context, rootNavigator: true).canPop()) {
         Navigator.of(context, rootNavigator: true).pop();
       }
       _showError(e);
+    }
+  }
+
+  Future<void> _showUpdateSettings() async {
+    final config = await Updater.loadConfig();
+    if (!mounted) return;
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    final repo = TextEditingController(text: config.repo);
+    final token = TextEditingController(text: config.token);
+    var autoCheck = prefs.getBool('updateAutoCheck') ?? true;
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Update settings'),
+          content: SizedBox(
+            width: 560,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: repo,
+                  decoration: const InputDecoration(
+                    labelText: 'GitHub repository',
+                    hintText: 'owner/repo',
+                    helperText: 'Releases are read from this repository.',
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: token,
+                  obscureText: true,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  decoration: const InputDecoration(
+                    labelText: 'Access token (optional)',
+                    helperText: 'Needed only while the repository is private. '
+                        'Use a read-only, fine-grained token.',
+                  ),
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: autoCheck,
+                  onChanged: (value) => setDialogState(() => autoCheck = value),
+                  title: const Text('Check automatically once a day'),
+                ),
+                const Text(
+                  'The token is stored in this app’s local settings. Use a '
+                  'read-only, fine-grained token with access only to the release '
+                  'repository, and remove it once the repository is public.',
+                  style: TextStyle(fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    final repoText = repo.text;
+    final tokenText = token.text;
+    repo.dispose();
+    token.dispose();
+    if (saved != true) return;
+    try {
+      await Updater.saveConfig(
+        repo: repoText,
+        token: tokenText,
+        autoCheck: autoCheck,
+      );
+      if (mounted) _toast('Update settings saved.');
+    } catch (e) {
+      _showError('Could not save update settings: $e');
     }
   }
 
@@ -1251,6 +1338,15 @@ class _FilesPageState extends State<FilesPage> {
               onTap: () {
                 Navigator.pop(context);
                 _openSync();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.settings_outlined),
+              title: const Text('Update settings'),
+              subtitle: const Text('Repository and access token'),
+              onTap: () {
+                Navigator.pop(context);
+                _showUpdateSettings();
               },
             ),
             ListTile(
