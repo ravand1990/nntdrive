@@ -104,6 +104,23 @@ Reference or CI-only commands (not re-run during the last setup pass):
 Do not paste machine-specific temporary paths, credentials, or helper scripts
 into handoff notes. Use repository-relative paths and environment variable names.
 
+### GitHub credentials and platform access
+
+- Use the **same GitHub PAT** that the agent uses for GitHub MCP/repository access
+  as the client's auto-update token when that credential has `Contents: Read`.
+  Do not create a second updater token unless the MCP credential is OAuth-only or
+  lacks repository access. Never print, commit, or paste the token; store it via
+  the supported client settings or environment mechanism.
+- If Windows validation is required but no Windows host is available locally,
+  look for an existing configured Windows machine before declaring the task
+  blocked. Inspect the user's SSH configuration (`~/.ssh/config`, or
+  `%USERPROFILE%\.ssh\config`) for host aliases and confirm the remote OS before
+  running checks. Do not print private keys or credentials.
+- Ask the coordinator/user before using an unfamiliar machine. Report the host
+  alias and results, not private network details or secrets. If no Windows host
+  is available, mark the task blocked with the exact missing capability; never
+  claim Windows validation from Linux.
+
 ## Conventions
 
 - Follow `docs/DEVELOPMENT.md`; keep encryption, sync, and NNTP transport
