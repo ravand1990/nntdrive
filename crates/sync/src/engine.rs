@@ -29,6 +29,11 @@ pub type Result<T> = std::result::Result<T, SyncError>;
 #[allow(async_fn_in_trait)]
 pub trait Remote {
     async fn snapshot(&mut self) -> Result<Vec<RemoteEntry>>;
+    /// Stable identities from the most recent snapshot. Transports without
+    /// directory IDs retain the conservative path-based behavior.
+    fn directory_ids(&self) -> HashMap<String, Uuid> {
+        HashMap::new()
+    }
     async fn upload(
         &mut self,
         path: &str,
@@ -97,6 +102,23 @@ impl SyncEngine {
         journal: &Journal,
         now: &str,
     ) -> Result<SyncReport> {
+        // Finish or cancel an interrupted local rename before scanning. The
+        // intent survives cancellation between filesystem and SQLite commits.
+        if let Some((from, to)) = journal.pending_move().await? {
+            let src = local_path(root, &from)?;
+            let dst = local_path(root, &to)?;
+            ensure_no_symlinks(root, &from).await?;
+            ensure_no_symlinks(root, &to).await?;
+            match (src.try_exists()?, dst.try_exists()?) {
+                (false, true) if dst.is_dir() => journal.remap_subtree(&from, &to).await?,
+                (true, false) => journal.cancel_move().await?,
+                _ => {
+                    return Err(SyncError::Remote(
+                        "interrupted folder move needs local reconciliation".into(),
+                    ))
+                }
+            }
+        }
         let mut baseline = journal.load().await?;
         // Excluded paths are ignored entirely, including their baseline entries:
         // treating them as deleted would drop history and cause conflicts when
@@ -123,16 +145,105 @@ impl SyncEngine {
         let scan_root = root.clone();
         let mut opts = self.scan_options.clone();
         opts.excluded_paths = self.excluded_paths.clone();
-        let scan = tokio::task::spawn_blocking(move || scanner::scan(&scan_root, &opts, &previous))
-            .await
-            .map_err(|e| SyncError::Remote(format!("scan task failed: {e}")))??;
+        let mut scan =
+            tokio::task::spawn_blocking(move || scanner::scan(&scan_root, &opts, &previous))
+                .await
+                .map_err(|e| SyncError::Remote(format!("scan task failed: {e}")))??;
 
-        let local_changes = reconcile::detect_local(&baseline, &scan.entries);
         let remote_entries = remote.snapshot().await?;
-        let remote_entries: Vec<_> = remote_entries
+        let mut remote_entries: Vec<_> = remote_entries
             .into_iter()
             .filter(|e| !self.is_excluded(&e.path))
             .collect();
+        // Resolve directory identity before three-way reconciliation. Remapping
+        // both the scan and baseline prevents per-child deletes/downloads and
+        // keeps offline edits attached to their original revisions.
+        let directory_ids = remote.directory_ids();
+        let mut known = journal.directory_ids().await?;
+        let mut directories: Vec<_> = directory_ids.iter().collect();
+        directories.sort_by_key(|(path, _)| (path.matches('/').count(), *path));
+        let mut folder_moves = 0;
+        let mut missing_sources: Vec<(String, String)> = Vec::new();
+        for (to, id) in directories {
+            if missing_sources
+                .iter()
+                .any(|(from, dest)| in_subtree(to, from) || in_subtree(to, dest))
+            {
+                continue;
+            }
+            let Some(from) = known
+                .iter()
+                .find_map(|(path, old_id)| (old_id == id && path != to).then(|| path.clone()))
+            else {
+                continue;
+            };
+            // Never move excluded local content, overwrite a destination, or
+            // traverse symlink ancestors. Ambiguity stops the round rather than
+            // degrading a known move into destructive delete/recreate actions.
+            let touches_exclusion = self
+                .excluded_paths
+                .iter()
+                .map(|path| path.trim().trim_matches('/').replace('\\', "/"))
+                .any(|path| in_subtree(&path, &from) || in_subtree(&path, to))
+                || self.is_excluded(&from)
+                || self.is_excluded(to);
+            if touches_exclusion {
+                return Err(SyncError::Remote(
+                    "folder move intersects selective-sync exclusions".into(),
+                ));
+            }
+            let src = local_path(&root, &from)?;
+            let dst = local_path(&root, to)?;
+            ensure_no_symlinks(&root, &from).await?;
+            ensure_no_symlinks(&root, to).await?;
+            if !src.try_exists()? {
+                missing_sources.push((from, to.clone()));
+                continue;
+            }
+            if in_subtree(to, &from)
+                || !scan.case_collisions.is_empty()
+                || scan.entries.iter().any(|entry| {
+                    !in_subtree(&entry.path, &from)
+                        && in_subtree(&entry.path.to_lowercase(), &to.to_lowercase())
+                })
+                || tokio::fs::symlink_metadata(&dst).await.is_ok()
+                || !tokio::fs::metadata(&src).await?.is_dir()
+            {
+                return Err(SyncError::Remote(
+                    "folder move has a local path collision".into(),
+                ));
+            }
+            if let Some(parent) = dst.parent() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+            // SQL conflicts must not strand the filesystem under the new name.
+            journal.begin_move(&from, to).await?;
+            tokio::fs::rename(&src, &dst).await?;
+            if let Err(error) = journal.remap_subtree(&from, to).await {
+                tokio::fs::rename(&dst, &src).await?;
+                journal.cancel_move().await?;
+                return Err(error.into());
+            }
+            for entry in &mut scan.entries {
+                if in_subtree(&entry.path, &from) {
+                    entry.path = format!("{to}{}", &entry.path[from.len()..]);
+                }
+            }
+            known = journal.directory_ids().await?;
+            folder_moves += 1;
+        }
+        if folder_moves > 0 {
+            baseline = journal.load().await?;
+            baseline.retain(|_, entry| !self.is_excluded(&entry.path));
+        }
+        for (from, to) in &missing_sources {
+            baseline.retain(|path, _| !in_subtree(path, from) && !in_subtree(path, to));
+            scan.entries
+                .retain(|entry| !in_subtree(&entry.path, from) && !in_subtree(&entry.path, to));
+            remote_entries
+                .retain(|entry| !in_subtree(&entry.path, from) && !in_subtree(&entry.path, to));
+        }
+        let local_changes = reconcile::detect_local(&baseline, &scan.entries);
         let remote_changes = reconcile::detect_remote(&baseline, &remote_entries);
         let actions = reconcile::reconcile(
             &baseline,
@@ -147,6 +258,8 @@ impl SyncEngine {
         }
 
         let mut report = SyncReport {
+            moved: folder_moves,
+            errors: missing_sources.iter().map(|(from, _)| (from.clone(), "remote folder moved but local source is missing; reconcile this subtree manually".into())).collect(),
             skipped: scan.skipped.clone(),
             ..Default::default()
         };
@@ -202,6 +315,20 @@ impl SyncEngine {
                         deleted: false,
                     })
                     .await?;
+            }
+        }
+        let synced = journal.load().await?;
+        for (path, id) in remote.directory_ids() {
+            if !self.is_excluded(&path)
+                && !missing_sources
+                    .iter()
+                    .any(|(from, to)| in_subtree(&path, from) || in_subtree(&path, to))
+                && synced
+                    .get(&path)
+                    .is_some_and(|entry| entry.is_dir && !entry.deleted)
+                && tokio::fs::metadata(local_path(&root, &path)?).await.is_ok()
+            {
+                journal.remember_directory(&path, id).await?;
             }
         }
         Ok(report)
@@ -430,6 +557,29 @@ fn action_label(a: &Action) -> String {
         }
         Action::Conflict { path, .. } => format!("conflict {path}"),
     }
+}
+
+fn in_subtree(path: &str, root: &str) -> bool {
+    path == root
+        || path
+            .strip_prefix(root)
+            .is_some_and(|tail| tail.starts_with('/'))
+}
+
+async fn ensure_no_symlinks(root: &Path, relative: &str) -> Result<()> {
+    let mut path = root.to_path_buf();
+    for component in relative.split('/') {
+        path.push(component);
+        match tokio::fs::symlink_metadata(&path).await {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(SyncError::UnsafePath(relative.to_string()));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
 }
 
 fn local_path(root: &Path, rel: &str) -> Result<PathBuf> {

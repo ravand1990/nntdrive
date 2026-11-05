@@ -1,10 +1,10 @@
 # Project status
 
-Last updated: 2026-11-04. This file is the handoff record for the next agent.
+Last updated: 2026-11-05. This file is the handoff record for the next agent.
 
 ## Verified working
 
-Everything below is exercised by `cargo test --workspace --all-targets` (86 tests)
+Everything below is exercised by `cargo test --workspace --all-targets`
 against real PostgreSQL and an in-process NNTP server, plus the CLI demo.
 Additional live checks were run against a real Eweka account (upload, download,
 decrypt, verify) and through the Flutter FFI sync layer.
@@ -18,7 +18,7 @@ decrypt, verify) and through the Flutter FFI sync layer.
 | Scanner ignore rules, case collisions, path validation, rename detection, concurrent offline edits, conflict preservation, delete propagation | `nntdrive-sync` tests |
 | Register/login/logout, revoked device, admin authorization, tenant isolation, ciphertext upload, article proxy, dedupe lookup, shard locations | `nntdrive-backend/tests/api.rs` |
 | Real client SDK: register → create node → encrypted upload → manifest → download → decrypt → verify; dedupe; unauthorized access | `crates/client/tests/e2e.rs` |
-| Two-device sync: create/modify/delete propagation, conflict copies, independent multiple roots, selective-sync exclusions in both directions, remote file-rename detection via cached hashes | `crates/client/tests/sync_e2e.rs` (real API + mock NNTP) |
+| Two-device sync: create/modify/delete propagation, conflict copies, independent multiple roots, selective-sync exclusions, remote file renames, node-ID folder moves, interrupted-move recovery and collision guards | `crates/client/tests/sync_e2e.rs` (real API + mock NNTP) |
 | Dart ↔ Rust FFI sync: two local folders, upload/download/edit propagation against the live backend | `clients/flutter/tool/sync_smoke.dart` (verified) |
 | Dart ↔ Rust FFI: account generation, keyfile unlock, name seal/open with wrong-key rejection | `clients/flutter/test/native_test.dart` + `crates/ffi` tests |
 | First-run onboarding: setup status, first admin registration, one-time admin token, recovery code | backend tests + Flutter UI |
@@ -117,7 +117,7 @@ provider when both aws-lc-rs and ring are in the dependency graph.
 |---|---|
 | 1. Working storage engine | **Done and tested** (CLI demo uploads, downloads, decrypts, verifies) |
 | 2. Self-healing storage | **Done and tested** (health, repair, refresh, snapshots via sealed manifests, simulated loss) |
-| 3. Desktop synchronization | **Core done: multi-folder bidirectional sync, automatic 5-min runs while open, streaming transfers, selective sync, conflict copies and review. Remaining: background service, remote folder rename moves, per-file progress, virtual drives** |
+| 3. Desktop synchronization | **Core done: multi-folder bidirectional sync, automatic 5-min runs while open, streaming transfers, selective sync, conflict copies and review, remote folder moves. Remaining: background service, per-file progress, virtual drives** |
 | 4. Virtual filesystem | **Not implemented** (WinFsp/FUSE design only) |
 | 5. Mobile clients | **Android app builds, browses and syncs (same Flutter UI); iOS unbuilt; no DocumentsProvider/File Provider/photo backup or reliable background sync** |
 | 6. Sharing & production readiness | **Partial**: backend, admin dashboard, auth, jobs, Docker, backups, CI done; sharing/link endpoints absent; hardening/audit pending |
@@ -137,9 +137,12 @@ provider when both aws-lc-rs and ring are in the dependency graph.
 - Sync runs only while the desktop app is open (no background service yet), but
   files are streamed through the `Remote` adapter rather than held in memory.
   True background sync remains future work.
-- Empty local folders are synced, but remote folder renames are currently seen
-  as delete+recreate (content is preserved; history/path identity is not).
-  Remote **file** renames are detected through the content-hash cache.
+- Remote folder renames use persisted node IDs and remap the complete journal
+  subtree, including empty directories. Old journals learn IDs on their first
+  successful sync after upgrade; moves before that baseline are not inferred.
+  Destination collisions or excluded-subtree intersections stop safely. A missing
+  local source leaves that subtree for manual reconciliation and reports an
+  error while unrelated paths continue. Remote file renames retain hash detection.
 - The live Eweka account required separate retrieval/posting hosts and a valid
   `From` header. Other providers may need different ports or groups; use the
   dashboard Test and Verify actions before bulk uploads.
@@ -149,8 +152,7 @@ provider when both aws-lc-rs and ring are in the dependency graph.
 1. **Sync hardening & scale**:
    - run sync in a background service (desktop autostart) instead of only while
      the UI process is open;
-   - treat remote folder renames as moves (content hash caching already detects
-     remote file renames);
+
    - per-file progress and explicit conflict keep-mine/keep-theirs actions.
 2. **Secure local key storage**: move the password-wrapped keyfile from shared
    preferences into Keychain (iOS/macOS), Android Keystore, Windows Credential
@@ -209,10 +211,10 @@ provider when both aws-lc-rs and ring are in the dependency graph.
   installer and iOS requires App Store/TestFlight or a signed enterprise install.
 - Sync conflicts are preserved as files and listed in the sync screen's review
   panel; there are no explicit keep-mine/keep-theirs merge actions yet.
-- Remote folder renames are not detected as moves; they become delete + recreate.
+
 - The sync `Remote` adapter caches remote content hashes on disk; without cached
   entries it fetches and decrypts manifests (bounded per run), so large first
-  syncs do more network work. Remote folder renames are still not detected.
+  syncs do more network work. Folder moves use node IDs instead of content hashes.
 - Sync folder selection uses the platform directory picker; Android’s picker is
   more restrictive than desktop, and background work while the app is closed is
   not scheduled yet.
