@@ -36,5 +36,5 @@ exact-head required-check, review and acceptance gate in
 `docs/GITHUB-TASK-ISSUES.md`. Record the head SHA, expected workflow/job results,
 acceptance evidence and any blockers. Unperformed required manual acceptance,
 missing/inaccessible evidence, unresolved blocking reviews and required checks
-that are not successful block merge. iOS is currently informational only.
+that are not successful block merge. iOS builds are not currently run in CI.
 No deployment, destructive operations or protection bypass is authorized.
