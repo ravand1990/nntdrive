@@ -1,0 +1,77 @@
+name: Test environments (manual)
+run-name: test-env:${{ inputs.target }}:${{ inputs.correlation }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        type: choice
+        required: true
+        options: [linux-client, android-build, android-emulator, windows-build]
+      expected_sha:
+        type: string
+        required: true
+      correlation:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  identity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require exact dispatch identity
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          CORRELATION: ${{ inputs.correlation }}
+          TARGET: ${{ inputs.target }}
+        run: |
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$CORRELATION" =~ ^[0-9a-f]{32}$ ]]
+          test "$GITHUB_SHA" = "$EXPECTED_SHA"
+          case "$TARGET" in
+            linux-client|android-build|android-emulator|windows-build) ;;
+            *) exit 1 ;;
+          esac
+  clients:
+    needs: identity
+    uses: ./.github/workflows/clients.yml
+  linux-runtime:
+    if: inputs.target == 'linux-client'
+    needs: clients
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: nntdrive-linux-x64
+          path: linux-artifact
+      - name: Install disposable GUI runtime tools
+        run: sudo apt-get update && sudo apt-get install -y xvfb xauth xdotool imagemagick libgtk-3-0t64 libglu1-mesa libegl1 libgl1
+      - name: Launch real release bundle without network or inherited credentials
+        run: |
+          mkdir -p linux-smoke
+          git rev-parse HEAD > linux-smoke/source-sha.txt
+          # No host HOME, credential mounts, backend or deployment access.
+          sudo env -i PATH=/usr/bin:/bin unshare --net -- xvfb-run -a \
+            -e "$PWD/linux-smoke/xvfb.log" python3 scripts/smoke-linux-client.py \
+            linux-artifact/nntdrive-linux-x64.tar.gz clients/flutter/pubspec.yaml linux-smoke/runtime \
+            >linux-smoke/runner.log 2>&1
+      - name: Preserve runtime evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nntdrive-linux-runtime-evidence
+          path: |
+            linux-smoke/*.log
+            linux-smoke/source-sha.txt
+            linux-smoke/runtime/report.json
+            linux-smoke/runtime/client.log
+            linux-smoke/runtime/screenshot.png
+          if-no-files-found: warn
