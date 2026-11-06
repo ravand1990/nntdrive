@@ -126,30 +126,21 @@ as UID/GID 10001:10001). The Dockerfile grants runtime writes to that generated
 tool directory as well as `bin/cache`, in the SDK extraction layer. Do not infer
 fresh-image non-root compatibility from a root-run or a previously warmed SDK.
 
-## Automated task runner guidance
+## Agent-neutral worker startup
 
-For the existing scheduled job, recommend (do not create another schedule):
+All coding workers (Codex, OpenCode, Hermes, or another tool) read the root
+`AGENTS.md` as their common entry point. Do **not** replicate task selection,
+merge, issue-closure, or security rules in scheduler-specific prompts. The
+worker runtime retains only its model, workdir, scheduling, identity, access and
+permissions. For scheduled autonomous runs, a sufficient launcher instruction is:
 
-> Read AGENTS.md and the open GitHub Issues, then read the issue body,
-> comments, labels, assignees, dependencies and linked PRs before claiming a
-> task. Read the Project membership/Status and discover current field/options.
-> Select one highest-priority unowned Todo + Scheduling readiness Ready issue
-> with satisfied, accepted/integrated dependencies. Skip owned/review candidates
-> and consider independent issues; multiple open PRs are allowed. Never promote
-> Backlog automatically. Post an agent-identifying claim, set Project Status
-> In Progress, assign where appropriate, then read back and recheck races.
-> These records coordinate work, not atomic locks. Use an isolated task worktree.
-> Reuse installed toolchain images; run
-> `bash scripts/dev-check.sh rust` and/or `bash scripts/dev-check.sh flutter`
-> from that worktree (or `all` for cross-stack work). Do not install host SDKs,
-> run deployment Compose, contact real providers, or change schedules.
-> Report exact command exit codes and baseline failures; never modify unrelated
-> product code to make checks green. Task-scoped commits, branch pushes and PRs
-> are user-authorized. Automatically merge only after the exact-head required
-> checks, review and acceptance gate in docs/GITHUB-TASK-ISSUES.md is satisfied;
-> never deploy, force/admin merge or bypass protection.
-> Move implementation to Project Status Ready For Review; never close the issue until acceptance
-> is verified and the user approves.
+> Follow `AGENTS.md` and referenced documents. Recover your own unfinished work;
+> otherwise perform one eligible GitHub issue and leave a verified handoff.
+
+This does not create a new scheduler. Follow the concurrency/fail-closed rule in
+`AGENTS.md`: comments and Project fields are not atomic claims; until a tested
+claiming mechanism is implemented and adopted by every worker, use a dispatcher
+for allocating new tasks to competing agents.
 
 A new worktree needs its own dependency fetch/target cache (performed by the
 wrapper). If the toolchain image is missing, `bash scripts/dev-check.sh build` is

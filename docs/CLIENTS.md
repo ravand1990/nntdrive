@@ -239,9 +239,10 @@ inaccessible feeds never prevent using the app. The updater:
 The release repository is private today, so the check returns 404 until releases
 are public. In that case open **Account → Update settings**, set the repository
 and paste a read-only token; it is stored in the app's local settings and used
-for release checks and asset downloads. Agents should reuse the same GitHub PAT
-they use for GitHub MCP/repository access when it has `Contents: Read`, rather
-than creating a second updater token. Clearing the field removes it. **Test
+for release checks and asset downloads. Never reuse a coding agent's GitHub write-capable PAT or automation
+credential for a client update token. For public release assets, prefer
+unauthenticated downloads. Where authentication is necessary, use a distinct,
+minimal, read-only credential with the smallest practical scope and lifetime. Clearing the field removes it. **Test
 access** verifies the repository and token before saving. Builds can still
 provide a fallback with
 `--dart-define=NNTDRIVE_UPDATE_TOKEN=...` and
