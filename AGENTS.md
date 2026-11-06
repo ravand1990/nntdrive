@@ -81,7 +81,9 @@ after one task or a durable blocker/handoff rather than running indefinitely:
    store hostnames, credential paths or private network details in public notes.
 2. Recover **your own** previously claimed unfinished work first, using its
    issue handoff, branch, PR and worktree. If an earlier PR is in review, do not
-   create a second implementation branch. Recheck its latest state.
+   create a second implementation branch. Recheck its latest state. A completed
+   PR with green checks is merge work, not a reason to skip the issue: attempt the
+   allowed merge instead of re-claiming it.
 3. Reassess currently `Blocked` items against fresh objective evidence, without
    taking over another worker's implementation. Only clear a blocker when its
    actual condition has cleared; retain human-approval blockers for humans.
@@ -119,6 +121,14 @@ and may select `Ready` issues under this policy. This designation lapses
 immediately when a second competing worker is enabled; in that case no worker may
 select new tasks until the coordinator designates a dispatcher or a tested atomic
 claim mechanism is adopted.
+
+**Blocked-loop escape:** an issue or PR that has been blocked for two consecutive
+runs without new actionable evidence (for example, unreadable merge-policy
+metadata or pending infra) must be marked `blocked-loop`, set to Project Status
+`Blocked`, and given a comment with the exact failure and next human action.
+Workers must skip `blocked-loop` issues for selection and resumption instead of
+re-triaging them every run; remove the label only when the coordinator or new
+objective evidence clears it.
 
 ## 4. Implementation discipline
 
@@ -182,10 +192,15 @@ Report only the host alias and results, never private keys or network details.
    are ready. Keep the issue open until its acceptance criteria are satisfied.
 3. Automatic merging is permitted **only** under the existing NNTDrive standing
    authorization and exact-head gate in `docs/GITHUB-TASK-ISSUES.md`. Verify
-   all applicable required workflows/jobs, branch protections, current PR head,
-   reviews, conflicts, and **manual** acceptance where specified. Missing,
-   pending, failed, skipped-required, or inaccessible checks block merging.
-   Never bypass GitHub protections or assume a 403 means success.
+   all applicable required workflows/jobs, current PR head, reviews, conflicts,
+   and **manual** acceptance where specified. Missing, pending, failed,
+   skipped-required or inaccessible checks block merging. Do **not** block solely
+   because branch-protection, ruleset or merge-queue metadata cannot be read via
+   API. Attempt the allowed merge with the expected head and let GitHub enforce
+   its policy. If the merge succeeds, verify the merged state. If it fails, treat
+   that error as authoritative: record it, stop, and do not bypass protection or
+   force-merge. A completed PR with green checks is merge work, not a new claim;
+   do not skip it merely because it is PR-linked.
 4. After an authorized merge, verify the integrated commit on remote `main`;
    map **every** applicable acceptance criterion to actual evidence. Post a
    durable completion comment, close with reason `completed`, set Project

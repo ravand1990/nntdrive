@@ -92,9 +92,12 @@ blockers. Link dependency issues, not a duplicate task list.
    PRs; inspect local/remote branches, commits and worktrees. Read the Project
    membership and Status with full pagination, not issue label search.
 2. Select the highest-priority unowned open `Ready` task with satisfied
-   dependencies. Skip owned/claimed/PR-linked/Review/Blocked candidates and
-   continue through independent eligible tasks. One task per run does not limit
-   the repository to one open PR. Do not infer acceptance from merge alone.
+   dependencies. Skip owned/claimed/PR-linked/Review/Blocked candidates,
+   `blocked-loop` items, and continue through independent eligible tasks. One
+   task per run does not limit the repository to one open PR. A completed PR with
+   green checks is merge work, not a new claim: its owner/coordinator should
+   attempt the merge instead of skipping it merely because it is PR-linked. Do
+   not infer acceptance from merge alone.
    Before selecting new work, triage every Blocked issue not currently In
    Progress, regardless of assignee. Compare its recorded blocker with current
    objective evidence (such as a restored CI run or integrated prerequisite).
@@ -142,8 +145,13 @@ Before each merge:
 - Review the complete diff, issue acceptance criteria and actual evidence;
   unrelated or unsafe changes do not become acceptable merely because CI passes.
 - Require a non-draft, conflict-free PR with no rejected review or unresolved
-  blocking review thread; satisfy current protection, required reviews, update
-  and merge-queue rules. Never use admin/force merges or bypass protection.
+  blocking review thread. Do **not** require branch-protection, ruleset or
+  merge-queue metadata to be readable through the API before attempting a merge;
+  GitHub enforces the actual policy. Attempt the allowed merge with the expected
+  head, then verify the result. If the merge is rejected, record the exact error
+  and do not bypass protection, admin-merge, or force-push. A completed PR with
+  green checks is merge work, not a new claim; do not skip it merely because it is
+  PR-linked.
 - Enumerate all applicable expected workflows/jobs at the current head. Require
   successful completed results, not failed, cancelled, pending or skipped
   required checks. Missing workflows and inaccessible evidence are blockers.
@@ -166,6 +174,10 @@ Before each merge:
   local main. Enable GitHub auto-merge only if its enforced gates cover every
   applicable required gate and acceptance is already satisfied; otherwise leave
   pending PRs open with exact blockers. Never weaken checks to enable merging.
+- If merge attempts repeatedly fail for non-code/policy reasons without new
+  evidence, mark the issue/PR `blocked-loop`, set Project Status `Blocked`, and
+  record the exact failure and human action. Workers skip `blocked-loop` items and
+  continue with independent Ready work.
 - Record exact head, commands/results, Actions links, merge commit or blockers
   on the PR/issue. Preserve Project phase authority and priority labels.
 

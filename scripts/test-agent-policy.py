@@ -28,6 +28,8 @@ class AgentPolicyTests(unittest.TestCase):
         self.assertRegex(text, r"not\s+atomic locks")
         self.assertIn("separate", text)
         self.assertIn("all applicable", text)
+        self.assertIn("attempt the allowed merge", text)
+        self.assertIn("blocked-loop", text)
         self.assertNotIn("and the user approves", text)
         self.assertNotIn("use the **same github pat**", text)
 
