@@ -256,6 +256,18 @@ provide a fallback with
 by this mechanism (Android requires the system package installer; iOS requires
 App Store/TestFlight or a signed enterprise install).
 
+## Folder sync walkthrough
+
+Open the sync icon in the file browser, select a base folder (for example
+`~/NNTDrive` or `C:\Users\you\NNTDrive`), and add any additional folders to mirror.
+Use **Sync all now** or per-folder **Sync now**, or let the five-minute timer run
+while the app stays open. Pause/resume and selective-subfolder exclusions are
+available. Concurrent edits preserve conflict copies for explicit review.
+
+The browser and sync share the same encrypted remote tree. Local synced files
+remain plaintext on disk; use BitLocker, LUKS or FileVault for local disk
+protection. Content and names sent to the backend/Usenet are encrypted locally.
+
 ## Sync model on clients
 
 - One device-local SQLite journal (`nntdrive-sync`) holds the baseline.
