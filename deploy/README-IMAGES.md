@@ -1,24 +1,45 @@
 # Running NNTDrive without cloning the repository
 
-The canonical no-clone instructions, including the complete
-`docker-compose.yml` snippet and `.env` block, are in the main
-[`README.md`](../README.md). Use those snippets directly; this document covers
-operational details around them.
+## 1. Download the deployment files
 
-Edit `.env`:
+From the [GitHub release](https://github.com/ravand1990/nntdrive/releases),
+download `docker-compose.release.yml` and `env.release.example` into an empty
+installation directory. Rename `env.release.example` to `.env`. No repository
+checkout or local build is needed; use the published Compose file rather than
+maintaining a second copy of it in this guide.
+
+The backend image is `ghcr.io/ravand1990/nntdrive-backend`. Pin a version in
+`.env` instead of using `latest` for unattended upgrades. GHCR package visibility
+is separate from repository visibility: if a pull requires authentication, use
+a separate token with `read:packages` (not a client updater token):
 
 ```bash
-# strong database password
-POSTGRES_PASSWORD=$(openssl rand -hex 24)
-
-# 32 bytes, base64; encrypts provider passwords at rest
-NNTDRIVE_SECRET_KEY=$(openssl rand -base64 32)
-
-# pin the image version (recommended)
-NNTDRIVE_VERSION=0.5.0
+echo "$GHCR_TOKEN" | docker login ghcr.io -u ravand1990 --password-stdin
 ```
 
-On PowerShell:
+## 2. Configure
+
+Edit `.env`, preserving the other example settings. Generate the password and
+secret with the commands below, then paste their outputs into the corresponding
+fields; `.env` is not a shell script and will not execute `$(...)` expressions.
+Use the hex password as generated so it is safe in the database URL. Keep this
+file private, and persist the same secret across restarts/upgrades.
+
+Generate values in a shell:
+
+```bash
+# database password (hex, safe in the database URL)
+openssl rand -hex 24
+# persistent 32-byte secret, base64
+openssl rand -base64 32
+```
+
+Set `POSTGRES_PASSWORD` and `NNTDRIVE_SECRET_KEY` to those outputs and
+`NNTDRIVE_VERSION=0.5.0` in `.env`. The example also includes the image repository,
+loopback HTTP binding/port, domain and logging fields. Keep the default
+`NNTDRIVE_HOST_BIND=127.0.0.1`; set `NNTDRIVE_DOMAIN` before enabling TLS.
+
+On PowerShell, generate the base64 secret with:
 
 ```powershell
 [Convert]::ToBase64String((1..32 | ForEach-Object { Get-Random -Maximum 256 }))

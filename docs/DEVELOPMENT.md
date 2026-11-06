@@ -129,6 +129,48 @@ built from Windows or Linux.
 - `crates/backend/src/{auth,api,admin,jobs,state}.rs`, `static/admin.html`.
 - `migrations/` — ordered SQL, applied by `sqlx::migrate!` at startup.
 
+## Local app with a mock provider
+
+The dev override supplies an in-memory NNTP provider and enables open
+registration. It is for local evaluation, not production:
+
+```bash
+cp deploy/.env.example deploy/.env
+# Set POSTGRES_PASSWORD and a persistent NNTDRIVE_SECRET_KEY in deploy/.env.
+# Generate the latter with: openssl rand -base64 32
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml up -d --build
+bash scripts/build-clients.sh
+```
+
+Use the configured backend HTTP port (see `deploy/.env`); the example's
+default is **8080**. Launch the Linux bundle at
+`clients/flutter/build/linux/x64/release/bundle/nntdrive`, or install the Android
+APK at `clients/flutter/build/app/outputs/flutter-apk/app-release.apk`.
+[Client builds](CLIENTS.md#build-instructions) covers Windows Developer Mode,
+the bundled Rust DLL, and platform-specific build commands. For phone testing
+on a trusted LAN, set `NNTDRIVE_HOST_BIND` in `deploy/.env` to the computer's
+LAN interface address and rerun the same Compose `up -d` command to recreate the
+backend with that binding. Allow only the test network through the firewall,
+then use that LAN address on the phone, not `127.0.0.1`. Keep loopback as the
+default otherwise; use TLS for real remote access.
+
+The app detects a fresh backend and offers **First-time setup**, generating the
+first administrator locally and displaying the one-time recovery code and admin
+API token. Save them privately. Later registration requires
+`NNTDRIVE_ALLOW_REGISTRATION=true`; otherwise use **Sign in**. For a terminal
+bootstrap, see [Operations](OPERATIONS.md#one-command-cli-bootstrap); it stores
+keyfile/recovery material in git-ignored `bootstrap-credentials/`.
+
+A headless client smoke exercises upload, download, decryption and verification:
+
+```bash
+cargo run -p nntdrive-client --example smoke -- http://127.0.0.1:8080 /tmp/somefile
+```
+
+For real storage, omit the dev override and configure a posting-enabled provider
+as described in [Operations](OPERATIONS.md#nntp-providers). Respect the provider's
+terms and posting limits; retention is not a guarantee.
+
 ## Testing philosophy
 
 The two-device Dart FFI smoke can run without a deployment or provider account.
