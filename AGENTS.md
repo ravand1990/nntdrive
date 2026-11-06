@@ -162,6 +162,9 @@ review, release verification or acceptance that did not actually occur. If
 required Windows/mobile/iOS/manual verification is unavailable, record the
 precise blocker or unverified criterion; don't silently pass it on Linux.
 Do not use a different or unfamiliar host without coordinator approval.
+Before declaring Windows/macOS validation blocked, inspect the configured SSH
+hosts for an existing matching machine, confirm its OS, and ask before using it.
+Report only the host alias and results, never private keys or network details.
 
 ## 6. PR, merge and completion rules
 
