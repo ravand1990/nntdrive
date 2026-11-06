@@ -3,24 +3,16 @@ description: Actionable NNTDrive task tracked in GitHub Issues
 title: "Task: "
 labels: ["priority:P2"]
 body:
-  - type: dropdown
-    id: readiness
-    attributes:
-      label: Scheduling readiness
-      description: New issues must start Backlog; only the coordinator can promote them to Ready.
-      options:
-        - Backlog
-      default: 0
-    validations:
-      required: true
   - type: markdown
     attributes:
       value: |
-        Use Project Status (not status labels), default Todo + Backlog. Change the
-        default `priority:P2` label if this task is P0 or P1. Existing NNT IDs
-        stay in the title; new tasks use the issue number instead.
-        After filing, add the issue to the NNTDrive Project, explicitly set Todo,
-        and verify membership/Status/readiness. This form does not set Project fields.
+        New issues default to Project Status Backlog. Only the coordinator/user
+        may move an issue to Ready. Change the default `priority:P2` label if
+        this task is P0 or P1. Existing NNT IDs stay in the title; new tasks use
+        the issue number instead.
+        After filing, add the issue to the NNTDrive Project, explicitly set
+        Backlog, and verify membership and Status. This form does not set Project
+        fields.
   - type: textarea
     id: outcome
     attributes:

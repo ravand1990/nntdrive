@@ -22,7 +22,8 @@ IDs or rely on cached options.
 
 | Project Status | Meaning |
 |---|---|
-| Todo | Not implementing; may be Backlog or Ready for scheduling |
+| Backlog | Not authorized to start; coordinator triage pending |
+| Ready | Authorized and eligible when dependencies are satisfied |
 | In Progress | Claimed implementation |
 | Ready For Review | Implementation/evidence handed off; not accepted |
 | Blocked | Explicit dependency, decision or environment blocker |
@@ -58,38 +59,33 @@ coordinator grants `Ready` explicitly after triage; an issue submitter's
 self-selected queue value is not authorization. Form options are a workflow
 guard, not an access-control boundary; permissions must enforce policy.
 
-## Scheduling readiness is not phase
+## Backlog is not Ready
 
-Every task body contains a `Scheduling readiness` heading followed by exactly
-`Ready` or `Backlog` (Markdown `##` for migrated bodies, `###` from GitHub issue
-forms; both are valid). This is queue authorization, not a second progress tracker.
-Both old Backlog and Ready map to Todo, but only Todo **and** readiness Ready
-can be considered for new selection. Missing/ambiguous membership, Status or
-readiness is not permission to work. Never promote Backlog automatically.
-Ready still requires satisfied dependencies and unambiguous lack of ownership.
-Review/Blocked/In Progress retain Ready authorization without becoming eligible;
-closed tasks remain ineligible regardless of readiness.
+Project Status is the sole queue and phase tracker. `Backlog` means not authorized
+to start; `Ready` means authorized and eligible once dependencies are satisfied.
+There is no separate readiness field in issue text, and status labels must not be
+recreated. Only the coordinator/user may move an issue from `Backlog` to `Ready`.
 
-At cutover, old Ready and already active/review/blocked tasks retained Ready;
-old Backlog retained Backlog. Historical closed tasks received conservative
-Backlog, because completion is not authorization for a new run.
-New tasks default to Todo plus Backlog, with one priority label. After creating
-an issue, add it to this Project, explicitly set Todo and verify membership,
-Status and readiness; issue forms alone do not enroll it or set Project fields.
-Only the coordinator/user may explicitly authorize readiness Ready.
+`In Progress`, `Ready For Review`, `Blocked` and `Done` are not eligible for new
+selection regardless of history. A closed issue is never eligible. `Ready` still
+requires satisfied dependencies and an unambiguous lack of ownership.
+
+New tasks default to `Backlog` with one priority label. After creating an issue,
+add it to this Project, explicitly set `Backlog`, and verify membership and
+Status; issue forms alone do not enroll it or set Project fields.
 Use `priority:P0` security/data loss/release blockers, `priority:P1` current milestone,
 `priority:P2` later work. Preserve other non-status labels.
 
 Task bodies retain Outcome, Scope / exclusions, Acceptance criteria,
-Dependencies, Verification, Ownership / branch / linked PR, Handoff / blockers,
-and Scheduling readiness. Link dependency issues, not a duplicate task list.
+Dependencies, Verification, Ownership / branch / linked PR, and Handoff /
+blockers. Link dependency issues, not a duplicate task list.
 
 ## Discovery, claims and handoff
 
 1. Read issue body/comments, assignees, priority, dependencies and linked/open
    PRs; inspect local/remote branches, commits and worktrees. Read the Project
    membership and Status with full pagination, not issue label search.
-2. Select the highest-priority unowned open Todo + Ready task with satisfied
+2. Select the highest-priority unowned open `Ready` task with satisfied
    dependencies. Skip owned/claimed/PR-linked/Review/Blocked candidates and
    continue through independent eligible tasks. One task per run does not limit
    the repository to one open PR. Do not infer acceptance from merge alone.
@@ -195,7 +191,7 @@ no alternate write or bypass was attempted. That file remains an operator fix.
    Keep repository-relative references; never publish credentials or private
    infrastructure paths. For blocked/interrupted work, record saved/uncommitted
    state, blocker and resumption instructions before stopping. Preserve prior history,
-   priorities, readiness and assignees. Close with reason `completed` and set the
+   priorities and assignees. Close with reason `completed` and set the
    exact Project item Status to Done using freshly discovered field/option IDs.
 4. Read back issue state/reason, evidence comment and exact Project item. If
    GitHub already auto-closed the issue, still reconcile Done. Closing keywords
@@ -238,15 +234,13 @@ Done merely because implementation is on main. NNT-004 (#9) has an explicit
 accepted-and-merged closure comment. Historical completed issues retain their
 recorded completion evidence; this migration asserts no new acceptance.
 
-All 30 real task issues (#5–#34), 19 open and 11 closed completed, are members
-exactly once. Cutover phases: Todo 12 (3 Ready, 9 Backlog), In Progress 0,
-Ready For Review 2, Blocked 5, Done 11. Readiness: Ready 10, Backlog 20 (including
-11 closed tasks). No issues were closed/reopened or PRs merged by this cutover.
-All five obsolete status label definitions were deleted only after membership
-and phase readback per issue and zero status-label usage across issues **and
-PRs**. Thirteen non-status definitions, issue non-status labels, assignees and
-original body text were preserved. Existing mapping NNT-ID → issue number is
-unchanged; use the live board, not a dated duplicate phase table.
+All 30 real task issues (#5–#34) are members exactly once. The 2026-11-05
+cutover phase snapshot is historical; always read the live Project Status.
+Obsolete status labels were deleted only after membership and phase readback,
+and zero status-label usage remains across issues and PRs. Thirteen non-status
+definitions, issue non-status labels, assignees and original body text were
+preserved. Existing mapping NNT-ID → issue number is unchanged; use the live
+board, not a dated duplicate phase table.
 
 ## Completion reconciliation (2026-11-05)
 

@@ -244,9 +244,11 @@ inaccessible feeds never prevent using the app. The updater:
 Public releases do not require a token. For a private release repository, open
 **Account → Update settings**, set the repository and a read-only token; an
 inaccessible private feed can return 404. The token is stored in the app's local
-settings and used for release checks and asset downloads. Agents should reuse the same GitHub PAT
-they use for GitHub MCP/repository access when it has `Contents: Read`, rather
-than creating a second updater token. Clearing the field removes it. **Test
+settings and used for release checks and asset downloads. Never reuse a coding
+agent's GitHub write-capable PAT or automation credential for a client update
+token. For public release assets, prefer unauthenticated downloads. Where
+authentication is necessary, use a distinct, minimal, read-only credential with
+the smallest practical scope and lifetime. Clearing the field removes it. **Test
 access** verifies the repository and token before saving. Builds can still
 provide a fallback with
 `--dart-define=NNTDRIVE_UPDATE_TOKEN=...` and

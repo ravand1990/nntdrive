@@ -35,10 +35,10 @@ class AgentPolicyTests(unittest.TestCase):
         for file in ("task.yml", "bug.yml"):
             with self.subTest(file=file):
                 text = self.read(".github/ISSUE_TEMPLATE/" + file)
-                self.assertIn("Scheduling readiness", text)
-                self.assertIn("- Backlog", text)
+                self.assertIn("Backlog", text)
+                self.assertNotIn("Scheduling readiness", text)
+                self.assertNotIn('"status:ready"', text)
                 self.assertNotIn("        - Ready", text)
-                self.assertIn("default: 0", text)
 
     def test_other_docs_do_not_copy_worker_prompt(self):
         text = self.read("docs/CONTAINER-DEVELOPMENT.md")

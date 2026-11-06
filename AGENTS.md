@@ -15,11 +15,10 @@ takes precedence over autonomous task selection, but never over safety rules.
 - **This file:** common agent behavior, boundaries, and quality requirements.
 - **GitHub Issues:** task scope, acceptance criteria, dependencies, handoff and
   priority. Do not create a second backlog. `TASKS.md` is a pointer only.
-- **NNTDrive GitHub Project:** authoritative task phase (`Todo`, `In Progress`,
-  `Ready For Review`, `Blocked`, `Done`). Do not recreate status labels.
-- **Issue `Scheduling readiness`:** `Ready` or `Backlog` controls eligibility
-  independently of Project phase. Only the coordinator/user may promote work
-  from Backlog to Ready; an issue author's request does not authorize a change.
+- **NNTDrive GitHub Project:** authoritative task phase (`Backlog`, `Ready`,
+  `In Progress`, `Ready For Review`, `Blocked`, `Done`). Only the
+  coordinator/user may move an issue from Backlog to Ready. Do not recreate
+  status labels.
 - **`docs/GITHUB-TASK-ISSUES.md`:** detailed live GitHub API/Project procedures,
   current standing merge authorization, and post-merge reconciliation.
 - **`docs/CI.md`:** what CI actually verifies and does not verify.
@@ -87,7 +86,7 @@ after one task or a durable blocker/handoff rather than running indefinitely:
    taking over another worker's implementation. Only clear a blocker when its
    actual condition has cleared; retain human-approval blockers for humans.
 4. If there is no resumable work, inspect the **live, fully paginated** Project
-   and eligible issues. Candidate must be open, `Todo`, readiness `Ready`, have
+   and eligible issues. Candidate must be open, `Ready`, have
    accepted/integrated dependencies, and be demonstrably unowned. Prefer P0,
    then P1, then P2; among equals choose an actionable, well-scoped task.
 5. Inspect issue body and latest comments, assignees, linked/open PRs, remote
@@ -215,8 +214,8 @@ unfinished work without coordination.
 For an unrelated finding, first de-duplicate against issues/PRs, then create
 an issue with outcome, scope/exclusions, testable acceptance, dependencies,
 verification and handoff. Give it **one** `priority:P0`, `priority:P1` or
-`priority:P2` label, Project Status `Todo` and readiness `Backlog`; verify
-Project membership and readback. Do not self-promote new tasks to `Ready`.
+`priority:P2` label, Project Status `Backlog`; verify Project membership and
+readback. Do not self-promote new tasks to `Ready`.
 Report sensitive vulnerabilities privately rather than posting secrets or
 exploit details in a public issue.
 
