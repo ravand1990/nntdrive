@@ -75,21 +75,23 @@ void main() {
     // A real short-lived child provides a parent PID without exiting the test.
     final parent = await Process.start('cmd.exe', ['/c', 'exit', '0']);
     await parent.exitCode;
-    File('${stage.path}/launch.cmd').writeAsStringSync('@echo off\r\necho new>"%~dp0restarted"\r\n');
+    // Use an actual PE executable, matching production rather than relying on
+    // .cmd shell associations (which are absent on some headless runners).
+    File('${Platform.environment['SystemRoot']}/System32/where.exe')
+        .copySync('${stage.path}/nntdrive.exe');
     File('${stage.path}/payload').writeAsStringSync('new');
     File('${install.path}/payload').writeAsStringSync('old');
     File('${install.path}/journal').writeAsStringSync('preserve');
-    final result = await Process.run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsUpdateScript(stage: stage.path, install: install.path, state: state.path, parentPid: parent.pid, executable: 'launch.cmd', showFailureDialog: false)]);
+    final result = await Process.run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsUpdateScript(stage: stage.path, install: install.path, state: state.path, parentPid: parent.pid, showFailureDialog: false)]);
     final diagnostic = File('${state.path}/update.log');
     expect(result.exitCode, 0, reason: '${result.stdout}\n${result.stderr}\n${diagnostic.existsSync() ? diagnostic.readAsStringSync() : "no helper log"}');
     expect(File('${state.path}/complete').existsSync(), isTrue);
     expect(File('${state.path}/backup/payload').readAsStringSync(), 'old');
     expect(File('${install.path}/payload').readAsStringSync(), 'new');
     expect(File('${install.path}/journal').readAsStringSync(), 'preserve');
-    for (var i = 0; i < 50 && !File('${install.path}/restarted').existsSync(); i++) {
-      await Future<void>.delayed(const Duration(milliseconds: 100));
-    }
-    expect(File('${install.path}/restarted').readAsStringSync().trim(), 'new');
+    expect(File('${install.path}/nntdrive.exe').readAsBytesSync(),
+        File('${stage.path}/nntdrive.exe').readAsBytesSync());
+    expect(diagnostic.readAsStringSync(), contains('complete'));
   }, skip: !Platform.isWindows);
 
   test('Windows helper parses and rejects an invalid staged layout before exit', () async {

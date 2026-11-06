@@ -44,6 +44,10 @@ function Hash([string]\$path) {
 }
 try {
   Record 'preflight'
+  # FileInfo.FullName uses normalized Windows separators/expanded paths; use
+  # the same representation when computing payload-relative paths below.
+  \$stage = (Get-Item -LiteralPath \$stage).FullName.TrimEnd('\\')
+  \$install = (Get-Item -LiteralPath \$install).FullName.TrimEnd('\\')
   if (!(Test-Path -LiteralPath (Join-Path \$stage \$exe) -PathType Leaf)) {
     throw 'The update archive has no application at its root.'
   }
