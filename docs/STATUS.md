@@ -118,7 +118,9 @@ provider when both aws-lc-rs and ring are in the dependency graph.
   review panel.
 - Admin dashboard can edit users (name, quota, role, status) and providers in
   place, with a provider-type dropdown.
-- Windows/Linux auto-update: daily GitHub release check, in-app update settings
+- Windows/Linux auto-update: every-launch plus daily GitHub release checks
+  (opt-out disables both; deferred versions suppress prompts, not checks),
+  serialized automatic/manual checks and prompts, in-app update settings
   (repository + optional read-only token for private releases), SHA-256
   verification, detached in-place replacement and restart.
 - Tag-driven release pipeline: tests, GHCR image `0.4.1`/`0.4`/`latest`/`sha-*`,
