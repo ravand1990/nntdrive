@@ -160,6 +160,21 @@ existing Python contracts, Bash syntax checks and the pinned actionlint containe
 The new contracts were also run against baseline workflows: parallelism/cache
 tests failed as intended, while coverage/release invariants passed.
 
+## Declarative environment launcher
+
+See [test environments](TEST-ENVIRONMENTS.md) for the six-target matrix and
+`bash scripts/test-env.sh TARGET`: local isolated checks, exact-head correlated
+manual Clients dispatch/wait and explicit Windows runtime provisioning refusal.
+Hosted builds are not installed-app/E2E evidence. This first increment preserves
+all existing eight acceptance jobs and adds a manual workflow plus launcher
+contracts. For `linux-client`, a required follow-on job downloads the actual
+release bundle and performs a network-isolated Xvfb live-process/visible-window
+smoke with always-uploaded logs, screenshot and version-provenance report.
+The helper's mocked subprocess contracts run in wrapper-contracts; they are not
+live GUI evidence. Exact-head hosted runtime execution remains unverified until
+this manual workflow is registered and explicitly dispatched. No release,
+deployment or privileged self-hosted execution is enabled.
+
 ## Manual pinned container drift check
 
 Dispatch **Container checks (manual)** explicitly against the desired ref. It
