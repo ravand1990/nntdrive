@@ -94,6 +94,46 @@ void main() {
     expect(diagnostic.readAsStringSync(), contains('complete'));
   }, skip: !Platform.isWindows);
 
+  test('rollback removal errors are terminating and verified before restart', () {
+    final script = windowsUpdateScript(stage: 'stage', install: 'install', state: 'state', parentPid: 123);
+    expect(script, contains(r'Remove-Item -LiteralPath $target -Force -ErrorAction Stop'));
+    expect(script, contains(r"if (Test-Path -LiteralPath $target) { throw 'Rollback file removal failed.' }"));
+  });
+
+  test('Windows rollback deletion failure does not restart a mixed install', () async {
+    final root = await Directory.systemTemp.createTemp('handoff-rollback-');
+    addTearDown(() => root.delete(recursive: true));
+    final stage = await Directory('${root.path}/stage').create();
+    final install = await Directory('${root.path}/install').create();
+    final state = await Directory('${root.path}/state').create();
+    File('${stage.path}/nntdrive.exe').writeAsStringSync('new payload');
+    final parent = await Process.start('cmd.exe', ['/c', 'exit', '0']);
+    await parent.exitCode;
+    // Deterministic fault injection: fail after replacement, simulate a sharing
+    // lock on rollback deletion, and record any attempted application restart.
+    final script = windowsUpdateScript(stage: stage.path, install: install.path, state: state.path, parentPid: parent.pid, showFailureDialog: false)
+        .replaceFirst(r"$step = 'restart'", "throw 'injected replacement failure'\n\$step = 'restart'");
+    final result = await Process.run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', r'''
+function Remove-Item {
+  param($LiteralPath, [switch]$Force, $ErrorAction)
+  if ($LiteralPath.EndsWith('nntdrive.exe')) {
+    Write-Error 'injected sharing lock' -ErrorAction $ErrorAction
+    return
+  }
+  Microsoft.PowerShell.Management\Remove-Item -LiteralPath $LiteralPath -Force:$Force
+}
+function Start-Process {
+  param($FilePath, $WorkingDirectory, $ErrorAction)
+  [IO.File]::WriteAllText((Join-Path $WorkingDirectory 'restart-attempted'), 'yes')
+}
+''' + script]);
+    expect(result.exitCode, 1, reason: '${result.stdout}\n${result.stderr}');
+    expect(File('${state.path}/update.log').readAsStringSync(), contains('rollback failed; preserve backup'));
+    expect(File('${install.path}/restart-attempted').existsSync(), isFalse);
+    expect(File('${install.path}/nntdrive.exe').existsSync(), isTrue);
+    expect(File('${state.path}/complete').existsSync(), isFalse);
+  }, skip: !Platform.isWindows);
+
   test('Windows helper parses and rejects an invalid staged layout before exit', () async {
     final root = await Directory.systemTemp.createTemp("handoff O'Brien & test-");
     addTearDown(() => root.delete(recursive: true));

@@ -109,7 +109,10 @@ try {
       \$target = Join-Path \$install \$relative
       if (\$backed -contains \$relative) {
         Copy-Item -LiteralPath (Join-Path \$backup \$relative) -Destination \$target -Force
-      } else { Remove-Item -LiteralPath \$target -Force -ErrorAction SilentlyContinue }
+      } elseif (Test-Path -LiteralPath \$target) {
+        Remove-Item -LiteralPath \$target -Force -ErrorAction Stop
+        if (Test-Path -LiteralPath \$target) { throw 'Rollback file removal failed.' }
+      }
     } catch { \$rollbackOk = \$false; Record 'rollback failed; preserve backup for manual recovery' }
   }
   if (!(Get-Process -Id $parentPid -ErrorAction SilentlyContinue)) {
