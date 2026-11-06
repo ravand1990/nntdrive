@@ -1,8 +1,8 @@
 # Project status
 
-Last updated: 2026-11-05. This file is the handoff record for the next agent.
+Last updated: 2026-11-06. This file is the handoff record for the next agent.
 
-## Current checkout verification (NNT-016)
+## NNT-016 verification snapshot (2026-11-05)
 
 On 2026-11-05, `bash scripts/dev-check.sh all` on the main-based NNT-016
 checkout passed formatting, workspace check, clippy with `-D warnings`, and
@@ -10,8 +10,16 @@ checkout passed formatting, workspace check, clippy with `-D warnings`, and
 ignored or database-skipped. The isolated PostgreSQL 16.15 query succeeded.
 The same run built the release Rust FFI library, passed Flutter analyze with no
 issues, and passed **12 Flutter tests**, including real native bridge tests.
-Toolchains: Rust 1.99.1, Flutter 3.47.9, Dart 3.13.7. Counts describe this
-checkout, not unmerged PRs or earlier verification snapshots.
+Toolchains: Rust 1.99.1, Flutter 3.47.9, Dart 3.13.7. These counts describe
+the dated NNT-016 checkout snapshot, before NNT-017 was integrated.
+
+At the subsequently integrated NNT-017 PR head (`fff85a5`), exact-head Clients
+run [42130387280](https://github.com/ravand1990/nntdrive/actions/runs/42130387280)
+passed analyze and all **18 Flutter tests**, including updater tests, plus
+Linux/Android/Windows builds and Android native smoke. Exact-head CI run
+[42130387023](https://github.com/ravand1990/nntdrive/actions/runs/42130387023)
+passed. NNT-017 changed only Flutter code; the 93 Rust tests above remain the
+latest recorded Rust count, not a new post-merge run.
 
 The latest published release checked via GitHub is **v0.4.1**; Cargo and Flutter
 source versions remain 0.4.1 (`0.4.1+6` for Flutter). Unreleased sync changes

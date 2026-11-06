@@ -10,7 +10,11 @@
 | iOS | Flutter | Not built (no macOS/Xcode in this environment) | Rust static lib needs an XCFramework; File Provider still missing |
 
 The 2026-11-05 NNT-016 container run passed `flutter analyze` and **12 Flutter
-tests**, including tests that load the real Rust FFI library. The historical
+tests**, including tests that load the real Rust FFI library. This is a dated
+snapshot before the six NNT-017 updater tests were added; the exact-head Clients
+run [42130387280](https://github.com/ravand1990/nntdrive/actions/runs/42130387280)
+passed all **18 Flutter tests** on the NNT-017 PR head that was subsequently
+integrated. The historical
 Linux/Android client smoke was exercised through the
 exact Dart FFI layer against a running backend: register → create file → upload →
 download → decrypt → byte-for-byte verify.

@@ -78,8 +78,8 @@ caches.
 ## Verification (2026-11-05)
 
 The counts below are the earlier pinned-container verification snapshot. They
-are not the later main-based NNT-016 checkout totals; see `docs/STATUS.md` for
-the current-checkout counts.
+precede the later NNT-016 snapshot and post-NNT-017 integrated suite; see
+`docs/STATUS.md` for the dated totals and latest exact-head app test count.
 
 `bash scripts/dev-check.sh build` and `bash scripts/dev-check.sh all` exited 0;
 a second warm-cache `all` also exited 0. Actual tool versions: Rust/Cargo 1.99.1,
