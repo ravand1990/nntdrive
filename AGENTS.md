@@ -110,8 +110,15 @@ not proof of exclusive ownership. If the repository has a tested create-only
 claim mechanism, use it exactly as documented. Otherwise, simultaneous
 uncoordinated *new issue claiming* requires a single dispatcher/coordinator;
 workers may still implement independently on already assigned branches. If
-claims conflict, stop and escalate—never race, overwrite or steal a branch.
+claims conflict, stop and escalate-never race, overwrite or steal a branch.
 Do not invent an atomic-claim service just by writing instructions here.
+
+**Current dispatcher designation (2026-11-06):** while it is the only competing
+autonomous worker, the sole Hermes scheduled worker is the designated dispatcher
+and may select `Ready` issues under this policy. This designation lapses
+immediately when a second competing worker is enabled; in that case no worker may
+select new tasks until the coordinator designates a dispatcher or a tested atomic
+claim mechanism is adopted.
 
 ## 4. Implementation discipline
 

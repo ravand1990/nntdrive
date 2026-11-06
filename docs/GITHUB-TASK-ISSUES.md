@@ -48,6 +48,12 @@ by every competing worker, route *new task selection* through one dispatcher;
 independent workers can continue already assigned work in separate worktrees.
 Never assume a successful claim comment proves exclusive ownership.
 
+**Current dispatcher designation (2026-11-06):** while it is the only competing
+autonomous worker, the sole Hermes scheduled worker is the designated dispatcher
+and may select `Ready` issues. This designation lapses immediately when a second
+competing worker is enabled; then stop new-task selection until the coordinator
+designates a dispatcher or a tested atomic claim mechanism is adopted.
+
 When a claim mechanism is added, it must use an actual atomic create operation,
 not check-then-write; on conflict it must fail without changing the other
 worker's ref. It must also handle failed claims, abandoned claims, resumption,
