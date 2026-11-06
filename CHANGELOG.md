@@ -4,7 +4,7 @@ All notable changes are documented here. Every release tag **must** have an
 entry with `### Features` and/or `### Bug fixes` (at least one bullet). The
 release workflow refuses to publish if the entry is missing.
 
-## [Unreleased]
+## [0.5.0] - 2026-11-06
 
 ### Features
 

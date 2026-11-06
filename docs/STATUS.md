@@ -21,11 +21,10 @@ Linux/Android/Windows builds and Android native smoke. Exact-head CI run
 passed. NNT-017 changed only Flutter code; the 93 Rust tests above remain the
 latest recorded Rust count, not a new post-merge run.
 
-The latest published release checked via GitHub on 2026-11-06 is **v0.4.1**;
-Cargo and Flutter source versions remain 0.4.1 (`0.4.1+6` for Flutter).
-Unreleased sync changes
-below are not asserted to be in that release. The historical live-provider,
-desktop and release evidence below was not repeated by this documentation run.
+The latest published release is **v0.5.0** (2026-11-06); Cargo and Flutter
+source versions are 0.5.0 (`0.5.0+7` for Flutter). The historical
+live-provider, desktop and release evidence below was not repeated by this
+documentation run.
 
 ## Verified working
 
@@ -53,7 +52,7 @@ decrypt, verify) and through the Flutter FFI sync layer.
 | Real Eweka round-trip: post via `post.eweka.nl:563`, retrieve via `news.eweka.nl:563`, decrypt, verify hash | 4 KB live upload; both articles STAT-verified |
 | Live deployment: dev Compose stack with mock NNTP; register/upload/download through the API | `crates/client/examples/smoke.rs` (verified) |
 | Docker image build, Compose stack, healthcheck, admin page, CLI bootstrap, admin API | ✅ verified locally (image built, stack started, `/healthz` 200, admin stats returned) |
-| Versioned image release: tests → GHCR push (`0.4.1`, `0.4`, `latest`, `sha-*`) → GitHub release with Compose files, checksums and Linux/Android/Windows client builds | ✅ v0.4.1 published |
+| Versioned image release: tests → GHCR push (`0.5.0`, `0.5`, `latest`, `sha-*`) → GitHub release with Compose files, checksums and Linux/Android/Windows client builds | ✅ v0.5.0 published |
 | Flutter client analyze/tests, Linux/Android/Windows release builds | ✅ clean analyze, Dart FFI tests pass; Linux/Windows bundles run, Android APK (~77 MB, debug-signed) embeds all ABIs |
 
 Run it yourself:
@@ -132,7 +131,7 @@ provider when both aws-lc-rs and ring are in the dependency graph.
   serialized automatic/manual checks and prompts, in-app update settings
   (repository + optional read-only token for private releases), SHA-256
   verification, detached in-place replacement and restart.
-- Tag-driven release pipeline: tests, GHCR image `0.4.1`/`0.4`/`latest`/`sha-*`,
+- Tag-driven release pipeline: tests, GHCR image `0.5.0`/`0.5`/`latest`/`sha-*`,
   and a GitHub release with the image-only Compose files, `SHA256SUMS.txt` and
   Linux, Android and Windows client builds. The image is amd64 only; arm64 needs
   native runners or a longer QEMU build. iOS requires macOS/Xcode and is not

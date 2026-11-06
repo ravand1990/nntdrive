@@ -99,7 +99,7 @@ For a public deployment, enable the Caddy profile (`--profile tls`) and set
 Backend images are published to GHCR by `.github/workflows/release.yml`:
 
 ```
-ghcr.io/ravand1990/nntdrive-backend:<version>   # e.g. 0.4.1
+ghcr.io/ravand1990/nntdrive-backend:<version>   # e.g. 0.5.0
 ghcr.io/ravand1990/nntdrive-backend:latest
 ghcr.io/ravand1990/nntdrive-backend:edge        # main branch
 ```
@@ -195,7 +195,7 @@ POSTGRES_PASSWORD=change-me-to-a-long-random-value
 NNTDRIVE_SECRET_KEY=
 
 NNTDRIVE_IMAGE=ghcr.io/ravand1990/nntdrive-backend
-NNTDRIVE_VERSION=0.4.1
+NNTDRIVE_VERSION=0.5.0
 NNTDRIVE_HOST_BIND=127.0.0.1
 NNTDRIVE_HOST_PORT=8080
 
@@ -231,8 +231,8 @@ entry, tests the workspace, builds and pushes the `linux/amd64` image, and creat
 a GitHub release whose notes are generated from that section.
 
 ```bash
-git tag v0.4.1
-git push origin v0.4.1
+git tag v0.5.0
+git push origin v0.5.0
 ```
 
 ## Run the full app without a Usenet account (dev stack)

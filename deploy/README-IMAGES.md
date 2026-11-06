@@ -15,7 +15,7 @@ POSTGRES_PASSWORD=$(openssl rand -hex 24)
 NNTDRIVE_SECRET_KEY=$(openssl rand -base64 32)
 
 # pin the image version (recommended)
-NNTDRIVE_VERSION=0.4.1
+NNTDRIVE_VERSION=0.5.0
 ```
 
 On PowerShell:
