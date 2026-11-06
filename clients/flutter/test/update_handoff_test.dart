@@ -60,7 +60,8 @@ void main() {
     expect(script, contains('Get-Process -Id 123'));
     expect(script, contains("Record 'complete'"));
     expect(script, contains("\$step = 'backup'"));
-    expect(script, contains('Get-FileHash -LiteralPath'));
+    expect(script, contains('[Security.Cryptography.SHA256]::Create()'));
+    expect(script, contains('if ((Hash \$target) -ne (Hash \$file.FullName))'));
     expect(script, isNot(contains('Remove-Item -LiteralPath \$stage')));
     expect(script, isNot(contains('ExecutionPolicy')));
   });

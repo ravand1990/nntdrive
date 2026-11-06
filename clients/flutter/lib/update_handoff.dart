@@ -34,6 +34,14 @@ String windowsUpdateScript({
 function Record([string]\$message) {
   Add-Content -LiteralPath (Join-Path \$state 'update.log') -Value \$message
 }
+# Do not depend on Get-FileHash autoloading: a parent launched by PowerShell 7
+# can pass a PSModulePath that excludes Windows PowerShell's utility modules.
+function Hash([string]\$path) {
+  \$stream = [IO.File]::OpenRead(\$path)
+  \$hasher = [Security.Cryptography.SHA256]::Create()
+  try { return [Convert]::ToBase64String(\$hasher.ComputeHash(\$stream)) }
+  finally { \$hasher.Dispose(); \$stream.Dispose() }
+}
 try {
   Record 'preflight'
   if (!(Test-Path -LiteralPath (Join-Path \$stage \$exe) -PathType Leaf)) {
@@ -79,7 +87,7 @@ try {
     New-Item -ItemType Directory -Force -Path (Split-Path \$target) | Out-Null
     \$changed += \$relative
     Copy-Item -LiteralPath \$file.FullName -Destination \$target -Force
-    if ((Get-FileHash -LiteralPath \$target).Hash -ne (Get-FileHash -LiteralPath \$file.FullName).Hash) {
+    if ((Hash \$target) -ne (Hash \$file.FullName)) {
       throw 'Installed file verification failed.'
     }
   }
