@@ -33,6 +33,19 @@ class AgentPolicyTests(unittest.TestCase):
         self.assertNotIn("and the user approves", text)
         self.assertNotIn("use the **same github pat**", text)
 
+    def test_agent_comment_format(self):
+        text = self.read("AGENTS.md")
+        for required in (
+            "## #<issue> · <state> · <worker_id>",
+            "**What:**", "**Where:**", "**Checks:**", "**Next:**",
+            "No eligible work", "Claimed", "Ready for review",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, text)
+        other = self.read("docs/GITHUB-TASK-ISSUES.md")
+        self.assertIn("## Agent comment format", other)
+        self.assertIn("**Next:**", other)
+
     def test_worker_retries_and_continues(self):
         text = self.read("AGENTS.md").lower()
         self.assertIn("retry at least", text)
