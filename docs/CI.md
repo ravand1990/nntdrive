@@ -92,18 +92,72 @@ post-change release comparator. No release/tag/dispatch was triggered.
 
 ### Post-change evidence and acceptance gate
 
-Pending hosted PR runs. No measured speedup or completed issue acceptance is
-claimed yet. Collect at least three successful paired post-change PR attempts
-with the same required jobs (record exact heads, attempts and cache cold/warm
-state); compute paired wall-clock and medians with the same timestamp definition.
-Report cold first-run results as well as warm runs, failed/cancelled attempts
-separately, and runner queue variance. Verify all eight jobs and three client
-artifacts at the exact final head before acceptance. A single green or faster
-run is not proof of a material median reduction. Do not dispatch releases to
-manufacture timing data. No new SDK installation is needed for local workflow
-checks: run `python3 scripts/test-workflow-performance.py`, existing Python
-contracts, Bash syntax checks and the pinned actionlint container. The new
-contracts were also run against baseline workflows: the parallelism and cache
+Measured on 2026-11-06 at exact implementation head
+`5dde6409540d3396c1f481f159311eb71a57270d`, using CI run
+[42143717954](https://github.com/ravand1990/nntdrive/actions/runs/42143717954)
+and Clients run
+[42143717945](https://github.com/ravand1990/nntdrive/actions/runs/42143717945).
+Attempts 2–4 were deliberate **full CI/Clients reruns**, not releases or
+failed-job-only reruns. Every successful sample has all eight successful jobs.
+
+| Attempt | Cache state | CI seconds | Clients seconds | Paired seconds |
+|---|---|---:|---:|---:|
+| 1 | New Gradle/Docker caches cold; existing Rust/Flutter warm | 374 | 734 | 734 |
+| 2 | Warm | 211 | 593 | 594 |
+| 4 | Warm | 207 | 596 | 597 |
+
+Paired median: **597 s (9m57s), 35.4% below the 924 s baseline**.
+CI median: **211 s**, versus 447 s; Clients median: **596 s**, versus 924 s.
+Warm paired samples were 594/597 s. This is a small hosted-run sample with
+historical different-source baselines, not a controlled runner benchmark.
+The initial run is not a wholly cold SDK benchmark: its pre-existing Rust,
+Flutter and pub caches hit. The initial Docker cache build step took 354 s;
+warm Docker jobs took 20/16 s with logged BuildKit `CACHED` layers. Initial
+Android setup logged `gradle cache is not found`, then saved the cache;
+the downstream smoke and warm reruns restored
+`setup-java-Linux-x64-gradle-aad7385e710f724488d56a391f05e5d776f01be5a0eaebcac35ff9db5bfdaa4b`.
+Android APK build steps took 265 s initially and 145 s in attempt 2,
+versus the historical 273 s. Smoke emulator/build/test action took 270/223 s,
+versus historical 414 s. Builds and assertions still actually ran.
+
+| Successful job duration (seconds) | Initial | Warm attempt 2 | Warm attempt 4 |
+|---|---:|---:|---:|
+| docker | 372 | 20 | 16 |
+| rust | 179 | 189 | 202 |
+| wrapper-contracts | 11 | 9 | 23 |
+| analyze | 91 | 77 | 97 |
+| build-linux | 123 | 107 | 103 |
+| build-windows | 316 | 275 | 289 |
+| build-android | 414 | 286 | 298 |
+| android-native-smoke | 315 | 300 | 289 |
+
+Attempt 3 is **excluded as failed**, not counted as a fast success: CI passed
+in 132 s, Clients failed in 605 s. All builds/analyze passed, but Android
+smoke failed before assertions with `Failed to start Dart Development Service`
+after installing its debug APK. No failure was made optional or masked.
+Attempt 4 reran both complete workflows successfully without source changes.
+This observed runtime-start flake remains a limitation, not a proven fix.
+
+Durations use each attempt's `run_started_at` through completed `updated_at`,
+including runner wait and finalization; paired time is earliest start through
+latest completion. Initial `created_at` equals `run_started_at`. A rerun's
+original run creation would incorrectly include the deliberate idle interval,
+so attempt-local starts are used instead. Attempt 2 CI jobs started 21/151 s
+after its request; that runner wait is included. Attempt 1 metadata's terminal
+Clients `updated_at` is 01:37:28Z (one second later than the first run-list
+read). All values are calculated from saved REST JSON with Python.
+
+The latest measured successful attempt 4 produced client artifacts:
+`nntdrive-linux-x64` **13471056147**, `nntdrive-windows-x64` **13470903483**,
+`nntdrive-android` **13470584487**. Earlier attempts' artifacts are not
+substituted for this attempt. Documentation-only commits after the measured
+implementation head require their own exact-head eight-job/artifact readback
+before merging; these measurements do not establish a future head's green state.
+Release workflow is unchanged, and no release/tag/dispatch was triggered.
+
+Local checks need no SDK installation: `python3 scripts/test-workflow-performance.py`,
+existing Python contracts, Bash syntax checks and the pinned actionlint container.
+The new contracts were also run against baseline workflows: parallelism/cache
 tests failed as intended, while coverage/release invariants passed.
 
 ## Manual pinned container drift check
