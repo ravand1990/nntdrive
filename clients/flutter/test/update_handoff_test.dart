@@ -79,7 +79,8 @@ void main() {
     File('${install.path}/payload').writeAsStringSync('old');
     File('${install.path}/journal').writeAsStringSync('preserve');
     final result = await Process.run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', windowsUpdateScript(stage: stage.path, install: install.path, state: state.path, parentPid: parent.pid, executable: 'launch.cmd', showFailureDialog: false)]);
-    expect(result.exitCode, 0, reason: '${result.stdout}\n${result.stderr}');
+    final diagnostic = File('${state.path}/update.log');
+    expect(result.exitCode, 0, reason: '${result.stdout}\n${result.stderr}\n${diagnostic.existsSync() ? diagnostic.readAsStringSync() : "no helper log"}');
     expect(File('${state.path}/complete').existsSync(), isTrue);
     expect(File('${state.path}/backup/payload').readAsStringSync(), 'old');
     expect(File('${install.path}/payload').readAsStringSync(), 'new');
