@@ -71,10 +71,13 @@ independent review where available. Never mark an unperformed review as done.
 
 **For an explicitly assigned issue or request:** identify its issue/PR or create
 an issue only when authorized; inspect its current state and existing work.
-Do not pick unrelated tasks.
+Do not pick unrelated tasks. If the assigned work cannot be completed, retry
+once and report the blocker to the user; the continuation rule below applies to
+autonomous task selection, not to silently replacing assigned work.
 
-**For an autonomous issue-worker invocation:** perform this sequence, stopping
-after one task or a durable blocker/handoff rather than running indefinitely:
+**For an autonomous issue-worker invocation:** perform this sequence, ending
+after completed work, one durable blocker/handoff, or when no eligible work
+remains:
 
 1. Identify this invocation by a stable `worker_id` (e.g. `hermes-hostA-job3`,
    `codex-session-...`). This is distinct from a shared GitHub account. Do not
@@ -105,6 +108,28 @@ after one task or a durable blocker/handoff rather than running indefinitely:
    identifier in commits, PR titles and handoffs.
 8. Implement only the claimed acceptance criteria. Verify, open/update the PR,
    reconcile state, and leave a complete handoff as described below.
+
+**Retry and continuation rule:** a scheduled worker must not end a run with
+nothing durable done while eligible work exists.
+
+- If a task cannot be started or finished, diagnose the cause and retry at least
+  once with a concrete change in approach, not an identical repeat. Fix what is
+  within your control: your branch, commands, environment, or reading of the
+  acceptance criteria.
+- If the cause is outside your control (human decision, missing credential or
+  permission, unavailable platform, external outage, another worker's branch),
+  do not spend the run on out-of-context workarounds. Record the exact blocker
+  and next action on the issue, and mark it `blocked-loop` if the same blocker
+  has already repeated.
+- Then continue with the next eligible issue under the discovery rules. Skipping
+  a blocked task is not abandoning it: keep its ownership, status and handoff
+  accurate.
+- Stop only when no eligible work remains or the run's budget is exhausted. A run
+  that ends with only a handoff must state why no other eligible issue existed.
+- Retrying never authorizes bypassing checks, force-pushing, weakening tests or
+  security, changing acceptance criteria, or taking over another worker's branch.
+- Report only work actually done; a truthful blocker is acceptable when no
+  eligible work remains, but never inflate or fabricate progress.
 
 **Concurrency rule:** GitHub comments, assignees and Project updates are **not
 atomic locks**. A branch name containing an issue ID is only a collision signal,

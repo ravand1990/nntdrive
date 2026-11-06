@@ -33,6 +33,15 @@ class AgentPolicyTests(unittest.TestCase):
         self.assertNotIn("and the user approves", text)
         self.assertNotIn("use the **same github pat**", text)
 
+    def test_worker_retries_and_continues(self):
+        text = self.read("AGENTS.md").lower()
+        self.assertIn("retry at least", text)
+        self.assertIn("continue with the next eligible issue", text)
+        self.assertIn("no eligible work remains", text)
+        other = self.read("docs/GITHUB-TASK-ISSUES.md").lower()
+        self.assertIn("retry at least once", other)
+        self.assertIn("next eligible task", other)
+
     def test_new_issue_templates_default_to_backlog(self):
         for file in ("task.yml", "bug.yml"):
             with self.subTest(file=file):

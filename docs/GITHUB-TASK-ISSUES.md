@@ -108,6 +108,14 @@ blockers. Link dependency issues, not a duplicate task list.
    ownership/resumption is coordinated. Otherwise leave it Ready for its owner.
    If unresolved or awaiting a human decision, leave it Blocked with exact next
    action. Never make a duplicate claim/branch or treat elapsed time as proof.
+   If a selected task cannot be started or completed, retry at least once with a
+   changed approach. If the remaining cause is outside the worker's control
+   (human decision, missing credential, unavailable platform, external outage,
+   another worker's branch), record it on the issue, mark `blocked-loop` when it
+   repeats, and select the next eligible task in the same run. Do not end a
+   scheduled run with no contribution while eligible work exists; a handoff-only
+   run must state why no eligible task remained. Retries must not bypass checks,
+   change acceptance criteria, force-push or take over another branch.
 3. Publish an agent-identifying claim comment with branch/worktree/start time;
    set Project Status In Progress, assign the responsible account where
    appropriate, read back the exact item and issue, and recheck competing claims.
