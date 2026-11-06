@@ -668,6 +668,11 @@ class _UnlockPageState extends State<UnlockPage> {
                     style: Theme.of(context).textTheme.headlineSmall),
                 const SizedBox(height: 6),
                 Text(widget.email, textAlign: TextAlign.center),
+                const SizedBox(height: 12),
+                const Text(
+                  'Sync paused: vault locked. Unlock to allow synchronization.',
+                  textAlign: TextAlign.center,
+                ),
                 const SizedBox(height: 20),
                 TextField(
                   controller: _password,

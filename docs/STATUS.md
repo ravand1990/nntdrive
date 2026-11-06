@@ -162,7 +162,12 @@ provider when both aws-lc-rs and ring are in the dependency graph.
   Move the keyfile to the platform keystore for a hardened build.
 - Sync runs only while the desktop app is open (no background service yet), but
   files are streamed through the `Remote` adapter rather than held in memory.
-  True background sync remains future work.
+  True background sync remains future work. The unlock screen now explicitly
+  shows sync paused while the vault is locked. Native regression tests reject
+  cold-start/revoked handles before network or journal access; this is not
+  background-service acceptance. [Background sync feasibility](BACKGROUND-SYNC.md)
+  records the password-required cold-start boundary and remaining desktop/mobile
+  work without adding plaintext key persistence or automatic unlock.
 - Remote folder renames use persisted node IDs and remap the complete journal
   subtree, including empty directories. Old journals learn IDs on their first
   successful sync after upgrade; moves before that baseline are not inferred.
