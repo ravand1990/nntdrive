@@ -20,6 +20,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - run: python3 scripts/test-dev-check.py
       - run: python3 scripts/test-ci-contracts.py
+      - run: python3 scripts/test-agent-policy.py
       - name: Validate all workflow schemas and expressions
         run: docker run --rm -v "$PWD:/repo:ro" -w /repo rhysd/actionlint:1.7.7@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9 -shellcheck=
       - run: bash -n scripts/ci-rust-tests.sh scripts/dev-check.sh

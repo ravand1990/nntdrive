@@ -7,10 +7,9 @@ body:
     id: readiness
     attributes:
       label: Scheduling readiness
-      description: Queue authorization, not phase; Ready never overrides dependencies or ownership.
+      description: New issues must start Backlog; only the coordinator can promote them to Ready.
       options:
         - Backlog
-        - Ready
       default: 0
     validations:
       required: true
