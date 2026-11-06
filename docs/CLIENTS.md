@@ -241,6 +241,26 @@ inaccessible feeds never prevent using the app. The updater:
 4. unpacks to a temporary directory and starts a detached helper;
 5. exits, letting the helper replace the install directory and restart the app.
 
+The helper launch is awaited before the app exits. On Windows, the helper must
+also acknowledge its archive-layout and directory-write preflight within 15
+seconds; a launch/preflight failure leaves the app open with an error. It waits
+at most 60 seconds for the old process to exit, then backs up overwritten payload
+files, checks for locked/read-only targets, copies and hash-verifies the payload,
+and starts the new executable. Existing files absent from the release (including
+user data/journals) are not deleted. A replacement failure attempts rollback and
+restart of the previous app and shows a Windows failure dialog; a rollback or
+restart can itself fail, so this is not a durability guarantee.
+
+Windows diagnostics remain in the system temporary directory under a unique
+`nntdrive-update-handoff-*` directory: `update.log` names the failing step,
+`failed`/`complete` records the outcome, `update.ps1` retains the helper source,
+and `backup/` retains overwritten files. Failed stages/backups are deliberately
+not deleted. These files contain local install paths, not update tokens or keys;
+review/redact paths before sharing a log. After confirming a working install,
+these temporary directories and the matching staged update can be removed
+manually. Installed-release version/data/journal preservation and locked-file
+manual acceptance remain #49/#28; hosted helper fixtures do not replace them.
+
 Public releases do not require a token. For a private release repository, open
 **Account → Update settings**, set the repository and a read-only token; an
 inaccessible private feed can return 404. The token is stored in the app's local
