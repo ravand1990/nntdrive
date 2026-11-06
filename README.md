@@ -57,7 +57,7 @@ replace `you@example.com` with your email. The password prompt is hidden; use a
 strong password of at least eight characters and save it in your password manager.
 
 ```bash
-read -r -s -p 'New account password: ' NNTDRIVE_PASSWORD; printf '\n'
+IFS= read -r -s -p 'New account password: ' NNTDRIVE_PASSWORD; printf '\n'
 export NNTDRIVE_PASSWORD
 docker compose --env-file .env -f docker-compose.release.yml exec -e NNTDRIVE_PASSWORD backend \
   nntdrive bootstrap --email you@example.com \
