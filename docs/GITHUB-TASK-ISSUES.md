@@ -31,6 +31,33 @@ IDs or rely on cached options.
 No new column or automation was added. Cancelled and verification/test issues
 must not be represented as completed work. Test issue #4 is excluded.
 
+## Shared agent instructions and safe concurrency
+
+The root `AGENTS.md` is the single shared entry point for Codex, OpenCode,
+Hermes, and other workers. This document implements the task-lifecycle details;
+worker-specific schedulers only set runtime identity, workdir, model,
+permissions, and cadence. Historical migration/audit notes in this document
+are records, not competing current policy. In particular the root file now
+recognizes the standing, acceptance-gated issue-closing authorization below.
+
+**No enforced distributed lock is implemented in this change.** GitHub issue
+comments, assignees, branch-search hits and Project field writes only signal
+ownership. Until an atomic claim mechanism is implemented, tested, and adopted
+by every competing worker, route *new task selection* through one dispatcher;
+independent workers can continue already assigned work in separate worktrees.
+Never assume a successful claim comment proves exclusive ownership.
+
+When a claim mechanism is added, it must use an actual atomic create operation,
+not check-then-write; on conflict it must fail without changing the other
+worker's ref. It must also handle failed claims, abandoned claims, resumption,
+and existing task branches without destructive cleanup. A scheduler must not
+start using the new protocol until **all** competing workers have migrated.
+
+The issue form deliberately offers only `Backlog` for new issues. The
+coordinator grants `Ready` explicitly after triage; an issue submitter's
+self-selected queue value is not authorization. Form options are a workflow
+guard, not an access-control boundary; permissions must enforce policy.
+
 ## Scheduling readiness is not phase
 
 Every task body contains a `Scheduling readiness` heading followed by exactly
