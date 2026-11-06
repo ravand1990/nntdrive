@@ -20,6 +20,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - run: python3 scripts/test-dev-check.py
       - run: python3 scripts/test-ci-contracts.py
+      - run: python3 scripts/test-workflow-performance.py
       - run: python3 scripts/test-agent-policy.py
       - name: Validate all workflow schemas and expressions
         run: docker run --rm -v "$PWD:/repo:ro" -w /repo rhysd/actionlint:1.7.7@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9 -shellcheck=
@@ -65,7 +66,7 @@ jobs:
   docker:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
-    needs: rust
+    # Build-only validation is independent; publishing remains release-gated.
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
@@ -75,3 +76,5 @@ jobs:
           file: deploy/Dockerfile
           push: false
           tags: nntdrive/backend:ci
+          cache-from: type=gha,scope=pr-backend
+          cache-to: type=gha,scope=pr-backend,mode=max

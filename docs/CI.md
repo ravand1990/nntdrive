@@ -13,7 +13,7 @@ workflow, not proof of repository branch protection.
 
 | Job | Contract |
 |---|---|
-| `CI / wrapper-contracts` | Four Python wrapper/real Compose configuration tests; five subprocess tests for the fail-closed database gate. No SDK image build. |
+| `CI / wrapper-contracts` | Four Python wrapper/real Compose configuration tests; five subprocess tests for the fail-closed database gate; four workflow performance/coverage contracts; agent policy contracts and actionlint. No SDK image build. |
 | `CI / rust` | fmt, Clippy, full workspace tests against disposable PostgreSQL 16 and mock NNTP, release backend/CLI build, storage demo. `psql` must succeed and any PostgreSQL skip notice fails the job. Test output uses `--nocapture`; pipeline failures propagate. |
 | `CI / docker` | Container build only, no push/deploy. |
 | `Clients / analyze` | Linux release Rust FFI build, Flutter analysis and full unit/native bridge suite with explicit native library path. Missing native path/file now fails rather than returning a false pass. |
@@ -30,6 +30,81 @@ E2E; it does not provision a backend or claim sync/background/provider coverage.
 KVM is required explicitly: absence fails instead of silently using an unusably
 slow software emulator. Successful runtime coverage must be confirmed by the
 `android-native-smoke` result for the exact commit.
+
+## Performance evidence — issue #46
+
+### Execution graph and cache boundaries
+
+`rust`, `wrapper-contracts` and the **non-publishing** Docker build now start
+independently. Linux, Windows and Android client builds no longer wait for
+Linux analysis. Analysis and both Linux/Windows native unit suites still run;
+all eight CI/Clients jobs remain required for acceptance. This trades a little
+extra work on failing commits for a shorter successful critical path. No path
+filters, optional tests, artifact substitutions or release bypasses were added.
+The Android smoke still waits for the actual release APK and extracts its
+x86_64 core before exercising KVM runtime assertions.
+
+Both Android jobs use setup-java's Gradle dependency/wrapper cache, keyed on
+all Android Gradle Kotlin scripts and wrapper properties. Flutter still resolves
+pub dependencies and Gradle still executes the builds/tests; a cache hit never
+skips verification. GitHub's ref-scoped cache isolation prevents PR writes from
+being restored on main/tag release runs. PR caches contain no credentials.
+The build-only Docker cache uses `scope=pr-backend`, separate from the unchanged
+release image cache; no PR-built image/artifact is promoted to a release.
+Release `image` and reusable `clients` still depend on `test`; `github-release`
+still waits for both. SBOM, provenance, checksums and tag cancellation policy
+are unchanged. Release workflow itself is intentionally unchanged.
+
+### Actual baseline (queried 2026-11-06)
+
+REST Actions run timestamps (`created_at` through completed `updated_at`, in
+seconds, including queue/finalization) give the following three most recent
+successful **paired PR** runs before this change. Failed/cancelled/in-flight
+runs and main pushes are excluded, not counted as fast successes. These are
+warm-cache historical samples, not a controlled identical-source benchmark.
+
+| PR head | CI run / seconds | Clients run / seconds | Paired wall-clock seconds |
+|---|---|---|---|
+| `cc0fea35` | [42136628013](https://github.com/ravand1990/nntdrive/actions/runs/42136628013) / 361 | [42136628033](https://github.com/ravand1990/nntdrive/actions/runs/42136628033) / 924 | 924 |
+| `58f29ff6` | [42135429299](https://github.com/ravand1990/nntdrive/actions/runs/42135429299) / 465 | [42135428996](https://github.com/ravand1990/nntdrive/actions/runs/42135428996) / 1022 | 1022 |
+| `a2b1114f` | [42134621216](https://github.com/ravand1990/nntdrive/actions/runs/42134621216) / 447 | [42134621207](https://github.com/ravand1990/nntdrive/actions/runs/42134621207) / 914 | 914 |
+
+Median CI: **447 s (7m27s)**; Clients and paired PR median: **924 s (15m24s)**.
+The second pair's workflows were created one second apart; paired duration is
+from earliest creation to latest completion. Numbers were computed with Python
+`datetime` and `statistics.median`, not estimated from job definitions.
+
+For `cc0fea35`, actual jobs (`started_at` to `completed_at`) were:
+CI rust 184 s, wrapper-contracts 6 s, Docker 170 s; Clients analyze 73 s,
+Linux 98 s, Windows 282 s, Android 382 s, Android smoke 461 s.
+The Docker build step alone took 150 s, after waiting for Rust.
+Android APK compilation took 273 s; emulator action (boot, debug build, tests)
+took 414 s. Thus Android build plus runtime remains the primary slow path;
+Gradle caching targets repeated dependency/build setup, not reduced assertions.
+
+Historical release [41944403569](https://github.com/ravand1990/nntdrive/actions/runs/41944403569)
+(`v0.4.1`, `eb6beca0`) took **1357 s (22m37s)**. Its actual jobs were test 566 s,
+image 456 s, analyze 111 s, Linux 173 s, Windows 241 s, Android 656 s,
+github-release 12 s, and the then-optional failed iOS job 65 s.
+That older graph predates the now-required Android smoke and Windows tests,
+so it is a historical bottleneck reference, **not** a coverage-equivalent
+post-change release comparator. No release/tag/dispatch was triggered.
+
+### Post-change evidence and acceptance gate
+
+Pending hosted PR runs. No measured speedup or completed issue acceptance is
+claimed yet. Collect at least three successful paired post-change PR attempts
+with the same required jobs (record exact heads, attempts and cache cold/warm
+state); compute paired wall-clock and medians with the same timestamp definition.
+Report cold first-run results as well as warm runs, failed/cancelled attempts
+separately, and runner queue variance. Verify all eight jobs and three client
+artifacts at the exact final head before acceptance. A single green or faster
+run is not proof of a material median reduction. Do not dispatch releases to
+manufacture timing data. No new SDK installation is needed for local workflow
+checks: run `python3 scripts/test-workflow-performance.py`, existing Python
+contracts, Bash syntax checks and the pinned actionlint container. The new
+contracts were also run against baseline workflows: the parallelism and cache
+tests failed as intended, while coverage/release invariants passed.
 
 ## Manual pinned container drift check
 
