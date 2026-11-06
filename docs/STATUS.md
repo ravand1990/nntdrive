@@ -21,8 +21,9 @@ Linux/Android/Windows builds and Android native smoke. Exact-head CI run
 passed. NNT-017 changed only Flutter code; the 93 Rust tests above remain the
 latest recorded Rust count, not a new post-merge run.
 
-The latest published release checked via GitHub is **v0.4.1**; Cargo and Flutter
-source versions remain 0.4.1 (`0.4.1+6` for Flutter). Unreleased sync changes
+The latest published release checked via GitHub on 2026-11-06 is **v0.4.1**;
+Cargo and Flutter source versions remain 0.4.1 (`0.4.1+6` for Flutter).
+Unreleased sync changes
 below are not asserted to be in that release. The historical live-provider,
 desktop and release evidence below was not repeated by this documentation run.
 
