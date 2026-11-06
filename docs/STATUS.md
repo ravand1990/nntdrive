@@ -241,6 +241,10 @@ provider when both aws-lc-rs and ring are in the dependency graph.
   repositories require read access configured in update settings. Actual
   Windows/Linux replacement, restart and data/journal preservation acceptance
   remains tracked in NNT-103 (#28); implementation is not proof of that acceptance.
+  Issue #49 adds awaited helper launch and Windows preflight acknowledgement,
+  step diagnostics, backup/hash-verified replacement and attempted rollback.
+  Native helper fixtures are distinct from the still-required installed-build
+  update/restart/version/data and locked-file manual checks.
 - Android and iOS have no in-app updater; Android requires the system package
   installer and iOS requires App Store/TestFlight or a signed enterprise install.
 - Sync conflict review supports Keep mine (the preserved conflict copy), Keep

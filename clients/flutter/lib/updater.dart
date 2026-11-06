@@ -20,6 +20,8 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'update_handoff.dart';
+
 class UpdateConfig {
   const UpdateConfig({required this.repo, required this.token});
 
@@ -175,10 +177,10 @@ class Updater {
       stage.createSync(recursive: true);
       if (Platform.isWindows) {
         await _extractZip(archive, stage);
-        _launchWindowsHelper(stage);
+        await _launchWindowsHelper(stage);
       } else {
         await _extractTar(archive, stage);
-        _launchLinuxHelper(stage);
+        await _launchLinuxHelper(stage);
       }
     } catch (e) {
       if (archive.existsSync()) archive.deleteSync();
@@ -254,27 +256,28 @@ class Updater {
     }
   }
 
-  void _launchWindowsHelper(Directory stage) {
-    final install = p.dirname(Platform.resolvedExecutable);
-    final script = File(p.join(stage.parent.path, 'nntdrive-update.cmd'));
-    script.writeAsStringSync('''
-@echo off
-setlocal
-:wait
-tasklist /FI "PID eq $pid" 2>nul | find "$pid" >nul
-if not errorlevel 1 (
-  timeout /t 1 /nobreak >nul
-  goto wait
-)
-robocopy "${stage.path}" "$install" /E /NFL /NDL /NJH /NJS /NP >nul
-start "" "$install\\nntdrive.exe"
-rmdir /s /q "${stage.path}"
-del "%~f0"
-''');
-    Process.start('cmd', ['/c', script.path], mode: ProcessStartMode.detached);
+  Future<void> _launchWindowsHelper(Directory stage) async {
+    final state = await Directory(stage.parent.path)
+        .createTemp('nntdrive-update-handoff-');
+    final script = File(p.join(state.path, 'update.ps1'));
+    final source = windowsUpdateScript(
+      stage: stage.path,
+      install: p.dirname(Platform.resolvedExecutable),
+      state: state.path,
+      parentPid: pid,
+    );
+    // Retain the exact script for diagnostics. -Command runs the source without
+    // modifying the machine's script execution policy.
+    await script.writeAsString('\ufeff$source');
+    await startUpdateHelper(
+      () => Process.start('powershell.exe', [
+        '-NoProfile', '-NonInteractive', '-Command', source,
+      ], mode: ProcessStartMode.detached),
+      () => waitForWindowsHelper(state),
+    );
   }
 
-  void _launchLinuxHelper(Directory stage) {
+  Future<void> _launchLinuxHelper(Directory stage) async {
     final install = p.dirname(Platform.resolvedExecutable);
     final script = File(p.join(stage.parent.path, 'nntdrive-update.sh'));
     script.writeAsStringSync('''
@@ -286,7 +289,11 @@ rm -rf "${stage.path}"
 rm -f "\$0"
 ''');
     Process.runSync('chmod', ['+x', script.path]);
-    Process.start('/bin/sh', [script.path], mode: ProcessStartMode.detached);
+    await startUpdateHelper(
+      () => Process.start('/bin/sh', [script.path],
+          mode: ProcessStartMode.detached),
+      () async {},
+    );
   }
 }
 
