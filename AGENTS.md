@@ -244,14 +244,32 @@ reviews or GitHub protections to make an issue pass.
 
 ## 7. Blocking, handoff and discovered work
 
-At session end, after a crash recovery, or before switching contexts, update
-the GitHub issue with:
+Every agent issue comment uses **one fixed format**, so a human can scan it:
 
-- `worker_id`, issue, branch/worktree, PR and latest commit SHA;
-- outcome and completed acceptance criteria, plus **remaining** criteria;
-- exact commands/checks/results and links to applicable CI evidence;
-- unstaged/uncommitted state (if any), blockers and dependencies;
-- the single concrete next action and who/what can unblock it.
+```text
+## #<issue> · <state> · <worker_id>
+- **What:** one or two sentences: what changed, or what is blocking.
+- **Where:** `branch` · PR #<number> · `<commit>`
+- **Checks:** what ran and the result, with a run link; or `none: <reason>`
+- **Next:** one sentence; `none.` when finished.
+```
+
+- `<state>` is exactly one of `Claimed`, `In progress`, `Blocked`,
+  `Ready for review`, `Done`. A run with no work uses
+  `## No eligible work · <worker_id>` instead.
+- Use `—` for an absent branch, PR or commit; never omit a field.
+- Keep the whole comment under ~10 lines. Do not paste logs, stack traces, file
+  lists, repeated context or a narrative of what you read; link to it.
+- No extra headings, sections, bullet types or emoji. Same four labels, same
+  order, every time.
+- Past tense for completed work, present tense for a blocker.
+- Be exact where it matters: the real blocker, the real check result, the real
+  next action. Brevity never excuses a vague handoff.
+- Historical comments are not retrofitted.
+
+This format carries the full handoff: worker, issue, branch, PR, commit, checks,
+remaining work, blocker and next action. If a fact does not fit, link to where it
+is recorded.
 
 Use `Blocked` only for real unmet prerequisites, inaccessible required checks,
 missing authorized environments or outstanding human decisions. Do not mark

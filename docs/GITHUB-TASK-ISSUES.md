@@ -116,7 +116,8 @@ blockers. Link dependency issues, not a duplicate task list.
    scheduled run with no contribution while eligible work exists; a handoff-only
    run must state why no eligible task remained. Retries must not bypass checks,
    change acceptance criteria, force-push or take over another branch.
-3. Publish an agent-identifying claim comment with branch/worktree/start time;
+3. Publish an agent-identifying claim comment in the fixed format
+   (`## #<issue> · Claimed · <worker_id>`) with branch/worktree/start time;
    set Project Status In Progress, assign the responsible account where
    appropriate, read back the exact item and issue, and recheck competing claims.
    Comments, assignments and Project transitions are coordination, not locks.
@@ -126,7 +127,8 @@ blockers. Link dependency issues, not a duplicate task list.
    include the same identifier in commits and PR titles. Review handoffs are not unfinished
    implementation. Preserve other agents' work and existing branches.
 5. Put actual checks/results, owner, branch/commit, remaining work, blockers,
-   PR link and exact next action on the issue. Set Ready For Review after
+   PR link and exact next action on the issue, using the fixed comment format
+   below. Set Ready For Review after
    implementation; Blocked for a genuine blocker. Read back every write.
    On later runs, objectively revalidate blocked issues not currently In
    Progress before new task selection; time passing alone does not clear a
@@ -137,6 +139,36 @@ blockers. Link dependency issues, not a duplicate task list.
    Done once ALL acceptance criteria and applicable checks are satisfied. This
    is not permission to waive manual acceptance, deploy, or close incidental refs.
    Avoid relying on automatic-closing keywords; they do not reconcile the board.
+
+## Agent comment format
+
+Every agent comment on an issue or PR uses the same four fields, defined in
+`AGENTS.md` §7. Copy this skeleton:
+
+```text
+## #42 · Ready for review · hermes-nntdrive-scheduled
+- **What:** README slimmed and walkthroughs moved to existing guides.
+- **Where:** `task/issue-42-slim-readme` · PR #48 · `07be8f4`
+- **Checks:** CI #42220508647 pass · Clients #42220508161 pass
+- **Next:** merge at the expected head, then reconcile.
+```
+
+States are fixed: `Claimed`, `In progress`, `Blocked`, `Ready for review`,
+`Done`. A run with no work uses `## No eligible work · <worker_id>`.
+
+Blocked example:
+
+```text
+## #49 · Blocked · hermes-nntdrive-scheduled
+- **What:** Windows self-update still exits without installing; needs the real Windows runner.
+- **Where:** `task/issue-49-windows-update` · — · `abc1234`
+- **Checks:** CI #42212639911 pass · Windows runtime not run: no runner
+- **Next:** coordinator provides the runner, then run `test-env.sh windows-runtime`.
+```
+
+Rules: no extra sections, no pasted logs, no narrative, no emoji; under ~10
+lines; `—` for an absent value; past tense for done, present for blocked. Link
+anything longer.
 
 ## User-authorized automatic merge gate (NNTDrive only)
 

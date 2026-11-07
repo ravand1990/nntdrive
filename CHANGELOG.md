@@ -9,6 +9,7 @@ release workflow refuses to publish if the entry is missing.
 ### Features
 
 - Windows/Linux same-process close-to-tray retains one unlocked sync session, with Open, sync state, Pause/Resume and Quit. Missing tray support falls back to quit; session ownership excludes duplicate clients using the same settings directory. Quit/sign-out drain active work before locking keys. This is partial #6 delivery, not autostart, cold-start unlock or a mobile worker; installed-platform acceptance remains pending.
+- Guided README installation and usage steps cover release downloads, server setup, offline recovery material, client connection, folder sync and conflicts (#52).
 
 ### Bug fixes
 
