@@ -6,7 +6,9 @@ This is a **partial implementation / design handoff**, not a background service.
 The unlock screen now explains that sync is paused while the vault is locked.
 Native regression tests exercise every sync entry point with a missing or
 revoked process-local key handle, checking rejection before journal creation or
-backend contact. Desktop tray/autostart and Android WorkManager are not installed
+backend contact. Whole sync rounds and conflict resolution now hold an exclusive
+SQLite operation lease for their journal; competing owners fail visibly rather
+than scanning and publishing from the same baseline. Desktop tray/autostart and Android WorkManager are not installed
 or registered by this change. Closing the current desktop window still ends sync.
 
 ## What prevents unattended cold-start sync today
@@ -79,6 +81,35 @@ current account and paused/exclusion state before touching files. Display
 truthfully. Do not infer a specific OS pause cause from elapsed time alone.
 Android directory access / process-restart persistence must be verified on a
 real emulator/device, not inferred from desktop path-provider tests.
+
+## Whole-operation exclusion implemented
+
+`SyncEngine::run_once` and `resolve_conflict` acquire `Journal::acquire_operation`
+before reading a baseline, snapshotting remote state or touching local files.
+A separate `<journal>.operation-lock.sqlite` database holds a SQLite
+`BEGIN IMMEDIATE` transaction for the entire operation, independent of the
+baseline's short transactions. Another process/Journal instance gets a visible
+busy error after a bounded wait: SQLite allows 100 ms for a previous owner's
+asynchronous rollback, and the connection/transaction acquisition has a 250 ms
+outer deadline. Different journals do not share a global lock.
+No credentials or sync content are stored in this sidecar. Keep it in place:
+**never delete a lock sidecar while any owner might be running**.
+
+Drop, task cancellation and process death release the lease without modifying
+the existing baseline. Linux regressions cover independent owners, both engine
+entry points, baseline writes under the lease, cancellation, and a real child
+process killed while owning the lease. The engine regression fails without the
+entry-point acquisitions. This is not installed Windows/Android acceptance.
+The ignored subprocess helper is invoked explicitly by the process-death test,
+not a skipped acceptance check.
+
+This protects cooperating updated engines using the **same journal path on a
+local filesystem**. It is not a global application single-instance lock: two
+configurations pointing the same sync root at different journals are not detected,
+and older clients do not participate. Do not run mixed-version owners, place the
+journal/sidecar on a network filesystem, or rename/delete them while syncing.
+Application ownership and stable per-folder journal mapping are still required
+before adding independent background schedulers.
 
 ## Required evidence before #6 is complete
 

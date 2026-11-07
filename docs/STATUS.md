@@ -26,6 +26,16 @@ source versions are 0.5.0 (`0.5.0+7` for Flutter). The historical
 live-provider, desktop and release evidence below was not repeated by this
 documentation run.
 
+## NNT-001 partial operation exclusion
+
+Whole sync rounds and conflict resolution now acquire an OS-backed SQLite lease
+on `<journal>.operation-lock.sqlite`, independent of baseline transactions.
+Competing updated owners of the same journal fail visibly; cancellation and
+process-death recovery preserve baseline history. This is not an application-wide
+single-instance lock, a tray service or mobile scheduling. See
+[background sync](BACKGROUND-SYNC.md) for compatibility limits and remaining
+platform/security acceptance.
+
 ## Verified working
 
 Everything below is exercised by `cargo test --workspace --all-targets`
