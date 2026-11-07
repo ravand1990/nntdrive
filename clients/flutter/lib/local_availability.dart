@@ -10,24 +10,29 @@ import 'sync_controller.dart';
 /// errors are explicitly identified as such rather than attributed to one file.
 class LocalAvailability {
   const LocalAvailability(this.label, this.explanation,
-      {this.path, this.folder, this.isDirectory = false});
+      {this.path, this.folder, this.relativePath, this.isDirectory = false});
 
   final String label;
   final String explanation;
   final String? path;
   final SyncFolderConfig? folder;
+  final String? relativePath;
   final bool isDirectory;
 
   static const unknown = LocalAvailability(
       'Unknown', 'Cannot safely map this entry to a configured sync folder.');
 
-  String get displayLabel {
-    if (folder?.running == true) return 'Syncing';
-    return label;
-  }
+  // A folder's current event is not evidence that its other entries are active.
+  // A terminal event also does not establish disk/journal/revision equality.
+  bool get _transferring => !isDirectory && label != 'Conflict' &&
+      relativePath != null && folder?.running == true &&
+      folder?.progress?['path'] == relativePath &&
+      folder?.progress?['complete'] == false;
 
-  String get displayExplanation => folder?.running == true
-      ? 'The covering sync folder is syncing; individual file completion is unknown.'
+  String get displayLabel => _transferring ? 'Syncing' : label;
+
+  String get displayExplanation => _transferring
+      ? 'This file is transferring; content equality and final success are not verified.'
       : explanation;
 }
 
@@ -76,7 +81,8 @@ Future<LocalAvailability> inspectLocalAvailability({
       final type = await FileSystemEntity.type(current, followLinks: false);
       if (type == FileSystemEntityType.notFound) {
         return LocalAvailability('Cloud only',
-            'No copy exists at the expected synced path.', folder: folder);
+            'No copy exists at the expected synced path.',
+            folder: folder, relativePath: relative, isDirectory: isDir);
       }
       final expected = i == components.length - 1 && !isDir
           ? FileSystemEntityType.file
@@ -91,12 +97,32 @@ Future<LocalAvailability> inspectLocalAvailability({
             'Error', 'The expected synced path has an unsafe or unexpected type.');
       }
     }
-    final conflict = folder.conflictFiles.contains(relative);
+    var conflict = !isDir && folder.conflictFiles.contains(relative);
+    if (!isDir && !conflict) {
+      // Only infer pairs in this already-validated containing directory. Never
+      // trust cached discovery alone: removed, directory or linked copies do not
+      // establish a current conflict. This remains a candidate, not proof that
+      // the pair is journal-valid; conflict resolution revalidates in the core.
+      for (final copy in folder.conflictFiles) {
+        if (p.posix.dirname(copy) != p.posix.dirname(relative) ||
+            originalConflictPath(copy) != relative ||
+            copy.split('/').any((part) => renameValidationError(part) != null)) {
+          continue;
+        }
+        final candidate = p.join(p.dirname(current), p.posix.basename(copy));
+        if (await FileSystemEntity.type(candidate, followLinks: false) ==
+                FileSystemEntityType.file &&
+            p.equals(await File(candidate).resolveSymbolicLinks(), candidate)) {
+          conflict = true;
+          break;
+        }
+      }
+    }
     return LocalAvailability(conflict ? 'Conflict' : 'Local',
         conflict
-            ? 'A preserved conflict copy exists at the expected synced path.'
+            ? 'A preserved conflict copy was discovered for this file; review revalidates the pair.'
             : 'Present at the expected synced path; content equality is not verified.',
-        path: current, folder: folder, isDirectory: isDir);
+        path: current, folder: folder, relativePath: relative, isDirectory: isDir);
   } on FileSystemException {
     return const LocalAvailability(
         'Error', 'The expected synced path could not be inspected.');

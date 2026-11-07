@@ -2,8 +2,33 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nntdrive/local_availability.dart';
 import 'package:nntdrive/local_availability_widgets.dart';
+import 'package:nntdrive/sync_controller.dart';
 
 void main() {
+  testWidgets('active transfer labels only its row and never enables absent reveal', (tester) async {
+    final folder = SyncFolderConfig(id: 'folder', name: 'Folder',
+        localPath: '/fixture', remoteRootId: 'root')
+      ..running = true
+      ..progress = {'path': 'a.txt', 'complete': false};
+    final active = LocalAvailability('Cloud only', 'No local copy.',
+        folder: folder, relativePath: 'a.txt');
+    final other = LocalAvailability('Local', 'Presence only.',
+        folder: folder, relativePath: 'b.txt', path: '/fixture/b.txt');
+    Future<void> render() => tester.pumpWidget(MaterialApp(home: Scaffold(body: Column(children: [
+      LocalAvailabilityLabel(state: active, details: 'A'),
+      LocalAvailabilityLabel(state: other, details: 'B'),
+      LocalRevealButton(state: active, onReveal: () => fail('Absent file revealed')),
+    ]))));
+    await render();
+    expect(find.text('A · Syncing'), findsOneWidget);
+    expect(find.text('B · Local'), findsOneWidget);
+    expect(tester.widget<IconButton>(find.byType(IconButton)).onPressed, isNull);
+    folder.progress = {'path': 'a.txt', 'complete': true};
+    await render();
+    expect(find.text('A · Cloud only'), findsOneWidget);
+    expect(find.textContaining('Syncing'), findsNothing);
+  });
+
   testWidgets('cloud-only and unknown reveal are disabled with text explanations', (tester) async {
     for (final state in [
       const LocalAvailability('Cloud only', 'No copy exists at the expected synced path.'),

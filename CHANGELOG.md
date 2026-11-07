@@ -14,6 +14,7 @@ release workflow refuses to publish if the entry is missing.
 
 ### Bug fixes
 
+- File-browser Syncing labels follow only the item's active transfer, not every row in a busy folder. Discovered conflict copies also mark their present originals after safe disk checks, and refresh rescans candidates; neither transfer completion nor local presence certifies journal/content equality (#51 partial).
 - Rename collision checks reject Unicode canonical equivalents using native NFC/lowercase/NFC comparison, without changing the encrypted spelling or sending equality tags to the server. Compatibility folding and filesystem-specific equality remain out of scope (#51 partial).
 - Rename rejects Windows superscript-digit device aliases and device stems with spaces before extensions; malformed UTF-16 names fail before network access rather than being silently substituted during UTF-8 encoding (#51 partial).
 - Desktop updater waits for the detached helper to start before exiting. Windows additionally requires a bounded preflight acknowledgement, preserves step diagnostics and payload backups, verifies copied files, and attempts rollback/restart with a visible failure dialog after replacement errors. Installed-build Windows acceptance remains pending (#49/#28).

@@ -83,10 +83,88 @@ void main() {
     final state = await inspect();
     expect(state.displayLabel, 'Conflict');
     folder.running = true;
-    expect(state.displayLabel, 'Syncing');
-    expect(state.displayExplanation, contains('individual file completion is unknown'));
+    expect(state.displayLabel, 'Conflict');
+    expect(state.displayExplanation, contains('conflict copy'));
     folder.running = false;
     expect(state.displayLabel, 'Conflict');
+  });
+
+  test('only the exact active transfer is Syncing, never siblings or completion', () async {
+    await File(p.join(root.path, 'a.txt')).writeAsString('local');
+    final state = await inspect();
+    folder.running = true;
+    expect(state.displayLabel, 'Local');
+    for (final path in ['other/a.txt', 'a.txt.extra', '../a.txt', 'A.TXT']) {
+      folder.progress = {'path': path, 'complete': false};
+      expect(state.displayLabel, 'Local', reason: path);
+    }
+    folder.progress = {'path': 'a.txt', 'complete': false};
+    expect(state.displayLabel, 'Syncing');
+    expect(state.displayExplanation, contains('not verified'));
+    folder.progress = {'path': 'a.txt', 'complete': true};
+    expect(state.displayLabel, 'Local');
+    folder.running = false;
+    folder.progress = {'path': 'a.txt', 'complete': false};
+    expect(state.displayLabel, 'Local');
+    folder.lastError = 'folder failure';
+    expect(state.displayLabel, 'Local');
+    await File(state.path!).delete();
+    final missing = await inspect();
+    folder.running = true;
+    expect(missing.displayLabel, 'Syncing');
+    expect(missing.path, isNull);
+    folder.progress = {'path': 'a.txt', 'complete': true};
+    expect(missing.displayLabel, 'Cloud only');
+    await Directory(p.join(root.path, 'a.txt')).create();
+    final directory = await inspect(isDir: true);
+    folder.progress = {'path': 'a.txt', 'complete': false};
+    expect(directory.displayLabel, 'Local');
+    final unsafe = await inspect();
+    expect(unsafe.displayLabel, 'Error');
+    expect(unsafe.path, isNull);
+  });
+
+  test('original and copy show Conflict only while a safe copy exists', () async {
+    await File(p.join(root.path, 'a.txt')).writeAsString('canonical');
+    const copy = 'a (conflict device 123).txt';
+    folder.conflictFiles = [copy];
+    expect((await inspect()).label, 'Local');
+    final preserved = await File(p.join(root.path, copy)).writeAsString('mine');
+    final state = await inspect();
+    expect(state.label, 'Conflict');
+    expect(state.path, p.join(root.path, 'a.txt'));
+    final copyState = await inspectLocalAvailability(
+        ancestry: [(id: 'root', name: 'Remote'), (id: 'copy', name: copy)],
+        folders: [folder], isDir: false);
+    expect(copyState.label, 'Conflict');
+    await preserved.delete();
+    expect((await inspect()).label, 'Local');
+    await Directory(preserved.path).create();
+    expect((await inspect()).label, 'Local');
+    await Directory(preserved.path).delete();
+    folder.conflictFiles = ['nested/$copy', '../$copy'];
+    expect((await inspect()).label, 'Local');
+    if (!Platform.isWindows) {
+      folder.conflictFiles = [copy];
+      final outside = await File(p.join(sandbox.path, 'outside')).writeAsString('private');
+      await Link(preserved.path).create(outside.path);
+      expect((await inspect()).label, 'Local');
+    }
+  });
+
+  test('conflict in another directory never marks same-basename original', () async {
+    await File(p.join(root.path, 'a.txt')).writeAsString('local');
+    await Directory(p.join(root.path, 'nested')).create();
+    const copy = 'nested/a (conflict device 123).txt';
+    await File(p.join(root.path, copy)).writeAsString('mine');
+    folder.conflictFiles = [copy];
+    expect((await inspect()).label, 'Local');
+    final nested = await File(p.join(root.path, 'nested', 'a.txt')).writeAsString('theirs');
+    final state = await inspectLocalAvailability(
+        ancestry: [(id: 'root', name: 'Remote'), (id: 'nested', name: 'nested'),
+          (id: 'file', name: 'a.txt')], folders: [folder], isDir: false);
+    expect(state.label, 'Conflict');
+    expect(state.path, nested.path);
   });
 
   test('reveal revalidates; deletion or link substitution never launches', () async {

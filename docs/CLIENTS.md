@@ -327,12 +327,18 @@ exists but the expected path is absent. **Not covered** explains missing sync
 configuration or selective-sync exclusions; **Unknown** means mapping could not
 be established safely (including unreadable or ambiguous sibling names).
 **Error** indicates an inaccessible/missing root or unsafe/unexpected local path.
-**Conflict** currently identifies an existing preserved conflict-copy path from
-the controller's discovered copy list, not every original with an unresolved
-conflict. **Syncing** reports covering-folder activity, explicitly not per-file
-completion. Local presence does not prove journal/revision/content equality;
+**Conflict** identifies an existing discovered conflict copy and its present
+same-directory original, after checking the copy is still a regular, non-linked
+file. This is a proposed pair, not journal-verified conflict resolution; review
+revalidates hashes/revisions. Discovery is refreshed with the browser and after
+sync (up to 500 copies per root). **Syncing** identifies only the exact relative
+path of the covering root's active, nonterminal file-transfer event; unrelated
+rows, directories and completed events retain their disk-derived labels. A
+conflict label takes precedence over transfer activity. Local presence does not
+prove journal/revision/content equality, even after a terminal transfer event;
 folder transfer errors are not falsely attributed to every file in that folder.
-Full item-specific reconciliation/error/conflict mapping remains future work.
+Full journal/revision reconciliation and per-item sync-error mapping remain
+future work; missing originals are still labelled Cloud only.
 
 Refresh re-reads disk, and completion of all-folder or individual-folder sync
 refreshes the browser. An initial refresh also runs after sync settings load.

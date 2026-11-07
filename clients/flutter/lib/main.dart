@@ -835,6 +835,7 @@ class _FilesPageState extends State<FilesPage> {
           names[f.id] = f.isDir ? 'Encrypted folder' : 'Encrypted file';
         }
       }
+      await _sync.scanConflicts();
       final availability = await _inspectAvailability(parentIds);
       if (!mounted || generation != _refreshGeneration) return;
       setState(() {
