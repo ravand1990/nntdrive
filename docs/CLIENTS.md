@@ -337,8 +337,20 @@ rows, directories and completed events retain their disk-derived labels. A
 conflict label takes precedence over transfer activity. Local presence does not
 prove journal/revision/content equality, even after a terminal transfer event;
 folder transfer errors are not falsely attributed to every file in that folder.
-Full journal/revision reconciliation and per-item sync-error mapping remain
-future work; missing originals are still labelled Cloud only.
+Completed sync reports now include additive client-local `item_errors` records
+with exact `paths`, an `operation` and a diagnostic-free error `code`. Action
+failures identify all involved paths (both move endpoints/conflict candidates);
+case collisions identify both spellings and missing-source folder moves both
+endpoints. Legacy `errors` tuples remain unchanged. The browser marks only exact
+paths from the last completed report as **Error**, never parses legacy diagnostic
+labels, and never copies raw messages into the availability tooltip. Reports are
+historical evidence of an attempted operation, not current revision equality;
+while a folder is running, its previous report does not mark rows. Conflict
+candidates retain precedence. Safe disk presence/reveal remains independently
+available; excluded, ambiguous and unsafe mappings still fail closed. Folder-wide
+exceptions and scan skips are not per-item failures. Full journal/revision
+reconciliation remains future work; missing originals without an attributed
+failure are still labelled Cloud only.
 
 Refresh re-reads disk, and completion of all-folder or individual-folder sync
 refreshes the browser. An initial refresh also runs after sync settings load.

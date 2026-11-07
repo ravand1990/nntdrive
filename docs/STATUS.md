@@ -120,8 +120,12 @@ and offer desktop reveal after fresh ancestry/confinement revalidation. Syncing
 now marks only the exact active nonterminal transfer path; discovered preserved
 copies also mark their present same-directory originals after disk validation.
 Refresh rescans conflict candidates. Presence is not a content-equality claim;
-full journal/revision reconciliation and per-item sync-error mapping remain
-incomplete. This is not completion: move/copy and installed
+full journal/revision reconciliation remains incomplete. Structured client-local
+per-item failures now identify exact involved paths without parsing raw diagnostics;
+only these paths show Error from the last completed attempt (not while running),
+with conflict precedence and safe local reveal preserved. Folder-wide exceptions
+and scan skips are not attributed to individual rows. This is not completion:
+move/copy and installed
 Windows/Linux plus two-device acceptance remain outstanding. Legacy clients may
 still introduce duplicate names after a guarded
 rename. See [client details](CLIENTS.md#rename-in-the-file-browser-51-partial).

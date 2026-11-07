@@ -51,6 +51,15 @@ pub trait Remote {
     async fn move_path(&mut self, from: &str, to: &str) -> Result<()>;
 }
 
+/// Client-local attribution, never sent to the backend. No raw diagnostics are
+/// included: paths come from the action itself, not a formatted error message.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ItemError {
+    pub paths: Vec<String>,
+    pub operation: &'static str,
+    pub code: &'static str,
+}
+
 #[derive(Debug, Default, Clone, serde::Serialize)]
 pub struct SyncReport {
     pub uploaded: usize,
@@ -64,6 +73,7 @@ pub struct SyncReport {
     pub uploaded_bytes: u64,
     pub skipped: Vec<(String, String)>,
     pub errors: Vec<(String, String)>,
+    pub item_errors: Vec<ItemError>,
 }
 
 pub struct SyncEngine {
@@ -391,7 +401,19 @@ impl SyncEngine {
             skipped: scan.skipped.clone(),
             ..Default::default()
         };
+        for (from, to) in &missing_sources {
+            report.item_errors.push(ItemError {
+                paths: vec![from.clone(), to.clone()],
+                operation: "move_local",
+                code: "missing_source",
+            });
+        }
         for (a, b) in &scan.case_collisions {
+            report.item_errors.push(ItemError {
+                paths: vec![a.clone(), b.clone()],
+                operation: "scan",
+                code: "case_collision",
+            });
             report
                 .errors
                 .push((b.clone(), format!("case-only collision with '{a}'")));
@@ -415,10 +437,18 @@ impl SyncEngine {
                 }
             }
             let label = action_label(&action);
+            let mut item_error = action_item_error(&action);
             if let Err(e) = self
                 .apply(remote, root.as_path(), journal, action, now, &mut report)
                 .await
             {
+                item_error.code = match &e {
+                    SyncError::Io(_) => "io",
+                    SyncError::Journal(_) => "journal",
+                    SyncError::Remote(_) => "remote",
+                    SyncError::UnsafePath(_) => "unsafe_path",
+                };
+                report.item_errors.push(item_error);
                 report.errors.push((label, e.to_string()));
             }
         }
@@ -669,6 +699,27 @@ impl SyncEngine {
             }
         }
         Ok(())
+    }
+}
+
+fn action_item_error(a: &Action) -> ItemError {
+    let (operation, paths) = match a {
+        Action::Upload { path, .. } => ("upload", vec![path.clone()]),
+        Action::Download { path, .. } => ("download", vec![path.clone()]),
+        Action::DeleteRemote { path, .. } => ("delete_remote", vec![path.clone()]),
+        Action::DeleteLocal { path } => ("delete_local", vec![path.clone()]),
+        Action::CreateLocalDir { path } => ("mkdir_local", vec![path.clone()]),
+        Action::CreateRemoteDir { path } => ("mkdir_remote", vec![path.clone()]),
+        Action::RenameLocal { from, to } => ("move_local", vec![from.clone(), to.clone()]),
+        Action::MoveRemote { from, to } => ("move_remote", vec![from.clone(), to.clone()]),
+        Action::Conflict {
+            path, local_copy, ..
+        } => ("conflict", vec![path.clone(), local_copy.clone()]),
+    };
+    ItemError {
+        paths,
+        operation,
+        code: "unknown",
     }
 }
 
@@ -1107,6 +1158,154 @@ mod tests {
         run(&engine, &mut remote.clone(), b.path(), &jb).await;
         assert!(b.path().join("docs/new.md").exists());
         assert!(!b.path().join("docs/old.md").exists());
+    }
+
+    #[test]
+    fn structured_action_errors_include_all_involved_paths() {
+        let from = "upload x -> y".to_string();
+        let to = "nested/final.txt".to_string();
+        let cases = [
+            (
+                Action::Upload {
+                    path: from.clone(),
+                    base_revision: None,
+                },
+                "upload",
+                false,
+            ),
+            (
+                Action::Download {
+                    path: from.clone(),
+                    revision: None,
+                },
+                "download",
+                false,
+            ),
+            (
+                Action::DeleteRemote {
+                    path: from.clone(),
+                    base_revision: None,
+                },
+                "delete_remote",
+                false,
+            ),
+            (
+                Action::DeleteLocal { path: from.clone() },
+                "delete_local",
+                false,
+            ),
+            (
+                Action::CreateLocalDir { path: from.clone() },
+                "mkdir_local",
+                false,
+            ),
+            (
+                Action::CreateRemoteDir { path: from.clone() },
+                "mkdir_remote",
+                false,
+            ),
+            (
+                Action::RenameLocal {
+                    from: from.clone(),
+                    to: to.clone(),
+                },
+                "move_local",
+                true,
+            ),
+            (
+                Action::MoveRemote {
+                    from: from.clone(),
+                    to: to.clone(),
+                },
+                "move_remote",
+                true,
+            ),
+            (
+                Action::Conflict {
+                    path: from.clone(),
+                    local_copy: to.clone(),
+                    remote_revision: None,
+                },
+                "conflict",
+                true,
+            ),
+        ];
+        for (action, operation, pair) in cases {
+            let error = action_item_error(&action);
+            assert_eq!(error.operation, operation);
+            assert_eq!(
+                error.paths,
+                if pair {
+                    vec![from.clone(), to.clone()]
+                } else {
+                    vec![from.clone()]
+                }
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn item_errors_preserve_exact_paths_without_diagnostic_parsing() {
+        let mut remote = FakeRemote::default();
+        let root = tempfile::tempdir().unwrap();
+        let journal = Journal::in_memory().await.unwrap();
+        let engine = SyncEngine::new("dev");
+        let path = "upload report -> final.txt";
+        tokio::fs::write(root.path().join(path), b"keep me")
+            .await
+            .unwrap();
+        remote.0.lock().await.fail_upload = true;
+        let report = engine
+            .run_once(&mut remote, root.path(), &journal, "t")
+            .await
+            .unwrap();
+        let json = serde_json::to_value(&report).unwrap();
+        assert_eq!(
+            json["item_errors"],
+            serde_json::json!([{
+                "paths": [path], "operation": "upload", "code": "remote"
+            }])
+        );
+        assert_eq!(report.errors.len(), 1); // Legacy diagnostics remain compatible.
+        assert!(journal.load().await.unwrap().is_empty());
+        remote.0.lock().await.fail_upload = false;
+        let retried = engine
+            .run_once(&mut remote, root.path(), &journal, "t")
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(retried).unwrap()["item_errors"],
+            serde_json::json!([])
+        );
+        assert_eq!(
+            tokio::fs::read(root.path().join(path)).await.unwrap(),
+            b"keep me"
+        );
+    }
+
+    #[tokio::test]
+    async fn case_collision_errors_identify_both_paths_without_messages() {
+        let mut remote = FakeRemote::default();
+        let root = tempfile::tempdir().unwrap();
+        let journal = Journal::in_memory().await.unwrap();
+        tokio::fs::write(root.path().join("A.txt"), b"one")
+            .await
+            .unwrap();
+        tokio::fs::write(root.path().join("a.txt"), b"two")
+            .await
+            .unwrap();
+        let report = SyncEngine::new("dev")
+            .run_once(&mut remote, root.path(), &journal, "t")
+            .await
+            .unwrap();
+        assert_eq!(report.item_errors.len(), 1);
+        let error = &report.item_errors[0];
+        assert_eq!(error.operation, "scan");
+        assert_eq!(error.code, "case_collision");
+        let mut paths = error.paths.clone();
+        paths.sort();
+        assert_eq!(paths, vec!["A.txt", "a.txt"]);
+        assert_eq!(report.uploaded, 0);
     }
 
     #[tokio::test]

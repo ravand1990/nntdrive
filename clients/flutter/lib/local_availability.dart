@@ -29,11 +29,24 @@ class LocalAvailability {
       folder?.progress?['path'] == relativePath &&
       folder?.progress?['complete'] == false;
 
-  String get displayLabel => _transferring ? 'Syncing' : label;
+  bool get _failed {
+    if (folder?.running != false || relativePath == null || label == 'Conflict') {
+      return false;
+    }
+    final errors = folder?.lastReport?['item_errors'];
+    return errors is List && errors.any((error) =>
+        error is Map && error['operation'] is String && error['code'] is String &&
+        error['paths'] is List && (error['paths'] as List).contains(relativePath));
+  }
+
+  String get displayLabel => _transferring ? 'Syncing' : _failed ? 'Error' : label;
 
   String get displayExplanation => _transferring
       ? 'This file is transferring; content equality and final success are not verified.'
-      : explanation;
+      : _failed
+          ? 'An operation involving this exact path failed in the last completed sync attempt. '
+              'Refresh or retry sync; current content equality is not verified. $explanation'
+          : explanation;
 }
 
 /// The caller supplies a freshly decrypted, unambiguous remote ancestry, from

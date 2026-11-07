@@ -124,6 +124,39 @@ void main() {
     expect(unsafe.path, isNull);
   });
 
+  test('structured failures match exact paths only and never expose diagnostics', () async {
+    await File(p.join(root.path, 'a.txt')).writeAsString('local');
+    final state = await inspect();
+    folder.lastError = 'PRIVATE DIAGNOSTIC';
+    folder.lastReport = {'errors': [['upload a.txt', 'PRIVATE DIAGNOSTIC']]};
+    expect(state.displayLabel, 'Local'); // No parsing legacy labels.
+    for (final path in ['other/a.txt', 'A.TXT', 'a.txt.extra', '../a.txt']) {
+      folder.lastReport = {'item_errors': [{'paths': [path], 'operation': 'upload', 'code': 'remote'}]};
+      expect(state.displayLabel, 'Local');
+    }
+    folder.lastReport = {'item_errors': [{'paths': ['a.txt'], 'operation': 'upload', 'code': 'remote', 'message': 'PRIVATE DIAGNOSTIC'}]};
+    expect(state.displayLabel, 'Error');
+    expect(state.displayExplanation, contains('last completed sync attempt'));
+    expect(state.displayExplanation, isNot(contains('PRIVATE')));
+    expect(state.path, isNotNull); // Failure does not erase safe disk presence.
+    folder.running = true;
+    expect(state.displayLabel, 'Local'); // Previous reports are not current events.
+    folder.progress = {'path': 'a.txt', 'complete': false};
+    expect(state.displayLabel, 'Syncing');
+    folder.running = false;
+    folder.conflictFiles = ['a.txt'];
+    expect((await inspect()).displayLabel, 'Conflict');
+    folder.conflictFiles = [];
+    await File(state.path!).delete();
+    expect((await inspect()).displayLabel, 'Error');
+    folder.lastReport = {'item_errors': []};
+    expect((await inspect()).displayLabel, 'Cloud only');
+    for (final malformed in [null, 'oops', [null, 1, {}, {'paths': 'a.txt'}]]) {
+      folder.lastReport = {'item_errors': malformed};
+      expect((await inspect()).displayLabel, 'Cloud only');
+    }
+  });
+
   test('original and copy show Conflict only while a safe copy exists', () async {
     await File(p.join(root.path, 'a.txt')).writeAsString('canonical');
     const copy = 'a (conflict device 123).txt';

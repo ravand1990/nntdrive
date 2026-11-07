@@ -577,6 +577,10 @@ async fn folder_move_blocks_exclusions_and_collisions_without_losing_content() {
         .await
         .unwrap();
     assert_eq!(report.errors.len(), 1, "{report:?}");
+    assert_eq!(report.item_errors.len(), 1);
+    assert_eq!(report.item_errors[0].paths, vec!["old", "new"]);
+    assert_eq!(report.item_errors[0].operation, "move_local");
+    assert_eq!(report.item_errors[0].code, "missing_source");
     assert!(report.uploaded >= 1, "{report:?}");
     assert_eq!(
         report.deleted_remote + report.deleted_local,
