@@ -22,19 +22,19 @@ Files and names are encrypted on your device before being stored on **Usenet**
 ### 2. Download and configure the server
 
 In a terminal on the server, create an empty installation directory and download
-these files from [release v0.5.0](https://github.com/ravand1990/nntdrive/releases/tag/v0.5.0):
+these files from [release v0.5.1](https://github.com/ravand1990/nntdrive/releases/tag/v0.5.1):
 
 ```bash
 mkdir nntdrive && cd nntdrive
-curl -fLO https://github.com/ravand1990/nntdrive/releases/download/v0.5.0/docker-compose.release.yml
-curl -fL https://github.com/ravand1990/nntdrive/releases/download/v0.5.0/env.release.example -o .env
+curl -fLO https://github.com/ravand1990/nntdrive/releases/download/v0.5.1/docker-compose.release.yml
+curl -fL https://github.com/ravand1990/nntdrive/releases/download/v0.5.1/env.release.example -o .env
 chmod 600 .env
 openssl rand -hex 24     # generate a database password
 openssl rand -base64 32  # generate the server's persistent secret
 ```
 
 Edit `.env`: paste the first generated value into `POSTGRES_PASSWORD` and the
-second into `NNTDRIVE_SECRET_KEY`; set `NNTDRIVE_VERSION=0.5.0`. Keep the other
+second into `NNTDRIVE_SECRET_KEY`; set `NNTDRIVE_VERSION=0.5.1`. Keep the other
 settings, including `NNTDRIVE_HOST_BIND=127.0.0.1`. Keep this file private and
 retain the same secret across restarts. If image downloads require a login,
 follow the [image access instructions](deploy/README-IMAGES.md#1-download-the-deployment-files).
@@ -84,7 +84,7 @@ uploading important data. [Account setup alternatives](docs/OPERATIONS.md#first-
 ### 5. Install and connect the client
 
 Download your client and `SHA256SUMS.txt` from the same
-[release page](https://github.com/ravand1990/nntdrive/releases/tag/v0.5.0).
+[release page](https://github.com/ravand1990/nntdrive/releases/tag/v0.5.1).
 Compare the download's SHA-256 checksum (its file fingerprint) with the matching
 entry in that file before opening it (`sha256sum FILE` on Linux or
 `Get-FileHash FILE -Algorithm SHA256` in PowerShell).
