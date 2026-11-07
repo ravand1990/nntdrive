@@ -5,8 +5,11 @@
 - Apply admin provider CRUD to the serving backend without restart, pinning one
   provider snapshot per storage operation. Reject invalid configs/credentials
   before commit; retain DB management when the final provider is removed.
-  Single-backend only; replica invalidation, retention administration and
+  Single-backend only; replica invalidation and
   reference-safe orphan garbage collection remain out of scope (partial #15).
+- Admin dashboard saves a durable article-age refresh policy and shows persisted
+  per-batch maintenance results, including refresh failures and unrecoverable
+  health/repair counts. No server-side orphan deletion is enabled (#15 partial).
 
 
 All notable changes are documented here. Every release tag **must** have an

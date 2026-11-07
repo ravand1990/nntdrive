@@ -118,6 +118,226 @@ fn base64_key(bytes: &[u8]) -> String {
 }
 
 #[tokio::test]
+async fn maintenance_policy_and_results_survive_state_recreation() {
+    let Some(env) = env().await else { return };
+    let admin = register(&env.state, "maintenance-admin@example.com").await;
+    let user = register(&env.state, "maintenance-user@example.com").await;
+    let path = "/api/v1/admin/retention";
+    for token in [None, Some(user.token.as_str())] {
+        for method in ["GET", "PUT"] {
+            let (status, _) = call(
+                &env.state,
+                req(method, path, token, Some(json!({"refresh_days": 7}))),
+            )
+            .await;
+            assert!(status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN);
+        }
+    }
+    let (_, initial) = call(&env.state, req("GET", path, Some(&admin.token), None)).await;
+    assert_eq!(initial["refresh_days"], 30);
+    for days in [0, 36501] {
+        let (status, _) = call(
+            &env.state,
+            req(
+                "PUT",
+                path,
+                Some(&admin.token),
+                Some(json!({"refresh_days": days})),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+    let (status, _) = call(
+        &env.state,
+        req(
+            "PUT",
+            path,
+            Some(&admin.token),
+            Some(json!({"refresh_days": 7})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let recreated = AppState::new(
+        env.state.pool.clone(),
+        env.state.storage.nntp(),
+        (*env.state.config).clone(),
+    )
+    .unwrap();
+    let (_, saved) = call(&recreated, req("GET", path, Some(&admin.token), None)).await;
+    assert_eq!(saved["refresh_days"], 7);
+    for kind in ["health_sweep", "refresh_sweep", "repair_stripe"] {
+        let (_, queued) = call(
+            &recreated,
+            req(
+                "POST",
+                "/api/v1/admin/jobs",
+                Some(&admin.token),
+                Some(json!({"kind":kind,"payload":{}})),
+            ),
+        )
+        .await;
+        let id: Uuid = queued["job_id"].as_str().unwrap().parse().unwrap();
+        // Invalid repair input must persist a sanitized failure rather than an invented success.
+        if kind == "repair_stripe" {
+            sqlx::query("UPDATE jobs SET max_attempts = 1 WHERE id = $1")
+                .bind(id)
+                .execute(&recreated.pool)
+                .await
+                .unwrap();
+        }
+        let worker = tokio::spawn(nntdrive_backend::jobs::worker_loop(
+            Arc::new(recreated.clone()),
+            "test-maintenance".into(),
+        ));
+        tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            loop {
+                let (_, listing) = call(
+                    &recreated,
+                    req("GET", "/api/v1/admin/jobs", Some(&admin.token), None),
+                )
+                .await;
+                let row = listing["jobs"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|r| r["id"] == id.to_string())
+                    .unwrap();
+                if row["state"] == "done" || row["state"] == "failed" {
+                    if kind == "repair_stripe" {
+                        assert_eq!(row["state"], "failed");
+                        assert_eq!(
+                            row["last_error"],
+                            "maintenance failed; retry or inspect backend diagnostics"
+                        );
+                        assert!(row["result"].is_null());
+                    } else {
+                        assert_eq!(row["state"], "done");
+                        assert_eq!(row["result"]["checked"], 0);
+                        assert_eq!(row["result"]["continued"], false);
+                        if kind == "refresh_sweep" {
+                            assert_eq!(row["result"]["refresh_days"], 7);
+                        }
+                    }
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .unwrap();
+        worker.abort();
+        let _ = worker.await;
+    }
+    let recreated_again = AppState::new(
+        env.state.pool.clone(),
+        env.state.storage.nntp(),
+        (*env.state.config).clone(),
+    )
+    .unwrap();
+    let (_, listing) = call(
+        &recreated_again,
+        req("GET", "/api/v1/admin/jobs", Some(&admin.token), None),
+    )
+    .await;
+    assert_eq!(listing["jobs"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        listing["jobs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["result"].is_object())
+            .count(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn retention_worker_reposts_old_shards_and_records_loss() {
+    let Some(env) = env().await else { return };
+    let admin = register(&env.state, "refresh-admin@example.com").await;
+    let data = b"retention regression ciphertext".to_vec();
+    let prepared = nntdrive_storage::prepare_chunk(
+        &admin.master,
+        &nntdrive_storage::Chunk {
+            index: 0,
+            offset: 0,
+            hash: *blake3::hash(&data).as_bytes(),
+            data,
+        },
+        3,
+    )
+    .unwrap();
+    env.state
+        .storage
+        .publish_prepared(admin.account_id, &prepared)
+        .await
+        .unwrap();
+    let (status, _) = call(
+        &env.state,
+        req(
+            "PUT",
+            "/api/v1/admin/retention",
+            Some(&admin.token),
+            Some(json!({"refresh_days": 7})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    for lost in [false, true] {
+        sqlx::query("UPDATE shards SET posted_at = now() - interval '8 days'")
+            .execute(&env.state.pool)
+            .await
+            .unwrap();
+        if lost {
+            env.state
+                .storage
+                .replace_nntp(Arc::new(NntpPool::new(vec![]).unwrap()));
+        }
+        let id =
+            nntdrive_backend::jobs::enqueue(&env.state.pool, "refresh_sweep", None, json!({}), 0)
+                .await
+                .unwrap();
+        let worker = tokio::spawn(nntdrive_backend::jobs::worker_loop(
+            Arc::new(env.state.clone()),
+            "refresh-test".into(),
+        ));
+        tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            loop {
+                let result: Option<Value> =
+                    sqlx::query_scalar("SELECT result FROM jobs WHERE id = $1")
+                        .bind(id)
+                        .fetch_one(&env.state.pool)
+                        .await
+                        .unwrap();
+                if let Some(result) = result {
+                    assert_eq!(result["checked"], 1);
+                    assert_eq!(result["refresh_days"], 7);
+                    assert_eq!(result["refreshed"], if lost { 0 } else { 1 });
+                    assert_eq!(result["failed"], if lost { 1 } else { 0 });
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .unwrap();
+        worker.abort();
+        let _ = worker.await;
+        if !lost {
+            let recent: bool = sqlx::query_scalar(
+                "SELECT bool_and(posted_at > now() - interval '1 day') FROM shards",
+            )
+            .fetch_one(&env.state.pool)
+            .await
+            .unwrap();
+            assert!(recent);
+        }
+    }
+}
+
+#[tokio::test]
 async fn registration_login_and_admin_authorization() {
     let Some(env) = env().await else { return };
     let (s, status) = call(&env.state, req("GET", "/api/v1/setup/status", None, None)).await;

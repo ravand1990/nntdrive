@@ -70,7 +70,7 @@
 
   <section>
     <h2>Repair queue &amp; recent failures</h2>
-    <table><thead><tr><th>Job</th><th>State</th><th>Attempts</th><th>Last error</th><th>Updated</th></tr></thead><tbody id="jobs"></tbody></table>
+    <table><thead><tr><th>Job</th><th>State</th><th>Attempts</th><th>Result / last error</th><th>Updated</th></tr></thead><tbody id="jobs"></tbody></table>
   </section>
 
   <section>
@@ -90,6 +90,12 @@
 
   <section>
     <h2>Maintenance</h2>
+    <div class="row">
+      <label for="refresh-days">Refresh articles older than (days)</label>
+      <input id="refresh-days" type="number" min="1" max="36500" step="1">
+      <button id="save-retention" class="secondary">Save refresh policy</button>
+    </div>
+    <p class="muted">Saved policy applies to subsequent refresh batches and survives restarts. Provider retention is only a hint, not a durability guarantee. Results below are per batch; continued batches have separate jobs. A done batch with failed or unrecoverable counts is not healthy. Orphan cleanup is unavailable until complete version/chunk references are supported; no chunks are deleted.</p>
     <div class="row">
       <button class="secondary" data-job="health_sweep">Run health sweep</button>
       <button class="secondary" data-job="refresh_sweep">Run retention refresh</button>
@@ -157,6 +163,8 @@ let userCache = [];
 let providerCache = [];
 let editingUser = null;
 let editingProvider = null;
+let retentionDirty = false;
+$('refresh-days').oninput = () => { retentionDirty = true; };
 
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function bytes(n) { if (n == null) return '—'; const u=['B','KiB','MiB','GiB','TiB']; let i=0,v=Number(n); while(v>=1024&&i<u.length-1){v/=1024;i++;} return v.toFixed(i?1:0)+' '+u[i]; }
@@ -215,11 +223,12 @@ function openProvider(id) {
 }
 
 async function load() {
-  const [stats, users, jobs, configured] = await Promise.all([
-    api('/admin/stats'), api('/admin/users'), api('/admin/jobs'), api('/admin/providers')
+  const [stats, users, jobs, configured, retention] = await Promise.all([
+    api('/admin/stats'), api('/admin/users'), api('/admin/jobs'), api('/admin/providers'), api('/admin/retention')
   ]);
   $('app').hidden = false; $('login').hidden = true;
   $('refresh').hidden = false; $('logout').hidden = false;
+  if (!retentionDirty && document.activeElement !== $('refresh-days')) $('refresh-days').value = retention.refresh_days;
 
   const cards = [
     ['Encrypted storage', bytes(stats.logical_bytes), bytes(stats.ciphertext_bytes) + ' ciphertext'],
@@ -239,7 +248,7 @@ async function load() {
 
   $('jobs').innerHTML = (jobs.jobs||[]).slice(0,50).map(j => `<tr>
     <td>${esc(j.kind)}</td><td><span class="pill">${esc(j.state)}</span></td>
-    <td>${j.attempts}/${j.max_attempts}</td><td class="${j.last_error?'bad':'muted'}">${esc(j.last_error||'—')}</td>
+    <td>${j.attempts}/${j.max_attempts}</td><td class="${j.last_error || j.result?.failed || j.result?.unrecoverable || j.result?.below_threshold?'bad':'muted'}">${esc(j.last_error || (j.result ? JSON.stringify(j.result) : '—'))}</td>
     <td>${when(j.updated_at)}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">Queue is empty.</td></tr>';
 
   userCache = users.users || [];
@@ -362,6 +371,20 @@ $('provider-save').onclick = async () => {
     await load();
   } catch (e) { $('provider-msg').textContent = e.message; }
   $('provider-save').disabled = false;
+};
+
+$('save-retention').onclick = async () => {
+  const input = $('refresh-days');
+  if (!input.value || !input.reportValidity()) return;
+  const button = $('save-retention'); button.disabled = true;
+  try {
+    const saved = await api('/admin/retention', { method: 'PUT', body: JSON.stringify({ refresh_days: Number(input.value) }) });
+    const actual = await api('/admin/retention');
+    if (actual.refresh_days !== saved.refresh_days) throw new Error('Policy changed concurrently; refresh and retry.');
+    retentionDirty = false;
+    $('jobmsg').textContent = `Saved refresh policy: ${actual.refresh_days} days.`;
+  } catch (e) { $('jobmsg').textContent = e.message; }
+  finally { button.disabled = false; }
 };
 
 document.querySelectorAll('button[data-job]').forEach(b => b.onclick = async () => {

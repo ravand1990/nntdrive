@@ -199,7 +199,7 @@ provider when both aws-lc-rs and ring are in the dependency graph.
 7. **Virtual drives and native mobile integration**: FUSE/WinFsp mounts,
    Android DocumentsProvider + WorkManager, iOS File Provider + background
    transfers, photo/video backup.
-8. **Provider & admin operations**: retention settings UI, stronger alerts and orphaned-chunk garbage
+8. **Provider & admin operations**: live-stack retention UI acceptance, stronger alerts and orphaned-chunk garbage
    collection.
 9. **Security review**: fuzz yEnc/NZB/article parsers, add proxy-level rate
    limiting guidance, password-reset policy, audit-log coverage and dependency
@@ -216,7 +216,13 @@ provider when both aws-lc-rs and ring are in the dependency graph.
 - Provider CRUD now applies a validated pool on the serving backend without a
   restart. Active storage operations pin their old snapshot. Multi-backend
   invalidation is not implemented; deploy one backend process. This is partial
-  #15 only: retention administration and reference-safe orphan GC remain open.
+  #15 only: reference-safe orphan GC and live-stack acceptance remain open.
+- Retention dashboard policy persists an article-age threshold in PostgreSQL;
+  subsequent worker batches read it without restart. Maintenance results persist
+  per batch with `done`, including unsuccessful refresh and unrecoverable counts.
+  Mock-provider tests exercise reposting, loss, admin-only access and state
+  recreation. Browser/live dev-stack acceptance is not yet performed. Results
+  are not whole-sweep totals; running-job crash recovery/leases remain absent.
 - `nntdrive_storage::store::platform_totals` casts aggregate sums to `bigint` because
   PostgreSQL returns `numeric`; keep casts when editing.
 - Full-text search is impossible server-side (names/content encrypted); the

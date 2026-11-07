@@ -493,6 +493,39 @@ async fn delete_provider_inner(
 }
 
 #[derive(Deserialize)]
+pub struct RetentionSettings {
+    pub refresh_days: u32,
+}
+
+pub async fn get_retention(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+) -> ApiResult<impl IntoResponse> {
+    let days = jobs::refresh_days(&state).await?;
+    Ok(Json(json!({ "refresh_days": days })))
+}
+
+pub async fn set_retention(
+    State(state): State<AppState>,
+    _admin: AdminUser,
+    Json(body): Json<RetentionSettings>,
+) -> ApiResult<impl IntoResponse> {
+    if !(1..=36500).contains(&body.refresh_days) {
+        return Err(ApiError::BadRequest(
+            "refresh_days must be between 1 and 36500".into(),
+        ));
+    }
+    sqlx::query(
+        "INSERT INTO maintenance_settings (singleton, refresh_days) VALUES (true, $1)
+                 ON CONFLICT (singleton) DO UPDATE SET refresh_days = EXCLUDED.refresh_days",
+    )
+    .bind(body.refresh_days as i32)
+    .execute(&state.pool)
+    .await?;
+    Ok(Json(json!({ "refresh_days": body.refresh_days })))
+}
+
+#[derive(Deserialize)]
 pub struct EnqueueJob {
     pub kind: String,
     #[serde(default)]
@@ -519,7 +552,7 @@ pub async fn list_jobs(
     _admin: AdminUser,
 ) -> ApiResult<impl IntoResponse> {
     let rows = sqlx::query(
-        "SELECT id, kind, state, attempts, max_attempts, run_after, last_error, created_at, updated_at
+        "SELECT id, kind, state, attempts, max_attempts, run_after, last_error, result, created_at, updated_at
          FROM jobs ORDER BY created_at DESC LIMIT 200",
     )
     .fetch_all(&state.pool)
@@ -533,6 +566,7 @@ pub async fn list_jobs(
             "max_attempts": r.get::<i32, _>("max_attempts"),
             "run_after": r.get::<DateTime<Utc>, _>("run_after"),
             "last_error": r.get::<Option<String>, _>("last_error"),
+            "result": r.get::<Option<Value>, _>("result"),
             "created_at": r.get::<DateTime<Utc>, _>("created_at"),
             "updated_at": r.get::<DateTime<Utc>, _>("updated_at"),
         })).collect::<Vec<_>>()

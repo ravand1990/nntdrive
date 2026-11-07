@@ -90,6 +90,7 @@ Requires `accounts.is_admin`.
 | GET/POST | `/admin/providers` | list (no passwords) / add (applied on serving backend) |
 | DELETE | `/admin/providers/{id}` | remove (applied on serving backend) |
 | GET/POST | `/admin/jobs` | list / enqueue `{kind,payload}` |
+| GET/PUT | `/admin/retention` | read / save `{refresh_days}` (integer 1–36500); administrator only |
 | POST | `/admin/restart` | gracefully stop the backend so Compose/systemd restarts it (not needed for provider CRUD) |
 | GET | `/admin/articles/verify` | STAT the 20 newest articles through the retrieval providers; returns per-article availability |
 | POST | `/admin/providers/{id}/test` | DNS/TLS/auth check for a stored provider (no posting) |
@@ -120,5 +121,28 @@ local to the serving backend, not coordinated across replicas. Invalid configs
 or stored credentials roll back the mutation and retain the prior pool. Config
 validation does not probe connectivity. Disabling/deleting the last provider
 leaves no providers, with no environment fallback. See Operations for the sticky
-DB-managed marker and single-process limitation. Retention policy administration
-and reference-safe garbage collection are not implemented by this change.
+DB-managed marker and single-process limitation.
+
+Retention policy defaults to `NNTDRIVE_REFRESH_DAYS` until explicitly saved in
+PostgreSQL. The dashboard saves and reads back the article-age threshold; workers
+read it at each subsequent refresh batch without restart. It is independent of
+provider retention hints and is not a guarantee against article expiry. The
+scheduler interval remains environment-configured.
+
+Jobs expose a nullable durable `result` object, stored atomically with `done`:
+health batches report `checked`, `degraded`, `below_threshold`, `continued`;
+refresh batches report `checked`, `refreshed`, `failed`, `refresh_days`,
+`continued`; repairs report `reposted`, `unrecoverable`. These are per-batch,
+not whole-sweep totals. Health `below_threshold` includes provider errors and is
+not proof of permanent loss. `done` means the batch returned, not that data is healthy:
+inspect failure/unrecoverable counts. Failed jobs use a fixed diagnostic message
+(`failed` on refresh includes an expired stripe that returned without reposting,
+including unrecoverable data, as well as transport/verification errors)
+rather than persisting new raw errors. Old jobs retain their existing diagnostics
+and have null results. Completed results survive restarts; this does not add
+crash recovery of jobs left `running`, a lease, or a whole-sweep retry protocol.
+
+Reference-safe garbage collection remains unavailable: existing encrypted
+manifests have no complete server-visible version/chunk reference index. Missing
+index entries cannot establish orphanhood, including for historical and conflict
+versions. No destructive GC is enabled and no chunks are removed by maintenance.

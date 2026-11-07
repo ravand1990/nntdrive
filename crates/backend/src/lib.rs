@@ -59,6 +59,10 @@ pub fn app(state: state::AppState) -> Router {
             "/admin/jobs",
             get(admin::list_jobs).post(admin::enqueue_job),
         )
+        .route(
+            "/admin/retention",
+            get(admin::get_retention).put(admin::set_retention),
+        )
         .route("/admin/restart", post(admin::restart_backend));
 
     Router::new()
