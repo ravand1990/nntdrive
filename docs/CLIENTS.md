@@ -316,9 +316,42 @@ rules: for example `ß`/`ss`, `ς`/`σ` and `①`/`1` remain distinct. The compa
 value stays local and never becomes a server-visible equality tag. This requires
 the matching bundled native library; a missing comparison symbol fails closed,
 with no lowercase-only fallback. Sync scanner collision policy is unchanged.
-Move/copy, row availability indicators and secure local reveal are not yet
-implemented. Installed Windows/Linux and two-device UI rename acceptance have
-not been performed for this slice; existing sync tests are not a substitute.
+Move/copy and installed Windows/Linux plus two-device UI acceptance remain
+outstanding; existing sync tests are not a substitute.
+
+### Local presence and Show in folder (#51 partial)
+
+Rows display **Local** only when the expected path exists under the configured
+sync root with the correct file/directory type. **Cloud only** means that root
+exists but the expected path is absent. **Not covered** explains missing sync
+configuration or selective-sync exclusions; **Unknown** means mapping could not
+be established safely (including unreadable or ambiguous sibling names).
+**Error** indicates an inaccessible/missing root or unsafe/unexpected local path.
+**Conflict** currently identifies an existing preserved conflict-copy path from
+the controller's discovered copy list, not every original with an unresolved
+conflict. **Syncing** reports covering-folder activity, explicitly not per-file
+completion. Local presence does not prove journal/revision/content equality;
+folder transfer errors are not falsely attributed to every file in that folder.
+Full item-specific reconciliation/error/conflict mapping remains future work.
+
+Refresh re-reads disk, and completion of all-folder or individual-folder sync
+refreshes the browser. An initial refresh also runs after sync settings load.
+Ancestry is re-listed and decrypted locally using opaque root IDs; stale cached
+breadcrumb names are not used for filesystem lookup. Canonical-name ambiguity
+fails closed. No names, comparison keys or local paths are sent to the backend.
+
+Desktop **Show in folder** opens a file's containing directory; for a directory
+it opens that directory itself (including a configured root, never its parent).
+The action is disabled with an explanation without an inspected local path and
+on mobile. Clicking re-lists remote ancestry and rechecks disk before launching
+`explorer.exe`, `xdg-open` or macOS `open` with one argument, without a shell or
+executing the selected file. Traversal, reserved/invalid components, symlinks
+(including symlinked roots/ancestors), unexpected types and overlapping remote
+root mappings are rejected. This is not a sandbox against a hostile concurrent
+local writer: path validation and a separate OS file manager cannot be atomic,
+and a filesystem swap after validation can still race the external application.
+Installed Windows/Linux reveal and state-by-state manual acceptance have not
+been performed; launcher fixtures do not establish OS integration acceptance.
 
 ## Folder sync walkthrough
 

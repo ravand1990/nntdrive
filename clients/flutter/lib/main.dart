@@ -10,6 +10,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import 'api.dart';
+import 'local_availability.dart';
+import 'local_availability_widgets.dart';
 import 'file_rename.dart';
 import 'rename_dialog.dart';
 import 'native.dart';
@@ -736,6 +738,37 @@ class _FilesPageState extends State<FilesPage> {
   String _search = '';
   late final SyncController _sync;
   bool _wasSyncing = false;
+  Map<String, LocalAvailability> _availability = {};
+  int _refreshGeneration = 0;
+
+  Future<Map<String, LocalAvailability>> _inspectAvailability(
+      List<String> parentIds) async {
+    try {
+      final bridge = NativeBridge.instance;
+      return await inspectBrowserAvailability(
+        parentIds: parentIds,
+        folders: List.of(_sync.folders),
+        list: (parent) => _api.listFiles(parentId: parent),
+        decrypt: (entry) => bridge.openName(
+            widget.session.handle, entry.id, entry.nameEnc),
+        comparisonKey: bridge.nameCollisionKey,
+      );
+    } catch (_) {
+      return {};
+    }
+  }
+
+  Future<void> _revealLocal(RemoteFile file) async {
+    final parents = _path.map((entry) => entry.id).toList();
+    try {
+      await revealLocalAvailability(() async =>
+          (await _inspectAvailability(parents))[file.id] ??
+          LocalAvailability.unknown);
+    } catch (_) {
+      if (mounted) _showError('No safe local copy could be revealed. Refresh and check the sync folder.');
+    }
+    if (mounted) await _refresh();
+  }
 
   @override
   void initState() {
@@ -753,16 +786,19 @@ class _FilesPageState extends State<FilesPage> {
 
   Future<void> _loadSync() async {
     await _sync.load();
-    _sync.start();
+    if (!mounted) return;
+    await _refresh();
+    if (mounted) _sync.start();
   }
 
   void _onSyncChanged() {
     if (!mounted) return;
     setState(() {});
-    if (_wasSyncing && !_sync.syncing) {
+    final active = _sync.syncing || _sync.folders.any((folder) => folder.running);
+    if (_wasSyncing && !active) {
       _refresh();
     }
-    _wasSyncing = _sync.syncing;
+    _wasSyncing = active;
   }
 
   @override
@@ -780,13 +816,16 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   Future<void> _refresh() async {
+    final generation = ++_refreshGeneration;
+    final parentIds = _path.map((entry) => entry.id).toList();
     setState(() {
       _loading = true;
+      _availability = {};
       _error = null;
     });
     try {
       final me = await _api.me();
-      final files = await _api.listFiles(parentId: _path.isEmpty ? null : _path.last.id);
+      final files = await _api.listFiles(parentId: parentIds.lastOrNull);
       final bridge = NativeBridge.instance;
       final names = <String, String>{};
       for (final f in files) {
@@ -796,8 +835,10 @@ class _FilesPageState extends State<FilesPage> {
           names[f.id] = f.isDir ? 'Encrypted folder' : 'Encrypted file';
         }
       }
-      if (!mounted) return;
+      final availability = await _inspectAvailability(parentIds);
+      if (!mounted || generation != _refreshGeneration) return;
       setState(() {
+        _availability = availability;
         _me = me;
         _files = files;
         _names
@@ -805,15 +846,20 @@ class _FilesPageState extends State<FilesPage> {
           ..addAll(names);
       });
     } on ApiException catch (e) {
+      if (!mounted || generation != _refreshGeneration) return;
       if (e.status == 401) {
         widget.onSignOut();
         return;
       }
       if (mounted) setState(() => _error = e.toString());
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted && generation == _refreshGeneration) {
+        setState(() => _error = e.toString());
+      }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && generation == _refreshGeneration) {
+        setState(() => _loading = false);
+      }
     }
   }
 
@@ -1515,14 +1561,22 @@ class _FilesPageState extends State<FilesPage> {
                         separatorBuilder: (_, __) => const Divider(height: 1),
                         itemBuilder: (context, i) {
                           final f = filtered[i];
+                          final local = _availability[f.id] ?? LocalAvailability.unknown;
                           return ListTile(
                             leading: Icon(f.isDir ? Icons.folder_outlined : Icons.insert_drive_file_outlined),
                             title: Text(_name(f)),
-                            subtitle: Text(f.isDir ? 'Folder' : _formatBytes(f.size)),
+                            subtitle: LocalAvailabilityLabel(
+                              state: local,
+                              details: f.isDir ? 'Folder' : _formatBytes(f.size),
+                            ),
                             trailing: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 if (f.favorite) const Icon(Icons.star, size: 18),
+                                LocalRevealButton(
+                                  state: local,
+                                  onReveal: () => _revealLocal(f),
+                                ),
                                 IconButton(
                                   tooltip: f.isDir ? 'Rename folder' : 'Rename file',
                                   icon: const Icon(Icons.edit_outlined),

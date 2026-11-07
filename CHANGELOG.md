@@ -8,7 +8,8 @@ release workflow refuses to publish if the entry is missing.
 
 ### Features
 
-- File/folder rows offer encrypted rename with portable-name validation, fresh local-decryption collision checks and stale-entry rejection (#51, partial). Guarded rename atomically compares the opaque sibling snapshot and emits a sync event; concurrent namespace changes require refresh. Move/copy, local availability/reveal and installed/two-device acceptance remain outstanding; legacy clients can still introduce duplicate names after a guarded rename.
+- File rows show disk-derived local presence and explanatory availability labels; desktop **Show in folder** revalidates fresh remote ancestry and confined local paths before opening a file's containing folder (folders open themselves). Symlinks, traversal, ambiguous names and excluded/uncovered paths fail closed (#51 partial). Local presence does not certify content/revision equality; installed desktop acceptance remains pending.
+- File/folder rows offer encrypted rename with portable-name validation, fresh local-decryption collision checks and stale-entry rejection (#51, partial). Guarded rename atomically compares the opaque sibling snapshot and emits a sync event; concurrent namespace changes require refresh. Move/copy and installed/two-device acceptance remain outstanding; legacy clients can still introduce duplicate names after a guarded rename.
 - Guided README installation and usage steps cover release downloads, server setup, offline recovery material, client connection, folder sync and conflicts (#52).
 
 ### Bug fixes

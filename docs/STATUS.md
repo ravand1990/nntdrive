@@ -114,9 +114,13 @@ atomically compares the opaque sibling snapshot under an account namespace lock
 and emits a sync event; stale folders require refresh. Rename collision checks
 now use native NFC/lowercase/NFC comparison while preserving the sealed spelling;
 this is not full case folding or every filesystem's equality policy, and sync
-scanner comparison is unchanged. This is not completion: move/copy, disk-truth
-availability, confined local reveal and installed Windows/Linux plus two-device
-acceptance remain outstanding. Legacy clients may still introduce duplicate names after a guarded
+scanner comparison is unchanged. Rows now inspect disk-derived local presence,
+show explicit coverage/unknown/error/conflict-copy and folder-activity labels,
+and offer desktop reveal after fresh ancestry/confinement revalidation. Presence
+is not a content-equality claim; item-specific reconciliation/error/conflict
+mapping remains incomplete. This is not completion: move/copy and installed
+Windows/Linux plus two-device acceptance remain outstanding. Legacy clients may
+still introduce duplicate names after a guarded
 rename. See [client details](CLIENTS.md#rename-in-the-file-browser-51-partial).
 
 ## Recent implementation milestones
