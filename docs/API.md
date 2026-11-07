@@ -142,7 +142,46 @@ rather than persisting new raw errors. Old jobs retain their existing diagnostic
 and have null results. Completed results survive restarts; this does not add
 crash recovery of jobs left `running`, a lease, or a whole-sweep retry protocol.
 
-Reference-safe garbage collection remains unavailable: existing encrypted
-manifests have no complete server-visible version/chunk reference index. Missing
-index entries cannot establish orphanhood, including for historical and conflict
-versions. No destructive GC is enabled and no chunks are removed by maintenance.
+Reference-safe orphan metadata cleanup is explicit per account, never scheduled
+by default. Admins enqueue `orphan_gc` with
+`{"account_id":"<uuid>","grace_days":7,"require_reference_commits":true}`.
+Grace must be 1..3650 days. Each run removes at most 1000 chunks older than the
+grace period which have **no** references from **any** version, including
+historical, conflict and tombstoned versions. Cascades remove local stripe/shard
+indexes only; posted NNTP articles cannot be retracted. Results expose
+`deleted_chunks`, `account_id`, `grace_days`, `batch_limit`, and
+`reference_commits_required`; blocked accounts return zero deletions and
+`blocked: "incomplete_version_references"`. Repeat for additional batches.
+
+New version commits may include `chunk_ids: [uuid,...]`, the complete unique
+chunk identity set from the client-authenticated manifest (empty only for an
+empty file). The Rust SDK includes it for all uploads and deduplicated reuse;
+older servers ignore this additive field. The backend cannot decrypt or verify
+completeness cryptographically: the account's authenticated client must supply
+the honest complete set. No names, keys, content hashes or manifest plaintext
+are added to this protocol; chunk/version association is additional metadata.
+
+Migration 0005 deliberately leaves **all** existing versions incomplete. Omitted
+or null references from legacy clients also stay incomplete, never implicitly
+empty. GET `/reference-backfill?after=<version-row-uuid>` returns up to 200
+account-scoped incomplete revision identities plus `next` (or null), including
+hidden tombstones. An unlocked client decrypts and validates each exact manifest,
+then PUTs `/files/{id}/versions/{revision}/references` with `{chunk_ids:[...]}`.
+The set is write-once; identical retries are accepted, changing a complete set
+is refused. Exact-revision manifest reads support logically deleted files;
+latest reads continue to hide them. Rust SDK helpers
+`backfill_version_references` and `backfill_account_references` implement this
+flow; no automatic Flutter backfill action is shipped yet. Wrong keys or invalid
+manifests stop backfill without marking that revision complete. Concurrent old
+uploads may require another pass; GC rechecks completeness under the lock.
+
+GC refuses an account if **any** version is incomplete, leaving its compatibility
+policy unchanged. First successful GC, even zero deletions, permanently requires
+reference-aware commits for that account. Upgrade all clients before opting in.
+Commits, backfill and GC share a PostgreSQL account advisory transaction lock;
+a database insert trigger enforces the compatibility fence even on an older
+backend binary, and composite foreign keys prevent cross-tenant references and
+dangling committed versions. A stale reuse/upload racing GC either commits first
+and is protected, or fails atomically and must be retried; grace is not an upload
+lease. This does not purge versions or recover space from deleted files with
+retained history. No production data should be used to test cleanup.

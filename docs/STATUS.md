@@ -199,8 +199,8 @@ provider when both aws-lc-rs and ring are in the dependency graph.
 7. **Virtual drives and native mobile integration**: FUSE/WinFsp mounts,
    Android DocumentsProvider + WorkManager, iOS File Provider + background
    transfers, photo/video backup.
-8. **Provider & admin operations**: live-stack retention UI acceptance, stronger alerts and orphaned-chunk garbage
-   collection.
+8. **Provider & admin operations**: isolated live-stack/browser retention and GC
+   acceptance, automatic unlocked-client backfill UX, and stronger alerts.
 9. **Security review**: fuzz yEnc/NZB/article parsers, add proxy-level rate
    limiting guidance, password-reset policy, audit-log coverage and dependency
    review.
@@ -216,7 +216,7 @@ provider when both aws-lc-rs and ring are in the dependency graph.
 - Provider CRUD now applies a validated pool on the serving backend without a
   restart. Active storage operations pin their old snapshot. Multi-backend
   invalidation is not implemented; deploy one backend process. This is partial
-  #15 only: reference-safe orphan GC and live-stack acceptance remain open.
+  #15 only: isolated live-stack/browser acceptance remains open.
 - Retention dashboard policy persists an article-age threshold in PostgreSQL;
   subsequent worker batches read it without restart. Maintenance results persist
   per batch with `done`, including unsuccessful refresh and unrecoverable counts.
@@ -227,8 +227,14 @@ provider when both aws-lc-rs and ring are in the dependency graph.
   PostgreSQL returns `numeric`; keep casts when editing.
 - Full-text search is impossible server-side (names/content encrypted); the
   client must cache a decrypted index.
-- Cleanup of orphaned chunks (upload aborted before commit) is not implemented.
-  Add a job that deletes chunks unreferenced by any manifest after a grace period.
+- Orphan cleanup is explicit per account with a grace period (minimum one day)
+  and 1000-chunk batches. Complete references protect all retained versions;
+  legacy/incomplete accounts refuse collection. Rust SDK backfill decrypts each
+  historical manifest locally, including paginated/tombstoned versions. Successful
+  opt-in permanently blocks legacy commits, also at the DB trigger boundary.
+  Missing chunks fail commit atomically rather than publishing broken versions.
+  No automatic Flutter backfill action or isolated browser acceptance yet; see
+  API compatibility notes before enabling. This deletes only local metadata.
 - No AMK rotation command yet; device revocation instructs the client but does
   not perform client-side key rotation automatically.
 - The release image is `linux/amd64` only. Native arm runners or a successful

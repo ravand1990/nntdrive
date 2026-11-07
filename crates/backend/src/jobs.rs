@@ -118,6 +118,45 @@ async fn process(state: &AppState, job: &Job) -> anyhow::Result<Value> {
         "health_sweep" => health_sweep(state, job).await,
         "repair_stripe" => repair_stripe(state, job).await,
         "refresh_sweep" => refresh_sweep(state, job).await,
+        "orphan_gc" => {
+            let account_id: Uuid = job
+                .payload
+                .get("account_id")
+                .and_then(Value::as_str)
+                .context("account_id required")?
+                .parse()?;
+            let grace_days = job
+                .payload
+                .get("grace_days")
+                .and_then(Value::as_u64)
+                .context("grace_days required")?;
+            anyhow::ensure!(
+                (1..=3650).contains(&grace_days)
+                    && job
+                        .payload
+                        .get("require_reference_commits")
+                        .and_then(Value::as_bool)
+                        == Some(true),
+                "invalid GC opt-in"
+            );
+            match state
+                .store
+                .collect_orphan_chunks(account_id, grace_days as u32, 1000)
+                .await
+            {
+                Ok(deleted) => Ok(
+                    json!({ "account_id": account_id, "deleted_chunks": deleted, "grace_days": grace_days, "batch_limit": 1000, "reference_commits_required": true }),
+                ),
+                Err(nntdrive_storage::StoreError::Invalid(reason))
+                    if reason == "GC blocked: incomplete version references" =>
+                {
+                    Ok(
+                        json!({ "account_id": account_id, "deleted_chunks": 0, "blocked": "incomplete_version_references" }),
+                    )
+                }
+                Err(e) => Err(e.into()),
+            }
+        }
         other => Err(anyhow::anyhow!("unknown job kind {other}")),
     }
 }

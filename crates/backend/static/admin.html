@@ -95,7 +95,13 @@
       <input id="refresh-days" type="number" min="1" max="36500" step="1">
       <button id="save-retention" class="secondary">Save refresh policy</button>
     </div>
-    <p class="muted">Saved policy applies to subsequent refresh batches and survives restarts. Provider retention is only a hint, not a durability guarantee. Results below are per batch; continued batches have separate jobs. A done batch with failed or unrecoverable counts is not healthy. Orphan cleanup is unavailable until complete version/chunk references are supported; no chunks are deleted.</p>
+    <p class="muted">Saved policy applies to subsequent refresh batches and survives restarts. Provider retention is only a hint, not a durability guarantee. Results below are per batch; continued batches have separate jobs. A done batch with blocked, failed or unrecoverable counts is not healthy. Orphan cleanup removes only local chunk/article metadata, never NNTP articles. All historical, conflict and deleted versions stay protected. Cleanup refuses accounts with incomplete references; an unlocked upgraded client must backfill every legacy revision first.</p>
+    <div class="row">
+      <label for="gc-account">GC account ID</label><input id="gc-account" placeholder="Account UUID">
+      <label for="gc-days">Orphan grace (days)</label><input id="gc-days" type="number" min="1" max="3650" value="7">
+      <button class="secondary danger" id="run-gc">Collect orphan metadata</button>
+    </div>
+    <p class="muted">Explicit opt-in: successful cleanup permanently requires reference-aware version commits for this account, even if zero chunks are removed. Upgrade all clients first. Upload/reuse older than the grace period may fail safely and require retry. One run collects at most 1000 chunks; run again for further batches.</p>
     <div class="row">
       <button class="secondary" data-job="health_sweep">Run health sweep</button>
       <button class="secondary" data-job="refresh_sweep">Run retention refresh</button>
@@ -248,7 +254,7 @@ async function load() {
 
   $('jobs').innerHTML = (jobs.jobs||[]).slice(0,50).map(j => `<tr>
     <td>${esc(j.kind)}</td><td><span class="pill">${esc(j.state)}</span></td>
-    <td>${j.attempts}/${j.max_attempts}</td><td class="${j.last_error || j.result?.failed || j.result?.unrecoverable || j.result?.below_threshold?'bad':'muted'}">${esc(j.last_error || (j.result ? JSON.stringify(j.result) : '—'))}</td>
+    <td>${j.attempts}/${j.max_attempts}</td><td class="${j.last_error || j.result?.blocked || j.result?.failed || j.result?.unrecoverable || j.result?.below_threshold?'bad':'muted'}">${esc(j.last_error || (j.result ? JSON.stringify(j.result) : '—'))}</td>
     <td>${when(j.updated_at)}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">Queue is empty.</td></tr>';
 
   userCache = users.users || [];
@@ -387,6 +393,19 @@ $('save-retention').onclick = async () => {
   finally { button.disabled = false; }
 };
 
+$('run-gc').onclick = async () => {
+  const account_id = $('gc-account').value.trim();
+  const grace_days = Number($('gc-days').value);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(account_id) || !Number.isInteger(grace_days) || grace_days < 1 || grace_days > 3650) {
+    $('jobmsg').textContent = 'Enter a valid account UUID and grace period (1..3650 days).'; return;
+  }
+  if (!confirm('Collect orphan metadata for this account? Successful collection permanently blocks legacy clients from committing versions. Upgrade all clients and backfill historical references first.')) return;
+  try {
+    await api('/admin/jobs', {method:'POST', body:JSON.stringify({kind:'orphan_gc', payload:{account_id, grace_days, require_reference_commits:true}})});
+    $('jobmsg').textContent = 'Orphan cleanup queued. Inspect its batch result below.';
+    await load();
+  } catch(e) { $('jobmsg').textContent = e.message; }
+};
 document.querySelectorAll('button[data-job]').forEach(b => b.onclick = async () => {
   try { await api('/admin/jobs', { method:'POST', body: JSON.stringify({ kind: b.dataset.job, payload: {} })}); $('jobmsg').textContent = 'Job queued.'; load(); }
   catch (e) { $('jobmsg').textContent = e.message; }

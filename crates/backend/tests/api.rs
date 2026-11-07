@@ -118,6 +118,161 @@ fn base64_key(bytes: &[u8]) -> String {
 }
 
 #[tokio::test]
+async fn orphan_gc_api_is_opt_in_and_reports_batch_results() {
+    let Some(env) = env().await else { return };
+    let admin = register(&env.state, "gc-admin@example.test").await;
+    let user = register(&env.state, "gc-user@example.test").await;
+    let file = env._db.create_file(user.account_id, None, vec![1]).await;
+    let revision = Uuid::new_v4();
+    let manifest = nntdrive_storage::FileManifest::new(file, revision, 0, String::new());
+    let sealed = user
+        .master
+        .seal_manifest(file, revision, &manifest.to_bytes())
+        .unwrap()
+        .to_bytes();
+    let version_path = format!("/api/v1/files/{file}/versions");
+    let (status, _) = call(
+        &env.state,
+        req(
+            "POST",
+            &version_path,
+            Some(&user.token),
+            Some(json!({"revision_id":revision,"size":0,"sealed_manifest":base64_key(&sealed)})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let chunk_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO chunks(id,account_id,plaintext_hash,plaintext_len,ciphertext_len,created_at) VALUES($1,$2,$3,1,42,now()-interval '10 days')")
+        .bind(chunk_id).bind(user.account_id).bind(vec![3u8;32]).execute(&env.state.pool).await.unwrap();
+    let payload =
+        json!({"account_id":user.account_id,"grace_days":7,"require_reference_commits":true});
+    let path = "/api/v1/admin/jobs";
+    for token in [None, Some(user.token.as_str())] {
+        let (s, _) = call(
+            &env.state,
+            req(
+                "POST",
+                path,
+                token,
+                Some(json!({"kind":"orphan_gc","payload":payload})),
+            ),
+        )
+        .await;
+        assert!(s == StatusCode::UNAUTHORIZED || s == StatusCode::FORBIDDEN);
+    }
+    for p in [
+        json!({}),
+        json!({"account_id":user.account_id,"grace_days":0,"require_reference_commits":true}),
+        json!({"account_id":user.account_id,"grace_days":7}),
+    ] {
+        let (s, _) = call(
+            &env.state,
+            req(
+                "POST",
+                path,
+                Some(&admin.token),
+                Some(json!({"kind":"orphan_gc","payload":p})),
+            ),
+        )
+        .await;
+        assert_eq!(s, StatusCode::BAD_REQUEST);
+    }
+    for backfilled in [false, true] {
+        if backfilled {
+            let backfill_path = format!("{version_path}/{revision}/references");
+            let (s, _) = call(
+                &env.state,
+                req(
+                    "PUT",
+                    &backfill_path,
+                    Some(&admin.token),
+                    Some(json!({"chunk_ids":[]})),
+                ),
+            )
+            .await;
+            assert_eq!(s, StatusCode::NOT_FOUND);
+            let (s, _) = call(
+                &env.state,
+                req(
+                    "PUT",
+                    &backfill_path,
+                    Some(&user.token),
+                    Some(json!({"chunk_ids":[]})),
+                ),
+            )
+            .await;
+            assert_eq!(s, StatusCode::OK);
+        }
+        let (s, queued) = call(
+            &env.state,
+            req(
+                "POST",
+                path,
+                Some(&admin.token),
+                Some(json!({"kind":"orphan_gc","payload":payload})),
+            ),
+        )
+        .await;
+        assert_eq!(s, StatusCode::CREATED);
+        let job_id = queued["job_id"].as_str().unwrap().to_owned();
+        let worker = tokio::spawn(nntdrive_backend::jobs::worker_loop(
+            Arc::new(env.state.clone()),
+            "gc-api-test".into(),
+        ));
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                let (_, listing) =
+                    call(&env.state, req("GET", path, Some(&admin.token), None)).await;
+                let row = listing["jobs"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|r| r["id"] == job_id)
+                    .unwrap();
+                if row["state"] == "done" {
+                    assert_eq!(
+                        row["result"]["deleted_chunks"],
+                        if backfilled { 1 } else { 0 }
+                    );
+                    if !backfilled {
+                        assert_eq!(row["result"]["blocked"], "incomplete_version_references");
+                    }
+                    break;
+                }
+                assert_ne!(row["state"], "failed");
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .unwrap();
+        worker.abort();
+        let _ = worker.await;
+    }
+    assert!(env
+        .state
+        .store
+        .load_chunk(user.account_id, chunk_id)
+        .await
+        .is_err());
+    let mut body =
+        json!({"revision_id":Uuid::new_v4(),"size":0,"sealed_manifest":base64_key(&sealed)});
+    let (s, _) = call(
+        &env.state,
+        req("POST", &version_path, Some(&user.token), Some(body.clone())),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    body["chunk_ids"] = json!([]);
+    let (s, _) = call(
+        &env.state,
+        req("POST", &version_path, Some(&user.token), Some(body)),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED);
+}
+
+#[tokio::test]
 async fn maintenance_policy_and_results_survive_state_recreation() {
     let Some(env) = env().await else { return };
     let admin = register(&env.state, "maintenance-admin@example.com").await;

@@ -539,9 +539,32 @@ pub async fn enqueue_job(
 ) -> ApiResult<impl IntoResponse> {
     if !matches!(
         body.kind.as_str(),
-        "health_sweep" | "repair_stripe" | "refresh_sweep"
+        "health_sweep" | "repair_stripe" | "refresh_sweep" | "orphan_gc"
     ) {
         return Err(ApiError::BadRequest("unsupported job kind".into()));
+    }
+    if body.kind == "orphan_gc" {
+        let valid_account = body
+            .payload
+            .get("account_id")
+            .and_then(Value::as_str)
+            .and_then(|s| s.parse::<Uuid>().ok())
+            .is_some();
+        let valid_grace = body
+            .payload
+            .get("grace_days")
+            .and_then(Value::as_u64)
+            .is_some_and(|d| (1..=3650).contains(&d));
+        if !valid_account
+            || !valid_grace
+            || body
+                .payload
+                .get("require_reference_commits")
+                .and_then(Value::as_bool)
+                != Some(true)
+        {
+            return Err(ApiError::BadRequest("GC requires account_id, grace_days (1..3650), and explicit require_reference_commits=true opt-in".into()));
+        }
     }
     let id = jobs::enqueue(&state.pool, &body.kind, None, body.payload, 0).await?;
     Ok((StatusCode::CREATED, Json(json!({ "job_id": id }))))

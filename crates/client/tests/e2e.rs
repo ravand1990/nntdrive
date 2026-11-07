@@ -185,6 +185,103 @@ async fn client_upload_download_and_dedupe_through_real_api() {
         .unwrap();
     assert_eq!(tokio::fs::read(&dest1).await.unwrap(), data);
 
+    // Simulate an older client: real encrypted historical manifest with no
+    // reference declaration blocks GC until an unlocked client backfills it.
+    let legacy_file = create_node(&api, &s.master, "Legacy.bin").await;
+    let legacy_rev = Uuid::new_v4();
+    let mut legacy = manifest.clone();
+    legacy.file_id = legacy_file;
+    legacy.revision_id = legacy_rev;
+    let sealed_legacy = s
+        .master
+        .seal_manifest(legacy_file, legacy_rev, &legacy.to_bytes())
+        .unwrap()
+        .to_bytes();
+    api.commit(legacy_file, legacy_rev, None, legacy.size, &sealed_legacy)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE chunks SET created_at=now()-interval '10 days' WHERE account_id=$1")
+        .bind(s.account_id)
+        .execute(s._db.store.pool())
+        .await
+        .unwrap();
+    assert!(s
+        ._db
+        .store
+        .collect_orphan_chunks(s.account_id, 1, 1000)
+        .await
+        .is_err());
+    let wrong = nntdrive_crypto::MasterKey::generate(s.account_id, 0);
+    assert!(
+        nntdrive_client::backfill_version_references(&api, &wrong, legacy_file, legacy_rev)
+            .await
+            .is_err()
+    );
+    assert!(s
+        ._db
+        .store
+        .collect_orphan_chunks(s.account_id, 1, 1000)
+        .await
+        .is_err());
+    // More than one page, and a logically deleted file: no hidden history may
+    // be skipped just because it is not in the visible namespace/current tree.
+    for _ in 0..200 {
+        let mut historical = legacy.clone();
+        historical.revision_id = Uuid::new_v4();
+        let sealed = s
+            .master
+            .seal_manifest(legacy_file, historical.revision_id, &historical.to_bytes())
+            .unwrap()
+            .to_bytes();
+        s._db
+            .store
+            .insert_version_with_references(
+                s.account_id,
+                legacy_file,
+                &historical,
+                &sealed,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+    }
+    sqlx::query("UPDATE files SET deleted=true WHERE account_id=$1 AND id=$2")
+        .bind(s.account_id)
+        .bind(legacy_file)
+        .execute(s._db.store.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        nntdrive_client::backfill_account_references(&api, &s.master)
+            .await
+            .unwrap(),
+        201
+    );
+    assert_eq!(
+        nntdrive_client::backfill_account_references(&api, &s.master)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        s._db
+            .store
+            .collect_orphan_chunks(s.account_id, 1, 1000)
+            .await
+            .unwrap(),
+        0
+    );
+    download_file(&api, &s.master, file_id, Some(revision), &dest1)
+        .await
+        .unwrap();
+    assert_eq!(tokio::fs::read(&dest1).await.unwrap(), data);
+    download_file(&api, &s.master, legacy_file, Some(legacy_rev), &dest1)
+        .await
+        .unwrap();
+    assert_eq!(tokio::fs::read(&dest1).await.unwrap(), data);
+
     // Unauthorized access fails.
     let mut anon = ApiClient::new(s.base_url.clone()).unwrap();
     anon.set_token("not-a-token");

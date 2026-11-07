@@ -151,8 +151,17 @@ publication mutex; validation precedes commit and publication precedes response.
 An admitted mutation completes even if the caller disconnects. Deploy **one
 backend process**: replica-wide pool invalidation is not implemented. Direct SQL
 provider edits do not trigger reload; use the admin API. Connectivity failure is
-not a config-validation failure; use Test before bulk transfers. Retention policy
-UI and reference-safe orphan GC remain unimplemented; this is only part of #15.
+not a config-validation failure; use Test before bulk transfers. Maintenance now
+saves the refresh policy and displays durable per-batch results. Orphan metadata
+cleanup is explicit per account (grace 1..3650 days, default UI value 7), limited
+to 1000 chunks per run. First successful collection permanently requires upgraded
+reference-aware clients, including when zero chunks are removed. Every retained
+legacy revision must first be backfilled by an unlocked client; otherwise cleanup
+reports `blocked: incomplete_version_references` without deletion or policy
+change. All history/conflicts/tombstones remain protected; no NNTP article is
+retracted. See [API compatibility/backfill](API.md) for the SDK flow and race
+semantics. No automatic Flutter backfill control is available yet. Test only on
+isolated fixtures; live-stack/browser acceptance for #15 remains pending.
 The Maintenance restart action remains available but is not needed for CRUD.
 Configured providers have a **Test** button that verifies DNS, TLS and
 authentication without posting (posting permission is only proven by a real
