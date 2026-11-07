@@ -218,8 +218,13 @@ class ApiClient {
   Future<void> setFavorite(String id, bool favorite) =>
       _send('PATCH', '/files/$id', body: {'favorite': favorite});
 
-  Future<void> renameFile(String id, String nameEnc) =>
-      _send('PATCH', '/files/$id', body: {'name_enc': nameEnc});
+  Future<void> renameFile(String id, String nameEnc,
+          {required String? parentId, required List<RemoteFile> siblings}) =>
+      _send('POST', '/files/$id/rename', body: {
+        'name_enc': nameEnc,
+        'parent_id': parentId,
+        'siblings': siblings.map((f) => {'id': f.id, 'name_enc': f.nameEnc}).toList(),
+      });
 
   Future<void> moveFile(String id, String? parentId) =>
       _send('POST', '/files/$id/move', body: {'parent_id': parentId});

@@ -32,6 +32,10 @@ pub fn app(state: state::AppState) -> Router {
         .route("/files/{id}", patch(api::patch_file))
         .route("/files/{id}/move", post(api::move_file))
         .route(
+            "/files/{id}/rename",
+            post(api::rename_file).layer(axum::extract::DefaultBodyLimit::max(2 * 1024 * 1024)),
+        )
+        .route(
             "/files/{id}/versions",
             get(api::list_versions).post(api::commit_version),
         )

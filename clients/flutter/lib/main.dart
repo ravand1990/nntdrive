@@ -10,6 +10,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import 'api.dart';
+import 'file_rename.dart';
+import 'rename_dialog.dart';
 import 'native.dart';
 import 'sync_controller.dart';
 import 'sync_page.dart';
@@ -832,6 +834,30 @@ class _FilesPageState extends State<FilesPage> {
 
   String _name(RemoteFile f) => _names[f.id] ?? (f.isDir ? 'Encrypted folder' : 'Encrypted file');
 
+  bool _renaming = false;
+
+  Future<void> _rename(RemoteFile file) async {
+    if (_renaming) return;
+    setState(() => _renaming = true);
+    try {
+      final name = await showDialog<String>(
+        context: context,
+        builder: (_) => RenameDialog(initialName: _name(file), isDir: file.isDir),
+      );
+      if (name == null || !mounted) return;
+      await renameRemoteEntry(api: _api, handle: widget.session.handle,
+        file: file, name: name);
+      if (mounted) await _refresh();
+    } on RenameFailure catch (e) {
+      if (mounted) _showError(e.message);
+    } catch (_) {
+      // Do not expose backend/native diagnostics that could contain secrets.
+      if (mounted) _showError('Rename failed. Refresh and try again. Check for a name collision or an entry changed on another device.');
+    } finally {
+      if (mounted) setState(() => _renaming = false);
+    }
+  }
+
   Future<void> _createFolder() async {
     final controller = TextEditingController();
     final name = await showDialog<String>(
@@ -1493,9 +1519,18 @@ class _FilesPageState extends State<FilesPage> {
                             leading: Icon(f.isDir ? Icons.folder_outlined : Icons.insert_drive_file_outlined),
                             title: Text(_name(f)),
                             subtitle: Text(f.isDir ? 'Folder' : _formatBytes(f.size)),
-                            trailing: f.favorite
-                                ? const Icon(Icons.star, size: 18)
-                                : (f.isDir ? const Icon(Icons.chevron_right) : null),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (f.favorite) const Icon(Icons.star, size: 18),
+                                IconButton(
+                                  tooltip: f.isDir ? 'Rename folder' : 'Rename file',
+                                  icon: const Icon(Icons.edit_outlined),
+                                  onPressed: _renaming ? null : () => _rename(f),
+                                ),
+                                if (f.isDir) const Icon(Icons.chevron_right),
+                              ],
+                            ),
                             onTap: () => _open(f),
                           );
                         },

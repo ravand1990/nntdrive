@@ -78,6 +78,7 @@ pub async fn create_file(
         ));
     }
     let mut tx = state.pool.begin().await?;
+    lock_namespace(&mut tx, auth.account_id).await?;
     if let Some(parent) = body.parent_id {
         let exists: Option<bool> = sqlx::query_scalar(
             "SELECT is_dir FROM files WHERE account_id = $1 AND id = $2 AND deleted = FALSE",
@@ -132,7 +133,18 @@ pub async fn move_file(
     Path(id): Path<Uuid>,
     Json(body): Json<MoveFile>,
 ) -> ApiResult<impl IntoResponse> {
-    ensure_file(&state, auth.account_id, id).await?;
+    let mut tx = state.pool.begin().await?;
+    lock_namespace(&mut tx, auth.account_id).await?;
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM files WHERE account_id = $1 AND id = $2 AND deleted = FALSE)",
+    )
+    .bind(auth.account_id)
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if !exists {
+        return Err(ApiError::NotFound);
+    }
     if let Some(parent) = body.parent_id {
         if parent == id {
             return Err(ApiError::BadRequest(
@@ -144,7 +156,7 @@ pub async fn move_file(
         )
         .bind(auth.account_id)
         .bind(parent)
-        .fetch_optional(&state.pool)
+        .fetch_optional(&mut *tx)
         .await?;
         if is_dir != Some(true) {
             return Err(ApiError::BadRequest("parent is not a folder".into()));
@@ -163,13 +175,12 @@ pub async fn move_file(
         .bind(auth.account_id)
         .bind(parent)
         .bind(id)
-        .fetch_optional(&state.pool)
+        .fetch_optional(&mut *tx)
         .await?;
         if cycle.is_some() {
             return Err(ApiError::BadRequest("move would create a cycle".into()));
         }
     }
-    let mut tx = state.pool.begin().await?;
     sqlx::query(
         "UPDATE files SET parent_id = $3, updated_at = now(), revision = revision + 1
          WHERE account_id = $1 AND id = $2",
@@ -191,6 +202,115 @@ pub async fn move_file(
     .await?;
     tx.commit().await?;
     Ok(Json(json!({ "status": "moved" })))
+}
+
+// All namespace writers take the account row lock before reading or changing
+// names/membership. This also serializes older unconditional API writers.
+async fn lock_namespace(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    account_id: Uuid,
+) -> ApiResult<()> {
+    sqlx::query("SELECT id FROM accounts WHERE id = $1 FOR UPDATE")
+        .bind(account_id)
+        .fetch_one(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+#[derive(Deserialize)]
+pub struct NameSnapshot {
+    pub id: Uuid,
+    pub name_enc: String,
+}
+
+#[derive(Deserialize)]
+pub struct RenameFile {
+    pub parent_id: Option<Uuid>,
+    pub name_enc: String,
+    pub siblings: Vec<NameSnapshot>,
+}
+
+/// Compare the complete opaque namespace checked by the client, then rename
+/// under the same account lock. No deterministic name tag or plaintext is added.
+/// A dedicated endpoint fails closed against servers predating this contract.
+pub async fn rename_file(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+    Json(body): Json<RenameFile>,
+) -> ApiResult<impl IntoResponse> {
+    let name = unb64(&body.name_enc)?;
+    if name.is_empty() || name.len() > 8192 {
+        return Err(ApiError::BadRequest("invalid name".into()));
+    }
+    if body.siblings.len() > 4096 {
+        return Err(ApiError::BadRequest(
+            "folder snapshot exceeds 4096 entries".into(),
+        ));
+    }
+    let mut expected = std::collections::BTreeMap::new();
+    for entry in &body.siblings {
+        let sealed = unb64(&entry.name_enc)?;
+        if sealed.is_empty() || sealed.len() > 8192 {
+            return Err(ApiError::BadRequest("invalid snapshot name".into()));
+        }
+        if expected.insert(entry.id, sealed).is_some() {
+            return Err(ApiError::BadRequest("duplicate snapshot entry".into()));
+        }
+    }
+    let mut tx = state.pool.begin().await?;
+    lock_namespace(&mut tx, auth.account_id).await?;
+    let parent: Option<Option<Uuid>> = sqlx::query_scalar(
+        "SELECT parent_id FROM files WHERE account_id = $1 AND id = $2 AND deleted = FALSE",
+    )
+    .bind(auth.account_id)
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let parent = parent.ok_or(ApiError::NotFound)?;
+    if parent != body.parent_id {
+        return Err(ApiError::Conflict(
+            "folder changed; refresh and retry".into(),
+        ));
+    }
+    let rows = sqlx::query(
+        "SELECT id, name_enc FROM files WHERE account_id = $1 AND deleted = FALSE
+         AND parent_id IS NOT DISTINCT FROM $2 LIMIT 4097",
+    )
+    .bind(auth.account_id)
+    .bind(parent)
+    .fetch_all(&mut *tx)
+    .await?;
+    let actual: std::collections::BTreeMap<Uuid, Vec<u8>> = rows
+        .iter()
+        .map(|row| (row.get("id"), row.get("name_enc")))
+        .collect();
+    if actual != expected {
+        return Err(ApiError::Conflict(
+            "folder changed; refresh and retry".into(),
+        ));
+    }
+    sqlx::query(
+        "UPDATE files SET name_enc = $3, revision = revision + 1, updated_at = now()
+                 WHERE account_id = $1 AND id = $2",
+    )
+    .bind(auth.account_id)
+    .bind(id)
+    .bind(name)
+    .execute(&mut *tx)
+    .await?;
+    append_event(
+        &mut tx,
+        auth.account_id,
+        auth.device_id,
+        id,
+        None,
+        "rename",
+        json!({}),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(Json(json!({ "status": "renamed" })))
 }
 
 #[derive(Deserialize)]
@@ -218,6 +338,17 @@ pub async fn patch_file(
         None => None,
     };
     let mut tx = state.pool.begin().await?;
+    lock_namespace(&mut tx, auth.account_id).await?;
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM files WHERE account_id = $1 AND id = $2 AND deleted = FALSE)",
+    )
+    .bind(auth.account_id)
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if !exists {
+        return Err(ApiError::NotFound);
+    }
     if let Some(name) = &name_enc {
         sqlx::query(
             "UPDATE files SET name_enc = $3, updated_at = now(), revision = revision + 1

@@ -276,6 +276,35 @@ provide a fallback with
 by this mechanism (Android requires the system package installer; iOS requires
 App Store/TestFlight or a signed enterprise install).
 
+## Rename in the file browser (#51 partial)
+
+Use the edit icon beside a file or folder to **Rename** it; Cancel leaves it
+unchanged. Names are sealed by the native client for the existing node ID; only
+`name_enc` changes via `POST /files/{id}/rename`, so contents and immutable revision history are retained.
+The client refreshes siblings before renaming, decrypts their names locally and
+rejects case-insensitive collisions, unreadable names, stale source entries and
+non-portable path components. Failures leave the dialog workflow recoverable
+without displaying raw backend/native diagnostics. Sync still runs on its normal
+schedule or via **Sync now**, not as a side effect of renaming.
+
+This is a bounded implementation slice, not full #51 acceptance. Rename sends
+its complete opaque sibling-name snapshot and parent ID. The backend compares
+that snapshot and updates the name in one account-locked transaction; a changed
+name, added/deleted sibling or moved source returns 409 and requires refresh and
+a new local collision check. Successful rename emits a sync event. No plaintext
+name, deterministic equality tag or new encryption format is introduced. Older
+servers lack the dedicated endpoint: the client fails rather than falling back
+to an unsafe PATCH. Guarded rename is bounded to 4096 sibling entries and a
+2 MiB request body; larger folders fail closed. Namespace writes on this backend
+(including legacy API routes) use the
+same lock, but old backend replicas and direct database writers do not; upgrade
+all replicas together. This is not server-enforced plaintext uniqueness: legacy
+clients can still introduce duplicate names after the guarded rename, and Unicode
+normalization beyond lowercase comparison remains unimplemented.
+Move/copy, row availability indicators and secure local reveal are not yet
+implemented. Installed Windows/Linux and two-device UI rename acceptance have
+not been performed for this slice; existing sync tests are not a substitute.
+
 ## Folder sync walkthrough
 
 Open the sync icon in the file browser, select a base folder (for example
