@@ -8,6 +8,7 @@ release workflow refuses to publish if the entry is missing.
 
 ### Features
 
+- File/folder rows offer encrypted rename with portable-name validation, fresh local-decryption collision checks and stale-entry rejection (#51, partial). Move/copy, local availability/reveal and installed/two-device acceptance remain outstanding; the existing API cannot atomically prevent concurrent encrypted-name collisions.
 - Guided README installation and usage steps cover release downloads, server setup, offline recovery material, client connection, folder sync and conflicts (#52).
 
 ### Bug fixes

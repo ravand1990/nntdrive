@@ -106,6 +106,14 @@ credentials; posting must be enabled on the plan. The article `From` header must
 be a valid internet address and Rustls needs an explicitly installed crypto
 provider when both aws-lc-rs and ring are in the dependency graph.
 
+## Issue #51 partial file management
+
+File/folder rows now offer native-encrypted rename, portable component validation,
+fresh sibling collision checks and stale-entry rejection. This is not completion:
+move/copy, disk-truth availability, confined local reveal, atomic concurrent
+collision/rename protection, independent security review and installed Windows/
+Linux plus two-device acceptance remain outstanding. See [client details](CLIENTS.md#rename-in-the-file-browser-51-partial).
+
 ## Recent implementation milestones
 
 - Multi-folder sync integrated end-to-end: HTTP `Remote` adapter, per-folder

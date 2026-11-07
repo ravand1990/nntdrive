@@ -377,6 +377,58 @@ async fn tenant_isolation_and_encrypted_upload_flow() {
     .await;
     assert_eq!(s, StatusCode::CREATED, "{body}");
 
+    // Rename mutates only the encrypted namespace, not content or history.
+    let renamed = base64_key(b"different-opaque-sealed-name");
+    for target in [file_id, Uuid::new_v4()] {
+        let (status, body) = call(
+            &env.state,
+            req(
+                "PATCH",
+                &format!("/api/v1/files/{target}"),
+                Some(&bob.token),
+                Some(json!({"name_enc": renamed})),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    }
+    let (status, body) = call(
+        &env.state,
+        req(
+            "PATCH",
+            &format!("/api/v1/files/{file_id}"),
+            Some(&alice.token),
+            Some(json!({"name_enc": renamed})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = call(
+        &env.state,
+        req("GET", "/api/v1/files", Some(&alice.token), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let entry = body["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["id"] == file_id.to_string())
+        .unwrap();
+    assert_eq!(entry["name_enc"], renamed);
+    assert_eq!(entry["current_version"], manifest.revision_id.to_string());
+    assert_eq!(entry["size"], manifest.size);
+    let retained: Vec<u8> = sqlx::query_scalar(
+        "SELECT manifest FROM file_versions WHERE account_id = $1 AND file_id = $2 AND revision_id = $3",
+    )
+    .bind(alice.account_id)
+    .bind(file_id)
+    .bind(manifest.revision_id)
+    .fetch_one(&env.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(retained, sealed);
+
     // The owner can fetch the sealed manifest and an article through the proxy.
     let (s, _) = call(
         &env.state,
