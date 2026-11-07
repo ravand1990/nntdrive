@@ -29,10 +29,11 @@ class RenameFailure implements Exception {
   String toString() => message;
 }
 
-/// Decrypt collision candidates locally, then send only a node-bound envelope.
-/// The existing API has no atomic encrypted-name uniqueness/CAS contract: this
-/// preflight is deliberately not advertised as protection against other devices
-/// racing the final PATCH. No existing entry/content is overwritten.
+/// Decrypt collision candidates locally, then send only node-bound envelopes.
+/// The server compares this complete sibling snapshot while holding the account
+/// namespace lock. Concurrent changes require a fresh collision check, not retry
+/// of the old request. Legacy unconditional writers remain compatible and can
+/// still introduce duplicate names after this operation completes.
 Future<void> renameRemoteEntry({
   required ApiClient api,
   required int handle,
@@ -43,6 +44,10 @@ Future<void> renameRemoteEntry({
   if (invalid != null) throw RenameFailure(invalid);
   final bridge = NativeBridge.instance;
   final siblings = await api.listFiles(parentId: file.parentId);
+  if (siblings.length > 4096) {
+    throw RenameFailure(
+        'This folder is too large for a safe rename (4096 entries maximum).');
+  }
   final current = siblings.where((entry) => entry.id == file.id).firstOrNull;
   if (current == null ||
       current.revision != file.revision ||
@@ -64,5 +69,14 @@ Future<void> renameRemoteEntry({
     }
   }
   final sealed = bridge.sealName(handle, file.id, name);
-  await api.renameFile(file.id, sealed);
+  try {
+    await api.renameFile(file.id, sealed,
+        parentId: file.parentId, siblings: siblings);
+  } on ApiException catch (e) {
+    if (e.status == 409) {
+      throw RenameFailure(
+          'This folder changed. Refresh the list and try again.');
+    }
+    rethrow;
+  }
 }

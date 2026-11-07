@@ -54,6 +54,7 @@ void main() {
       },
     ];
     final patches = <Map<String, dynamic>>[];
+    var renameStatus = HttpStatus.ok;
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final subscription = server.listen((request) async {
       expect(request.headers.value('authorization'), 'Bearer test-token');
@@ -61,10 +62,11 @@ void main() {
       if (request.method == 'GET') {
         request.response.write(jsonEncode({'files': rows}));
       } else {
-        expect(request.method, 'PATCH');
-        expect(request.uri.path, '/api/v1/files/$id');
+        expect(request.method, 'POST');
+        expect(request.uri.path, '/api/v1/files/$id/rename');
         patches.add(jsonDecode(await utf8.decoder.bind(request).join())
             as Map<String, dynamic>);
+        request.response.statusCode = renameStatus;
         request.response.write('{}');
       }
       await request.response.close();
@@ -76,7 +78,11 @@ void main() {
     try {
       await rename('Private new name.txt');
       expect(patches, hasLength(1));
-      expect(patches.single.keys, ['name_enc']);
+      expect(patches.single.keys, ['name_enc', 'parent_id', 'siblings']);
+      expect(patches.single['siblings'], [
+        {'id': id, 'name_enc': sealed},
+        {'id': siblingId, 'name_enc': rows[1]['name_enc']},
+      ]);
       expect(jsonEncode(patches), isNot(contains('Private new name.txt')));
       final envelope = patches.single['name_enc'] as String;
       expect(bridge.openName(handle, id, envelope), 'Private new name.txt');
@@ -101,13 +107,23 @@ void main() {
       rows = [];
       await expectLater(rename('another.txt'), throwsA(isA<RenameFailure>()));
       expect(patches, hasLength(1));
+      rows = [
+        {'id': id, 'name_enc': sealed, 'revision': 7}
+      ];
+      renameStatus = HttpStatus.conflict;
+      await expectLater(rename('raced.txt'), throwsA(isA<RenameFailure>()));
+      expect(patches, hasLength(2)); // No blind retry of a stale snapshot.
+      renameStatus = HttpStatus.notFound;
+      await expectLater(rename('old-server.txt'), throwsA(isA<ApiException>()));
+      expect(patches, hasLength(3)); // No fallback to an unconditional PATCH.
+      patches.clear();
       // A locked account cannot fall back to transmitting plaintext.
       bridge.lock(handle);
       rows = [
         {'id': id, 'name_enc': sealed, 'revision': 7}
       ];
       await expectLater(rename('locked.txt'), throwsA(isA<NativeException>()));
-      expect(patches, hasLength(1));
+      expect(patches, isEmpty);
     } finally {
       bridge.lock(handle);
       await server.close(force: true);
