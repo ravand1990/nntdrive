@@ -99,7 +99,7 @@ within a stripe. Mitigations:
 1. Add the new provider with `retrieval_only` and check a sample download.
 2. If it lacks the old articles, keep the old account for retrieval or restore
    them from a client.
-3. Mark the new provider `both`/`posting_only` as desired, restart the backend.
+3. Mark the new provider `both`/`posting_only` as desired via admin CRUD; it is applied on the serving backend without restart.
 4. Health sweeps will record which articles are retrievable. Repairs and refreshes
    post to the current posting provider.
 5. Nothing in the metadata changes provider names retroactively; old references
