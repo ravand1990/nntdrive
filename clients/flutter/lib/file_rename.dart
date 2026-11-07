@@ -12,9 +12,28 @@ String? renameValidationError(String name) {
       name.contains(RegExp(r'[<>:"/\\|?*\x00-\x1f\x7f]'))) {
     return 'Use a single filename without path separators or reserved characters.';
   }
-  final stem = name.split('.').first.toUpperCase();
-  if (RegExp(r'^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$').hasMatch(stem)) {
+  // Win32 recognizes device names even before an extension and with spaces
+  // before that extension. ISO-8859-1 superscript digits are device aliases too.
+  final stem = name.split('.').first.trimRight().toUpperCase();
+  if (RegExp(r'^(CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])$')
+      .hasMatch(stem)) {
     return 'This name is reserved on Windows.';
+  }
+  // Dart's UTF-8 encoder substitutes malformed UTF-16. Reject it rather than
+  // checking one spelling and sealing a different replacement-character name.
+  final units = name.codeUnits;
+  for (var i = 0; i < units.length; i++) {
+    final unit = units[i];
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      if (i + 1 == units.length ||
+          units[i + 1] < 0xdc00 ||
+          units[i + 1] > 0xdfff) {
+        return 'Use a valid Unicode filename.';
+      }
+      i++;
+    } else if (unit >= 0xdc00 && unit <= 0xdfff) {
+      return 'Use a valid Unicode filename.';
+    }
   }
   if (utf8.encode(name).length > 255) {
     return 'Use a shorter name (at most 255 UTF-8 bytes).';

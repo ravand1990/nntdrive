@@ -283,7 +283,13 @@ unchanged. Names are sealed by the native client for the existing node ID; only
 `name_enc` changes via `POST /files/{id}/rename`, so contents and immutable revision history are retained.
 The client refreshes siblings before renaming, decrypts their names locally and
 rejects case-insensitive collisions, unreadable names, stale source entries and
-non-portable path components. Failures leave the dialog workflow recoverable
+non-portable path components. Device-name validation includes Windows `COM¹`,
+`COM²`, `COM³` / `LPT¹`, `LPT²`, `LPT³` aliases and spaces before an extension
+(for example `NUL .txt`). Malformed UTF-16 is rejected before network access, so
+UTF-8 replacement cannot change the spelling between validation and encryption;
+valid supplementary characters such as emoji are retained. These are portable
+validation tests, not proof of installed Windows behavior.
+Failures leave the dialog workflow recoverable
 without displaying raw backend/native diagnostics. Sync still runs on its normal
 schedule or via **Sync now**, not as a side effect of renaming.
 

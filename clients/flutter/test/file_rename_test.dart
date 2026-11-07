@@ -18,7 +18,15 @@ void main() {
       'a:',
       'NUL.txt',
       'COM1',
+      'COM¹.txt',
+      'com²',
+      'LPT³.log',
+      'NUL .txt',
+      'CON   .log',
       'lpt9.doc',
+      String.fromCharCode(0xd800),
+      String.fromCharCode(0xdc00),
+      'report${String.fromCharCode(0xd800)}.txt',
       'x.',
       ' x',
       'x ',
@@ -29,7 +37,16 @@ void main() {
     }
     expect(renameValidationError('é' * 128), isNotNull);
     expect(renameValidationError('a' * 255), isNull);
-    for (final name in ['Report.pdf', 'Grüße.txt', '.hidden', 'COM10.txt']) {
+    for (final name in [
+      'Report.pdf',
+      'Grüße.txt',
+      '.hidden',
+      'COM10.txt',
+      'COM⁴.txt',
+      'emoji😀.txt',
+      'replacement�.txt',
+      'normal .txt'
+    ]) {
       expect(renameValidationError(name), isNull);
     }
   });
@@ -55,8 +72,10 @@ void main() {
     ];
     final patches = <Map<String, dynamic>>[];
     var renameStatus = HttpStatus.ok;
+    var requests = 0;
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final subscription = server.listen((request) async {
+      requests++;
       expect(request.headers.value('authorization'), 'Bearer test-token');
       request.response.headers.contentType = ContentType.json;
       if (request.method == 'GET') {
@@ -76,6 +95,10 @@ void main() {
     Future<void> rename(String name) =>
         renameRemoteEntry(api: api, handle: handle, file: file, name: name);
     try {
+      for (final invalid in ['COM¹.txt', 'NUL .txt', String.fromCharCode(0xd800)]) {
+        await expectLater(rename(invalid), throwsA(isA<RenameFailure>()));
+      }
+      expect(requests, 0); // Reject before any namespace read or mutation.
       await rename('Private new name.txt');
       expect(patches, hasLength(1));
       expect(patches.single.keys, ['name_enc', 'parent_id', 'siblings']);

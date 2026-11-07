@@ -13,6 +13,7 @@ release workflow refuses to publish if the entry is missing.
 
 ### Bug fixes
 
+- Rename rejects Windows superscript-digit device aliases and device stems with spaces before extensions; malformed UTF-16 names fail before network access rather than being silently substituted during UTF-8 encoding (#51 partial).
 - Desktop updater waits for the detached helper to start before exiting. Windows additionally requires a bounded preflight acknowledgement, preserves step diagnostics and payload backups, verifies copied files, and attempts rollback/restart with a visible failure dialog after replacement errors. Installed-build Windows acceptance remains pending (#49/#28).
 
 ## [0.5.0] - 2026-11-06
