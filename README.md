@@ -91,9 +91,9 @@ entry in that file before opening it (`sha256sum FILE` on Linux or
 
 | Device | Release file | Install / open |
 |---|---|---|
-| Windows x64 | `nntdrive-windows-x64.zip` | Extract the **whole** ZIP to a writable folder; run `nntdrive.exe` inside it. Keep the DLLs and other files alongside it. There is no signed installer yet. |
-| Linux x64 | `nntdrive-linux-x64.tar.gz` | Extract the **whole** archive; run `./nntdrive` from the extracted bundle. Keep its `lib` and `data` directories. |
-| Android | `nntdrive-android.apk` | Open the APK and allow installation from that source in Android settings. This test build is debug-signed, not a Play Store release. |
+| Windows x64 | `nntdrive-<version>-windows-x64.zip` (for example `nntdrive-0.5.1-windows-x64.zip`) | Extract the **whole** ZIP to a writable folder; run `nntdrive.exe` inside it. Keep the DLLs and other files alongside it. There is no signed installer yet. |
+| Linux x64 | `nntdrive-<version>-linux-x64.tar.gz` | Extract the **whole** archive; run `./nntdrive` from the extracted bundle. Keep its `lib` and `data` directories. |
+| Android | `nntdrive-<version>-android.apk` | Open the APK and allow installation from that source in Android settings. This test build is debug-signed, not a Play Store release. |
 
 In the app, enter your server's HTTPS URL (or `http://127.0.0.1:8080` **only if
 running on the server itself**). On a phone, `127.0.0.1` means the phone, not your
