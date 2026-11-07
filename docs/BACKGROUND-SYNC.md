@@ -8,8 +8,9 @@ Native regression tests exercise every sync entry point with a missing or
 revoked process-local key handle, checking rejection before journal creation or
 backend contact. Whole sync rounds and conflict resolution now hold an exclusive
 SQLite operation lease for their journal; competing owners fail visibly rather
-than scanning and publishing from the same baseline. Desktop tray/autostart and Android WorkManager are not installed
-or registered by this change. Closing the current desktop window still ends sync.
+than scanning and publishing from the same baseline. Desktop tray/autostart and
+Android WorkManager are not installed or registered by this change. Closing the
+current desktop window still ends sync.
 
 ## What prevents unattended cold-start sync today
 
@@ -128,6 +129,7 @@ before adding independent background schedulers.
   design first. Do not quietly add #7/#50 or weaken password-required unlocking.
 
 The current change supplies no Windows, Linux GUI, Android runtime, tray,
-autostart, duplicate-worker exclusion or WorkManager evidence. See the task
-handoff for exact executed check commands; passing unit tests is not platform
-acceptance.
+autostart, application-wide duplicate-worker exclusion or WorkManager evidence.
+The per-journal operation regressions above are narrower than application/session
+ownership. See the task handoff for exact executed check commands; passing unit
+tests is not platform acceptance.
