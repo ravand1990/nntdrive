@@ -236,7 +236,9 @@ and prompts are serialized across automatic and manual triggers, and offline or
 inaccessible feeds never prevent using the app. The updater:
 
 1. reads `releases/latest` and compares the tag with the installed version;
-2. selects `nntdrive-windows-x64.zip` or `nntdrive-linux-x64.tar.gz`;
+2. selects `nntdrive-<version>-windows-x64.zip` or
+   `nntdrive-<version>-linux-x64.tar.gz`, falling back to the unversioned name
+   used by older releases;
 3. downloads over HTTPS and verifies the SHA-256 from `SHA256SUMS.txt`;
 4. unpacks to a temporary directory and starts a detached helper;
 5. exits, letting the helper replace the install directory and restart the app.

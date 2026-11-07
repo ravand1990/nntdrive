@@ -1,9 +1,10 @@
 //! Desktop auto-updater backed by GitHub Releases.
 //!
-//! The release workflow attaches `nntdrive-windows-x64.zip`,
-//! `nntdrive-linux-x64.tar.gz` and `SHA256SUMS.txt`. This service checks the
-//! latest release, verifies the download, stages it, then hands off to a small
-//! helper that replaces the running app after it exits and restarts it.
+//! The release workflow attaches `nntdrive-<version>-windows-x64.zip`,
+//! `nntdrive-<version>-linux-x64.tar.gz` and `SHA256SUMS.txt`. This service
+//! checks the latest release, verifies the download, stages it, then hands off
+//! to a small helper that replaces the running app after it exits and restarts
+//! it.
 //!
 //! The release repository is private today. Users can enter a read-only token
 //! in the client's update settings; it is stored with the app's local settings.
@@ -137,11 +138,12 @@ class Updater {
     final assets = (release['assets'] as List? ?? const [])
         .whereType<Map<String, dynamic>>()
         .toList();
-    final assetName = platformAssetName();
-    final asset = assets.where((a) => a['name'] == assetName).firstOrNull;
+    final asset = selectPlatformAsset(assets, tag);
     if (asset == null) {
-      throw UpdateException('Release $tag has no $assetName asset.');
+      throw UpdateException(
+          'Release $tag has no ${platformAssetName(tag)} asset.');
     }
+    final assetName = asset['name'] as String;
     final sums = assets
         .where((a) => a['name'] == 'SHA256SUMS.txt')
         .firstOrNull;
@@ -309,10 +311,33 @@ extension<T> on Iterable<T> {
   T? get firstOrNull => isEmpty ? null : first;
 }
 
-String platformAssetName() {
-  if (Platform.isWindows) return 'nntdrive-windows-x64.zip';
-  if (Platform.isLinux) return 'nntdrive-linux-x64.tar.gz';
+String platformAssetSuffix() {
+  if (Platform.isWindows) return '-windows-x64.zip';
+  if (Platform.isLinux) return '-linux-x64.tar.gz';
   throw const UpdateException('No updater package exists for this platform.');
+}
+
+String platformAssetName(String version) =>
+    'nntdrive-$version${platformAssetSuffix()}';
+
+/// Returns the release asset for this platform: the versioned name first, then
+/// the unversioned alias kept for clients that predate versioned asset names.
+Map<String, dynamic>? selectPlatformAsset(
+    List<Map<String, dynamic>> assets, String version) {
+  final expected = platformAssetName(version);
+  for (final asset in assets) {
+    if (asset['name'] == expected) return asset;
+  }
+  final suffix = platformAssetSuffix();
+  for (final asset in assets) {
+    final name = asset['name'];
+    if (name is String &&
+        name.startsWith('nntdrive-') &&
+        name.endsWith(suffix)) {
+      return asset;
+    }
+  }
+  return null;
 }
 
 /// Compares dotted numeric versions, ignoring any `-prerelease` suffix.
