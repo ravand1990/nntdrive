@@ -599,7 +599,7 @@ async fn admins_can_edit_users_and_providers_in_place() {
     )
     .await;
     assert_eq!(s, StatusCode::OK, "{body}");
-    assert_eq!(body["restart_required"], true);
+    assert_eq!(body["restart_required"], false);
 
     let (_, body) = call(
         &env.state,
@@ -657,4 +657,242 @@ async fn find_message_id(env: &Env, stripe_id: &str) -> String {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[tokio::test]
+async fn provider_reload_transfers_and_fails_closed() {
+    let Some(env) = env().await else { return };
+    let admin = register(&env.state, "reload-admin@example.com").await;
+    let member = register(&env.state, "reload-member@example.com").await;
+    let server = MockNntpServer::start(MockConfig::default()).await;
+    let cfg = server.client_config();
+    let input = json!({"name":"live", "host":cfg.host, "port":cfg.port,
+        "tls":false, "groups":cfg.groups, "username":cfg.username, "password":cfg.password});
+    let (status, _) = call(
+        &env.state,
+        req(
+            "POST",
+            "/api/v1/admin/providers",
+            Some(&member.token),
+            Some(input.clone()),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, body) = call(
+        &env.state,
+        req(
+            "POST",
+            "/api/v1/admin/providers",
+            Some(&admin.token),
+            Some(input),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(body["applied"], true);
+    let path = format!("/api/v1/admin/providers/{}", body["id"].as_str().unwrap());
+    let old = env.state.storage.nntp();
+    let article = nntdrive_nntp::Article::new(
+        cfg.groups.clone(),
+        "opaque".into(),
+        nntdrive_nntp::yenc_encode("reload@invalid", b"ciphertext"),
+        "reload@invalid".into(),
+    );
+    assert_eq!(old.post(&article).await.unwrap(), "live");
+    assert_eq!(old.fetch("reload@invalid").await.unwrap(), b"ciphertext");
+    let data = b"encrypted-reload-first".to_vec();
+    let prepared = nntdrive_storage::prepare_chunk(
+        &admin.master,
+        &nntdrive_storage::Chunk {
+            index: 0,
+            offset: 0,
+            hash: *blake3::hash(&data).as_bytes(),
+            data,
+        },
+        3,
+    )
+    .unwrap();
+    let (entry, _) = env
+        .state
+        .storage
+        .publish_prepared(admin.account_id, &prepared)
+        .await
+        .unwrap();
+    assert!(!entry.stripes.is_empty());
+    assert!(env._server.store.article_ids().await.is_empty());
+
+    for invalid in [
+        json!({"port":0}),
+        json!({"max_connections":201}),
+        json!({"groups":["bad\r\ngroup"]}),
+    ] {
+        let (status, _) = call(
+            &env.state,
+            req("PATCH", &path, Some(&admin.token), Some(invalid)),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(Arc::ptr_eq(&old, &env.state.storage.nntp()));
+    }
+    let second = MockNntpServer::start(MockConfig::default()).await;
+    let cfg2 = second.client_config();
+    let (status, _) = call(
+        &env.state,
+        req(
+            "PATCH",
+            &path,
+            Some(&admin.token),
+            Some(json!({"host":cfg2.host,"port":cfg2.port})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let new = env.state.storage.nntp();
+    assert!(!Arc::ptr_eq(&old, &new));
+    new.post(&article).await.unwrap();
+    assert_eq!(new.fetch("reload@invalid").await.unwrap(), b"ciphertext");
+    let data = b"encrypted-reload-second".to_vec();
+    let prepared = nntdrive_storage::prepare_chunk(
+        &admin.master,
+        &nntdrive_storage::Chunk {
+            index: 0,
+            offset: 0,
+            hash: *blake3::hash(&data).as_bytes(),
+            data,
+        },
+        3,
+    )
+    .unwrap();
+    let (entry, _) = env
+        .state
+        .storage
+        .publish_prepared(admin.account_id, &prepared)
+        .await
+        .unwrap();
+    assert!(!entry.stripes.is_empty());
+    // Old snapshots remain usable, even after replacement/disable.
+    assert_eq!(old.fetch("reload@invalid").await.unwrap(), b"ciphertext");
+    let (status, _) = call(
+        &env.state,
+        req(
+            "PATCH",
+            &path,
+            Some(&admin.token),
+            Some(json!({"enabled":false})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(env.state.storage.nntp().providers().is_empty());
+    assert!(
+        nntdrive_backend::load_providers(&env.state.pool, &env.state.config.secret_key)
+            .await
+            .unwrap()
+            .providers()
+            .is_empty()
+    );
+    let (status, _) = call(&env.state, req("DELETE", &path, Some(&admin.token), None)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        nntdrive_backend::load_providers(&env.state.pool, &env.state.config.secret_key)
+            .await
+            .unwrap()
+            .providers()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn corrupt_provider_credentials_do_not_replace_pool() {
+    let Some(env) = env().await else { return };
+    let admin = register(&env.state, "corrupt-admin@example.com").await;
+    let cfg = env._server.client_config();
+    let (_, body) = call(
+        &env.state,
+        req(
+            "POST",
+            "/api/v1/admin/providers",
+            Some(&admin.token),
+            Some(json!({
+                "name":"sealed", "host":cfg.host,"port":cfg.port,"tls":false,
+                "username":"user", "password":"do-not-disclose"
+            })),
+        ),
+    )
+    .await;
+    let id = Uuid::parse_str(body["id"].as_str().unwrap()).unwrap();
+    let old = env.state.storage.nntp();
+    sqlx::query("UPDATE providers SET password_enc = $1 WHERE id = $2")
+        .bind(vec![0u8; 42])
+        .bind(id)
+        .execute(&env.state.pool)
+        .await
+        .unwrap();
+    assert!(
+        nntdrive_backend::load_providers(&env.state.pool, &env.state.config.secret_key)
+            .await
+            .is_err()
+    );
+    let (status, body) = call(
+        &env.state,
+        req(
+            "PATCH",
+            &format!("/api/v1/admin/providers/{id}"),
+            Some(&admin.token),
+            Some(json!({"name":"changed"})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(!body.to_string().contains("do-not-disclose"));
+    assert!(Arc::ptr_eq(&old, &env.state.storage.nntp()));
+    let name: String = sqlx::query_scalar("SELECT name FROM providers WHERE id = $1")
+        .bind(id)
+        .fetch_one(&env.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(name, "sealed");
+}
+
+#[tokio::test]
+async fn in_flight_storage_upload_keeps_one_provider_snapshot() {
+    use tokio::io::AsyncWriteExt;
+    let Some(env) = env().await else { return };
+    let admin = register(&env.state, "snapshot@example.com").await;
+    let ctx = nntdrive_storage::Context::new(admin.account_id, admin.master);
+    let second = MockNntpServer::start(MockConfig::default()).await;
+    let (mut writer, reader) = tokio::io::duplex(1024);
+    let upload = env
+        .state
+        .storage
+        .upload(&ctx, Uuid::new_v4(), Uuid::new_v4(), reader);
+    tokio::pin!(upload);
+    // Poll through operation admission, then block awaiting input.
+    tokio::select! {
+        result = &mut upload => panic!("upload completed before input: {:?}", result.err()),
+        _ = tokio::time::sleep(std::time::Duration::from_millis(20)) => {}
+    }
+    env.state.storage.replace_nntp(Arc::new(
+        NntpPool::new(vec![second.client_config()]).unwrap(),
+    ));
+    writer
+        .write_all(b"first snapshot ciphertext source")
+        .await
+        .unwrap();
+    writer.shutdown().await.unwrap();
+    upload.await.unwrap();
+    assert!(env._server.store.article_count().await > 0);
+    assert_eq!(second.store.article_count().await, 0);
+    env.state
+        .storage
+        .upload(
+            &ctx,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            &b"different subsequent content"[..],
+        )
+        .await
+        .unwrap();
+    assert!(second.store.article_count().await > 0);
 }

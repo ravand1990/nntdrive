@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Apply admin provider CRUD to the serving backend without restart, pinning one
+  provider snapshot per storage operation. Reject invalid configs/credentials
+  before commit; retain DB management when the final provider is removed.
+  Single-backend only; replica invalidation, retention administration and
+  reference-safe orphan garbage collection remain out of scope (partial #15).
+
+
 All notable changes are documented here. Every release tag **must** have an
 entry with `### Features` and/or `### Bug fixes` (at least one bullet). The
 release workflow refuses to publish if the entry is missing.

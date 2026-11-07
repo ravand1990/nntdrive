@@ -87,10 +87,10 @@ Requires `accounts.is_admin`.
 | GET | `/admin/stats` | users, storage, redundancy, cache, article health, jobs, providers |
 | GET | `/admin/users` | users, usage, quota, devices |
 | PATCH | `/admin/users/{id}` | `{disabled?,quota_bytes?,is_admin?}` |
-| GET/POST | `/admin/providers` | list (no passwords) / add (applies on restart) |
-| DELETE | `/admin/providers/{id}` | remove (applies on restart) |
+| GET/POST | `/admin/providers` | list (no passwords) / add (applied on serving backend) |
+| DELETE | `/admin/providers/{id}` | remove (applied on serving backend) |
 | GET/POST | `/admin/jobs` | list / enqueue `{kind,payload}` |
-| POST | `/admin/restart` | gracefully stop the backend so Compose/systemd restarts it (applies provider changes) |
+| POST | `/admin/restart` | gracefully stop the backend so Compose/systemd restarts it (not needed for provider CRUD) |
 | GET | `/admin/articles/verify` | STAT the 20 newest articles through the retrieval providers; returns per-article availability |
 | POST | `/admin/providers/{id}/test` | DNS/TLS/auth check for a stored provider (no posting) |
 
@@ -112,3 +112,13 @@ reachable, otherwise 503. It is safe for load balancers and Docker healthchecks.
 6. Local changes: chunk/encrypt locally, lookup/publish chunks, seal manifest,
    commit version with `base_revision`.
 7. Apply conflicts via the Rust sync engine; persist the new cursor.
+
+Provider `POST`, `PATCH /admin/providers/{id}` (omitted fields retained; blank
+password retains stored password), and `DELETE` require administrator auth.
+Success includes `restart_required: false` and `applied: true`. Replacement is
+local to the serving backend, not coordinated across replicas. Invalid configs
+or stored credentials roll back the mutation and retain the prior pool. Config
+validation does not probe connectivity. Disabling/deleting the last provider
+leaves no providers, with no environment fallback. See Operations for the sticky
+DB-managed marker and single-process limitation. Retention policy administration
+and reference-safe garbage collection are not implemented by this change.

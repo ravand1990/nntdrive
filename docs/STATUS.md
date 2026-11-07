@@ -199,8 +199,7 @@ provider when both aws-lc-rs and ring are in the dependency graph.
 7. **Virtual drives and native mobile integration**: FUSE/WinFsp mounts,
    Android DocumentsProvider + WorkManager, iOS File Provider + background
    transfers, photo/video backup.
-8. **Provider & admin operations**: live provider reload (edits still require a
-   restart), retention settings UI, stronger alerts and orphaned-chunk garbage
+8. **Provider & admin operations**: retention settings UI, stronger alerts and orphaned-chunk garbage
    collection.
 9. **Security review**: fuzz yEnc/NZB/article parsers, add proxy-level rate
    limiting guidance, password-reset policy, audit-log coverage and dependency
@@ -214,9 +213,10 @@ provider when both aws-lc-rs and ring are in the dependency graph.
 - SSE only supports `Authorization` headers (fine for Dart/Flutter HTTP clients,
   not for browser `EventSource`). The app does not yet consume SSE; it refreshes
   on demand and after sync.
-- Provider changes require a process restart (one click in the dashboard).
-  Providers can be edited in place, but the running NNTP pool picks them up only
-  after the restart.
+- Provider CRUD now applies a validated pool on the serving backend without a
+  restart. Active storage operations pin their old snapshot. Multi-backend
+  invalidation is not implemented; deploy one backend process. This is partial
+  #15 only: retention administration and reference-safe orphan GC remain open.
 - `nntdrive_storage::store::platform_totals` casts aggregate sums to `bigint` because
   PostgreSQL returns `numeric`; keep casts when editing.
 - Full-text search is impossible server-side (names/content encrypted); the

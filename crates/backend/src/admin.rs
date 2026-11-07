@@ -3,13 +3,13 @@
 use crate::auth::{seal_provider_password, AdminUser};
 use crate::error::{ApiError, ApiResult};
 use crate::jobs;
-use crate::state::{decrypt_secret, AppState};
+use crate::state::AppState;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
 use chrono::{DateTime, Utc};
-use nntdrive_nntp::{NntpConfig, Provider, ProviderRole};
+use nntdrive_nntp::Provider;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::Row;
@@ -176,7 +176,7 @@ pub async fn list_providers(
             "enabled": r.get::<bool, _>("enabled"),
             "created_at": r.get::<DateTime<Utc>, _>("created_at"),
         })).collect::<Vec<_>>(),
-        "note": "Provider changes are persisted and applied on the next backend restart."
+        "note": "Provider changes are applied immediately on this backend."
     })))
 }
 
@@ -218,11 +218,17 @@ fn default_groups() -> Vec<String> {
     vec!["alt.binaries.nntdrive".into()]
 }
 
-pub async fn create_provider(
+async fn create_provider_inner(
     State(state): State<AppState>,
     _admin: AdminUser,
     Json(body): Json<NewProvider>,
 ) -> ApiResult<impl IntoResponse> {
+    let _guard = state.provider_mutations.lock().await;
+    let mut tx = state.pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(706847102)")
+        .execute(&mut *tx)
+        .await?;
+
     if body.host.trim().is_empty() || body.name.trim().is_empty() {
         return Err(ApiError::BadRequest("name and host are required".into()));
     }
@@ -247,6 +253,11 @@ pub async fn create_provider(
             "username and password must be provided together".into(),
         ));
     }
+    if !(1..=200).contains(&body.max_connections)
+        || body.retention_days.is_some_and(|d| d > i32::MAX as u32)
+    {
+        return Err(ApiError::BadRequest("invalid provider limits".into()));
+    }
     let password_enc = body
         .password
         .as_ref()
@@ -270,15 +281,26 @@ pub async fn create_provider(
     .bind(&body.groups)
     .bind(body.retention_days.map(|d| d as i32))
     .bind(body.enabled)
-    .execute(&state.pool)
+    .execute(&mut *tx)
     .await
     .map_err(|e| match e.as_database_error() {
         Some(db) if db.is_unique_violation() => ApiError::Conflict("provider name exists".into()),
         _ => ApiError::Db(e),
     })?;
+    let pool = crate::load_db_providers(&mut tx, &state.config.secret_key)
+        .await
+        .map_err(|_| {
+            ApiError::BadRequest("invalid provider configuration or credentials".into())
+        })?;
+    sqlx::query("INSERT INTO provider_management VALUES (true) ON CONFLICT DO NOTHING")
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    // The detached mutation task finishes publication even if the request disconnects.
+    state.storage.replace_nntp(std::sync::Arc::new(pool));
     Ok((
         StatusCode::CREATED,
-        Json(json!({ "id": id, "restart_required": true })),
+        Json(json!({ "id": id, "restart_required": false, "applied": true })),
     ))
 }
 
@@ -300,18 +322,24 @@ pub struct PatchProvider {
 
 /// Edits a provider in place. Fields left out keep their current value. A blank
 /// password keeps the stored one; clearing the username clears both.
-pub async fn patch_provider(
+async fn patch_provider_inner(
     State(state): State<AppState>,
     _admin: AdminUser,
     Path(id): Path<Uuid>,
     Json(body): Json<PatchProvider>,
 ) -> ApiResult<impl IntoResponse> {
+    let _guard = state.provider_mutations.lock().await;
+    let mut tx = state.pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(706847102)")
+        .execute(&mut *tx)
+        .await?;
+
     let row = sqlx::query(
         "SELECT name, host, port, tls, username, password_enc, max_connections, role,
                 priority, groups, retention_days, enabled FROM providers WHERE id = $1",
     )
     .bind(id)
-    .fetch_optional(&state.pool)
+    .fetch_optional(&mut *tx)
     .await?
     .ok_or(ApiError::NotFound)?;
 
@@ -341,7 +369,9 @@ pub async fn patch_provider(
     let max_connections = body
         .max_connections
         .unwrap_or_else(|| row.get::<i32, _>("max_connections").max(1) as usize);
-    if max_connections == 0 {
+    if !(1..=200).contains(&max_connections)
+        || body.retention_days.is_some_and(|d| d > i32::MAX as u32)
+    {
         return Err(ApiError::BadRequest(
             "max connections must be at least 1".into(),
         ));
@@ -402,35 +432,63 @@ pub async fn patch_provider(
     .bind(&groups)
     .bind(retention_days)
     .bind(body.enabled.unwrap_or_else(|| row.get("enabled")))
-    .execute(&state.pool)
+    .execute(&mut *tx)
     .await
     .map_err(|e| match e.as_database_error() {
         Some(db) if db.is_unique_violation() => ApiError::Conflict("provider name exists".into()),
         _ => ApiError::Db(e),
     })?;
 
+    let pool = crate::load_db_providers(&mut tx, &state.config.secret_key)
+        .await
+        .map_err(|_| {
+            ApiError::BadRequest("invalid provider configuration or credentials".into())
+        })?;
+    sqlx::query("INSERT INTO provider_management VALUES (true) ON CONFLICT DO NOTHING")
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    // The detached mutation task finishes publication even if the request disconnects.
+    state.storage.replace_nntp(std::sync::Arc::new(pool));
     Ok(Json(json!({
         "id": id,
         "status": "updated",
-        "restart_required": true
+        "restart_required": false, "applied": true
     })))
 }
 
-pub async fn delete_provider(
+async fn delete_provider_inner(
     State(state): State<AppState>,
     _admin: AdminUser,
     Path(id): Path<Uuid>,
 ) -> ApiResult<impl IntoResponse> {
+    let _guard = state.provider_mutations.lock().await;
+    let mut tx = state.pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(706847102)")
+        .execute(&mut *tx)
+        .await?;
+
     let n = sqlx::query("DELETE FROM providers WHERE id = $1")
         .bind(id)
-        .execute(&state.pool)
+        .execute(&mut *tx)
         .await?
         .rows_affected();
     if n == 0 {
         return Err(ApiError::NotFound);
     }
+    let pool = crate::load_db_providers(&mut tx, &state.config.secret_key)
+        .await
+        .map_err(|_| {
+            ApiError::BadRequest("invalid provider configuration or credentials".into())
+        })?;
+    sqlx::query("INSERT INTO provider_management VALUES (true) ON CONFLICT DO NOTHING")
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    // The detached mutation task finishes publication even if the request disconnects.
+    state.storage.replace_nntp(std::sync::Arc::new(pool));
     Ok(Json(
-        json!({ "status": "deleted", "restart_required": true }),
+        json!({ "status": "deleted", "restart_required": false, "applied": true }),
     ))
 }
 
@@ -536,38 +594,15 @@ pub async fn test_provider(
 ) -> ApiResult<impl IntoResponse> {
     let row = sqlx::query(
         "SELECT name, host, port, tls, username, password_enc, max_connections, role,
-                priority, groups FROM providers WHERE id = $1",
+                priority, groups, retention_days FROM providers WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(&state.pool)
     .await?
     .ok_or(ApiError::NotFound)?;
-    let password = row
-        .get::<Option<Vec<u8>>, _>("password_enc")
-        .and_then(|blob| decrypt_secret(&state.config.secret_key, &blob))
-        .and_then(|bytes| String::from_utf8(bytes).ok());
-    let role = match row.get::<String, _>("role").as_str() {
-        "posting_only" => ProviderRole::PostingOnly,
-        "retrieval_only" => ProviderRole::RetrievalOnly,
-        _ => ProviderRole::Both,
-    };
-    let config = NntpConfig {
-        name: row.get("name"),
-        host: row.get("host"),
-        port: row.get::<i32, _>("port") as u16,
-        tls: row.get("tls"),
-        username: row.get("username"),
-        password,
-        max_connections: row.get::<i32, _>("max_connections").max(1) as usize,
-        role,
-        priority: row.get::<i32, _>("priority") as u8,
-        groups: row.get("groups"),
-        message_id_domain: "nntdrive.local".into(),
-        connect_timeout_secs: 15,
-        io_timeout_secs: 20,
-        retention_days: None,
-        max_retries: 0,
-    };
+    let config = crate::provider_config(&row, &state.config.secret_key).map_err(|_| {
+        ApiError::BadRequest("invalid provider configuration or credentials".into())
+    })?;
     let provider = Provider::new(config).map_err(|e| ApiError::BadRequest(e.to_string()))?;
     match provider.stat("nntdrive-connectivity-probe@invalid").await {
         Ok(_) => Ok(Json(json!({
@@ -596,4 +631,50 @@ pub async fn restart_backend(
         "status": "restarting",
         "message": "backend is restarting; retry in a few seconds"
     })))
+}
+
+/// Finish an admitted mutation even if its HTTP request is cancelled during COMMIT.
+pub async fn create_provider(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Json(body): Json<NewProvider>,
+) -> ApiResult<axum::response::Response> {
+    tokio::spawn(async move {
+        create_provider_inner(State(state), admin, Json(body))
+            .await
+            .map(IntoResponse::into_response)
+    })
+    .await
+    .map_err(|_| ApiError::Internal(anyhow::anyhow!("provider mutation task failed")))?
+}
+
+/// Finish an admitted mutation even if its HTTP request is cancelled during COMMIT.
+pub async fn patch_provider(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<PatchProvider>,
+) -> ApiResult<axum::response::Response> {
+    tokio::spawn(async move {
+        patch_provider_inner(State(state), admin, Path(id), Json(body))
+            .await
+            .map(IntoResponse::into_response)
+    })
+    .await
+    .map_err(|_| ApiError::Internal(anyhow::anyhow!("provider mutation task failed")))?
+}
+
+/// Finish an admitted mutation even if its HTTP request is cancelled during COMMIT.
+pub async fn delete_provider(
+    State(state): State<AppState>,
+    admin: AdminUser,
+    Path(id): Path<Uuid>,
+) -> ApiResult<axum::response::Response> {
+    tokio::spawn(async move {
+        delete_provider_inner(State(state), admin, Path(id))
+            .await
+            .map(IntoResponse::into_response)
+    })
+    .await
+    .map_err(|_| ApiError::Internal(anyhow::anyhow!("provider mutation task failed")))?
 }
