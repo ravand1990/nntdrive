@@ -138,8 +138,14 @@ missing remote folders are created before uploads. Uploads and downloads stream
 files to/from disk (no whole-file buffering), and a local cache of remote content
 hashes allows same-content convergence and remote file-rename detection. The
 Flutter sync controller stores one journal per selected folder, supports a base
-folder plus additional folders, runs every five minutes while the app is open,
-and exposes manual sync/pause. Per-folder exclusions keep chosen subtrees out of
+folder plus additional folders, runs every five minutes while the unlocked
+process lives (including a hidden Windows/Linux tray window), and exposes manual
+sync/pause. The application session owns that controller; close does not spawn a
+worker or allocate a new journal. Quit/sign-out stop admissions, drain operations
+and lock the handle. A per-settings-directory process lock precedes preference
+loading; whole-operation per-journal leases are an additional boundary. See
+[background sync](BACKGROUND-SYNC.md) for tray support, limits and outstanding
+installed-platform acceptance. Per-folder exclusions keep chosen subtrees out of
 both scanning and the remote snapshot; conflict copies are listed in a review
 panel. Concurrent edits preserve conflict copies.
 

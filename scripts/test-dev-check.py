@@ -31,8 +31,8 @@ class WrapperTests(unittest.TestCase):
         self.env = dict(os.environ, PATH=f"{bin_dir}:{os.environ['PATH']}",
                         DOCKER_CALLS=str(self.calls))
 
-    def run_wrapper(self, action):
-        return subprocess.run(["bash", str(self.root / "scripts/dev-check.sh"), action],
+    def run_wrapper(self, action, *args):
+        return subprocess.run(["bash", str(self.root / "scripts/dev-check.sh"), action, *args],
                               env=self.env, capture_output=True, text=True)
 
     def test_config_is_scoped_and_cleans_up(self):
@@ -44,6 +44,14 @@ class WrapperTests(unittest.TestCase):
             self.assertIn("--env-file /dev/null --project-name nntdrive-check-", call)
             self.assertIn(str(self.root / "deploy/docker-compose.checks.yml"), call)
         self.assertTrue(calls[0].endswith(" config"))
+        self.assertTrue(calls[1].endswith(" down --timeout 10"))
+
+    def test_custom_flutter_command_uses_isolated_service_and_cleanup(self):
+        result = self.run_wrapper("flutter-exec", "dart", "format", "lib/desktop_host.dart")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.calls.read_text().splitlines()
+        self.assertEqual(len(calls), 2)
+        self.assertIn("run --rm --no-deps -T flutter dart format lib/desktop_host.dart", calls[0])
         self.assertTrue(calls[1].endswith(" down --timeout 10"))
 
     def test_overlap_never_calls_docker(self):

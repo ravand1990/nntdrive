@@ -11,6 +11,8 @@ import 'dart:isolate';
 
 import 'package:ffi/ffi.dart';
 
+import 'session_operations.dart';
+
 class NativeException implements Exception {
   NativeException(this.message);
   final String message;
@@ -77,6 +79,11 @@ class NativeBridge {
 
   static NativeBridge? _instance;
   static NativeBridge get instance => _instance ??= NativeBridge._(_open());
+
+  final _operations = SessionOperations();
+
+  /// Stop admitting handle-based workers and wait for their terminal callbacks.
+  Future<void> drainSession(int handle) => _operations.drain(handle);
 
   final DynamicLibrary _lib;
   late final _FreeDart _free;
@@ -309,6 +316,28 @@ class NativeBridge {
     required String journalPath,
     required String deviceName,
     String excludedJson = '[]',
+  }) =>
+      _operations.run(
+          handle,
+          () => _syncRunAsync(
+              handle: handle,
+              baseUrl: baseUrl,
+              token: token,
+              remoteRootId: remoteRootId,
+              localPath: localPath,
+              journalPath: journalPath,
+              deviceName: deviceName,
+              excludedJson: excludedJson));
+
+  Future<Map<String, dynamic>> _syncRunAsync({
+    required int handle,
+    required String baseUrl,
+    required String token,
+    required String remoteRootId,
+    required String localPath,
+    required String journalPath,
+    required String deviceName,
+    String excludedJson = '[]',
   }) {
     final args = <String, dynamic>{
       'handle': handle,
@@ -339,6 +368,12 @@ class NativeBridge {
   /// Runs the core off the UI thread. NativeCallable.listener is deliberately
   /// created on the receiving isolate: Tokio threads may emit events freely.
   Future<Map<String, dynamic>> syncRequestAsync(
+          int handle, Map<String, dynamic> request,
+          {void Function(Map<String, dynamic>)? onProgress}) =>
+      _operations.run(handle,
+          () => _syncRequestAsync(handle, request, onProgress: onProgress));
+
+  Future<Map<String, dynamic>> _syncRequestAsync(
       int handle, Map<String, dynamic> request,
       {void Function(Map<String, dynamic>)? onProgress}) async {
     // Fail before creating a callback if an old DLL is accidentally bundled.
@@ -398,6 +433,26 @@ class NativeBridge {
     required String revisionId,
     required String parentRevision,
     required String path,
+  }) =>
+      _operations.run(
+          handle,
+          () => _uploadAsync(
+              handle: handle,
+              baseUrl: baseUrl,
+              token: token,
+              fileId: fileId,
+              revisionId: revisionId,
+              parentRevision: parentRevision,
+              path: path));
+
+  Future<Map<String, dynamic>> _uploadAsync({
+    required int handle,
+    required String baseUrl,
+    required String token,
+    required String fileId,
+    required String revisionId,
+    required String parentRevision,
+    required String path,
   }) {
     final args = <String, dynamic>{
       'handle': handle,
@@ -423,6 +478,24 @@ class NativeBridge {
   }
 
   Future<Map<String, dynamic>> downloadAsync({
+    required int handle,
+    required String baseUrl,
+    required String token,
+    required String fileId,
+    required String revisionId,
+    required String destination,
+  }) =>
+      _operations.run(
+          handle,
+          () => _downloadAsync(
+              handle: handle,
+              baseUrl: baseUrl,
+              token: token,
+              fileId: fileId,
+              revisionId: revisionId,
+              destination: destination));
+
+  Future<Map<String, dynamic>> _downloadAsync({
     required int handle,
     required String baseUrl,
     required String token,

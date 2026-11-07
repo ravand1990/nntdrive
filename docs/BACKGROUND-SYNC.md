@@ -2,15 +2,18 @@
 
 ## Delivery status
 
-This is a **partial implementation / design handoff**, not a background service.
-The unlock screen now explains that sync is paused while the vault is locked.
-Native regression tests exercise every sync entry point with a missing or
-revoked process-local key handle, checking rejection before journal creation or
-backend contact. Whole sync rounds and conflict resolution now hold an exclusive
-SQLite operation lease for their journal; competing owners fail visibly rather
-than scanning and publishing from the same baseline. Desktop tray/autostart and
-Android WorkManager are not installed or registered by this change. Closing the
-current desktop window still ends sync.
+This is a **partial background-service delivery**. Windows/Linux now have a
+same-process close-to-tray lifecycle: hiding retains the unlocked session and its
+single sync controller/timer. Tray actions provide Open, generic sync state,
+Pause/Resume and Quit. Closing only hides when a restore path is available;
+otherwise it drains and quits. This does **not** implement autostart, automatic
+unlock, an independent service, or mobile scheduling.
+
+The unlock screen explains that sync is paused while the vault is locked.
+Native regressions reject missing/revoked process-local handles before journal
+creation/backend contact. Whole sync rounds and conflict resolution retain the
+existing exclusive per-journal operation lease; tray actions never allocate a
+second journal namespace or scheduler.
 
 ## What prevents unattended cold-start sync today
 
@@ -21,9 +24,10 @@ current desktop window still ends sync.
   table. `key(handle)` rejects missing/revoked handles. Each sync entry point
   checks this before opening its journal or making remote requests. An integer
   saved by Dart cannot restore the key after process death or in another process.
-- `SyncController` owns a five-minute Dart timer under `FilesPage`. There is no
-  durable worker, interprocess session transport, or lifecycle-independent owner.
-  Hiding a window could retain an already-unlocked process; restarting it cannot.
+- The unlocked application session owns `SyncController` and its five-minute
+  Dart timer independently of route/window visibility. There is still no durable
+  worker or interprocess unlocked-session transport. Hiding retains an unlocked
+  process; restarting it cannot.
 - Moving the password-wrapped keyfile into an OS key store (#7) alone does **not**
   unlock it. Automatic unlock would require a separately approved device-key /
   OS-unlock policy. Password remembering (#50) is outside #6 and this change.
@@ -35,24 +39,61 @@ honestly promise automatic encrypted sync after login with today's key policy.
 This is a security constraint on cold starts, not a claim that close-to-tray is
 impossible while the unlocked process remains alive.
 
-## Smallest safe implementation to finish
+## Same-process desktop behavior
+
+- Closing hides; **Open NNTDrive** restores the same widget tree/session. Hiding
+  is **not locking**: decrypted authority stays in memory and sync continues.
+  Lock the OS session when leaving the device. Use **Sign out** to revoke the
+  local key handle; use **Quit NNTDrive** to drain and exit. Quit preserves the
+  existing password-wrapped login settings, never an unlocked handle/password.
+- Pause is the existing persisted user preference, not cancellation. Running
+  operations finish. Quit/sign-out permanently stop both initial and periodic
+  timers, reject new work and wait for admitted sync/conflict/file operations
+  (including terminal native progress callbacks), then lock keys. Shutdown can
+  take as long as active I/O; no timeout frees a key/callback early. File pickers
+  and confirmation dialogs do not hold the drain open; late submissions fail
+  closed. Sign-out pops stale sync routes before allowing another account.
+- A support-directory `desktop-session.lock` is held before preferences load.
+  Another process cannot unlock or open journals under those settings. Never
+  delete/replace this file while an owner may live. GTK's application bus and a
+  Windows session-local named mutex additionally activate an existing window on
+  normal relaunch. Startup races/missing desktop bus/lock failures fail visibly
+  without starting another sync session. Different support directories and older
+  versions are not protected by this application lock; per-journal leases still
+  apply. Use only local support/journal filesystems.
+- `window_manager` **0.5.2** and `tray_manager` **0.5.3** are pinned to their
+  platform-plugin releases (published July/June 2026). The existing client had no
+  tray/window dependency. These LeanFlutter plugins use native window APIs and
+  Ayatana AppIndicator on Linux; adopting their newer `nativeapi` API migration
+  is deliberately separate. Lockfile records transitive dependencies/checksums.
+- Windows checks the actual tray-icon bounds before hiding. Linux requires an
+  active `org.kde.StatusNotifierWatcher` with a registered host on the session
+  bus; without a compatible panel/extension, close drains and quits. Successful
+  icon/menu setup alone is not treated as proof of a Linux tray. A two-second
+  watchdog restores a hidden window after host loss. Menu/setup/hide failures
+  never intentionally leave a hidden app with no restore path. Runtime desktops
+  still need manual acceptance below (including panel/shell restart).
+- Linux builds require `libayatana-appindicator3-dev`; installed bundles require
+  its runtime library and a working tray host (e.g. an AppIndicator-enabled
+  desktop panel). macOS/mobile close behavior is unchanged. No OS login entry,
+  service, worker, password/key store or background permission is registered.
+
+## Remaining background-service scope
 
 ### Desktop (Windows and Linux)
 
-1. One per-user application/session owner with an OS-held single-instance lock;
-   subsequent launches activate its window rather than start another controller.
-   Acquire ownership before reading/writing sync settings or opening journals.
+1. Validate the implemented per-settings-directory owner and native relaunch
+   activation on installed Windows/Linux builds, including simultaneous startup.
+   Settings ownership must precede settings/journal access.
 2. Explicit opt-in start-at-login using the installed executable's stable path,
    with platform-correct quoting, disable/removal and visible registration errors.
    Start locked after login/restart; do not silently change the vault policy.
-3. Close hides the window only when a working tray restore/quit path exists.
-   Tray exposes Open, sync state, Pause/Resume and Quit. An unsupported tray must
-   not strand an invisible process. Keep the existing controller alive on hide;
-   do not create a second journal namespace or second scheduler.
-4. Quit/sign-out stop scheduling, drain native operations, then lock/release keys.
-   `key()` currently clones the master key for a running native request: locking
-   its registry entry does not cancel an already-started operation. Do not claim
-   immediate cancellation or free callback lifetimes early.
+3. Validate close/restore, status, Pause/Resume, Quit and tray-host loss with an
+   actual panel/shell. The implemented hide path must retain the existing
+   controller without a second journal namespace or scheduler.
+4. Validate drain-before-lock on quit/sign-out with real active transfers.
+   `key()` clones the master key for a running native request: registry revocation
+   alone cannot cancel it. Keep callback lifetimes until terminal completion.
 5. Keep the folder ID journal path and remote-hash sidecar unchanged. SQLite's
    serialized individual writes are not a whole-sync-operation ownership lock:
    two processes could scan the same baseline and publish conflicting actions.
@@ -109,8 +150,33 @@ local filesystem**. It is not a global application single-instance lock: two
 configurations pointing the same sync root at different journals are not detected,
 and older clients do not participate. Do not run mixed-version owners, place the
 journal/sidecar on a network filesystem, or rename/delete them while syncing.
-Application ownership and stable per-folder journal mapping are still required
-before adding independent background schedulers.
+The application now has a per-settings-directory process owner; global root
+ownership across different settings/journal mappings remains outside that lock.
+Independent background schedulers must share this ownership and the stable
+per-folder journal mapping.
+
+## Verification of the same-process increment
+
+On the uncommitted increment over `fe07f15861e5149ecbbe2021b7d1f902a3f9b44b`:
+
+- `bash scripts/dev-check.sh build`: exit 0, adds Ayatana only to the container.
+- `bash scripts/dev-check.sh all`: exit 0; formatting/check/Clippy, real
+  PostgreSQL/no DB skips, **98 Rust passes** (one enumerated subprocess helper
+  ignored, exercised by its process-death parent), release FFI, clean Flutter
+  analysis, **39 Flutter passes / 3 existing Windows-only skips**.
+- `bash scripts/dev-check.sh flutter-exec bash -ec 'mkdir -p linux/lib; cp
+  /target/release/libnntdrive_ffi.so linux/lib/libnntdrive_ffi.so; flutter build
+  linux --release --no-pub; test -f
+  build/linux/x64/release/bundle/lib/libnntdrive_ffi.so; ldd
+  build/linux/x64/release/bundle/nntdrive; ldd
+  build/linux/x64/release/bundle/lib/libnntdrive_ffi.so'`: exit 0; native tray/window
+  plugins and Rust library bundled; no missing dynamic libraries. This is a
+  **build/link** check, not a GUI or tray-panel test.
+- `python3 scripts/test-dev-check.py`, `python3 scripts/test-ci-contracts.py`,
+  `python3 scripts/test-workflow-performance.py`,
+  `python3 scripts/test-agent-policy.py`: 5/5/4/7 passes; Bash syntax and
+  `git diff --check` pass. The custom wrapper command retains the same
+  worktree lock, internal-only service and automatic cleanup.
 
 ## Required evidence before #6 is complete
 
@@ -128,8 +194,11 @@ before adding independent background schedulers.
   If unattended cold-login sync is mandatory, approve a separate secure device-key
   design first. Do not quietly add #7/#50 or weaken password-required unlocking.
 
-The current change supplies no Windows, Linux GUI, Android runtime, tray,
-autostart, application-wide duplicate-worker exclusion or WorkManager evidence.
-The per-journal operation regressions above are narrower than application/session
-ownership. See the task handoff for exact executed check commands; passing unit
-tests is not platform acceptance.
+Automated tests exercise close/restore and tray-loss/error policy through a fake
+host; no-drain-on-hide; quit ordering/idempotence; failed and successful operation
+draining; timer cancellation/late startup; real child-process settings-lock
+exclusion/kill recovery; native async admission after drain; and real-FFI widget
+unlock, controller reuse and sign-out lock ordering. These are not installed
+platform acceptance. The Linux release bundle builds in the repository container.
+No Windows GUI/build, live Linux tray/panel, Android runtime, autostart or
+WorkManager acceptance is claimed. #6 remains incomplete.
