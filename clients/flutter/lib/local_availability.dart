@@ -93,8 +93,14 @@ Future<LocalAvailability> inspectLocalAvailability({
       if (!p.isWithin(root, current)) return LocalAvailability.unknown;
       final type = await FileSystemEntity.type(current, followLinks: false);
       if (type == FileSystemEntityType.notFound) {
-        return LocalAvailability('Cloud only',
-            'No copy exists at the expected synced path.',
+        // Only a missing leaf has a validated containing directory. A missing
+        // ancestor must not let cached conflict discovery bypass confinement.
+        final conflict = !isDir && i == components.length - 1 &&
+            await _hasSafeConflictCopy(folder, relative, current);
+        return LocalAvailability(conflict ? 'Conflict' : 'Cloud only',
+            conflict
+                ? 'The original is missing, but a preserved conflict copy exists in its containing directory; review revalidates the pair.'
+                : 'No copy exists at the expected synced path.',
             folder: folder, relativePath: relative, isDirectory: isDir);
       }
       final expected = i == components.length - 1 && !isDir
@@ -112,24 +118,7 @@ Future<LocalAvailability> inspectLocalAvailability({
     }
     var conflict = !isDir && folder.conflictFiles.contains(relative);
     if (!isDir && !conflict) {
-      // Only infer pairs in this already-validated containing directory. Never
-      // trust cached discovery alone: removed, directory or linked copies do not
-      // establish a current conflict. This remains a candidate, not proof that
-      // the pair is journal-valid; conflict resolution revalidates in the core.
-      for (final copy in folder.conflictFiles) {
-        if (p.posix.dirname(copy) != p.posix.dirname(relative) ||
-            originalConflictPath(copy) != relative ||
-            copy.split('/').any((part) => renameValidationError(part) != null)) {
-          continue;
-        }
-        final candidate = p.join(p.dirname(current), p.posix.basename(copy));
-        if (await FileSystemEntity.type(candidate, followLinks: false) ==
-                FileSystemEntityType.file &&
-            p.equals(await File(candidate).resolveSymbolicLinks(), candidate)) {
-          conflict = true;
-          break;
-        }
-      }
+      conflict = await _hasSafeConflictCopy(folder, relative, current);
     }
     return LocalAvailability(conflict ? 'Conflict' : 'Local',
         conflict
@@ -140,6 +129,27 @@ Future<LocalAvailability> inspectLocalAvailability({
     return const LocalAvailability(
         'Error', 'The expected synced path could not be inspected.');
   }
+}
+
+// The caller has validated every containing component, without following links.
+// Discovery is only a hint: recheck same-directory regular-file presence. This
+// establishes a conflict candidate, not journal validity or revision equality.
+Future<bool> _hasSafeConflictCopy(
+    SyncFolderConfig folder, String relative, String current) async {
+  for (final copy in folder.conflictFiles) {
+    if (p.posix.dirname(copy) != p.posix.dirname(relative) ||
+        originalConflictPath(copy) != relative ||
+        copy.split('/').any((part) => renameValidationError(part) != null)) {
+      continue;
+    }
+    final candidate = p.join(p.dirname(current), p.posix.basename(copy));
+    if (await FileSystemEntity.type(candidate, followLinks: false) ==
+            FileSystemEntityType.file &&
+        p.equals(await File(candidate).resolveSymbolicLinks(), candidate)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /// Resolve ancestry from fresh listings; never trust the breadcrumb's cached

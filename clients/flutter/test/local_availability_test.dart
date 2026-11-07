@@ -185,6 +185,44 @@ void main() {
     }
   });
 
+  test('missing original retains safe same-directory conflict without reveal', () async {
+    const copy = 'a (conflict device 123).txt';
+    folder.conflictFiles = [copy];
+    final preserved = await File(p.join(root.path, copy)).writeAsString('mine');
+    final state = await inspect();
+    expect(state.label, 'Conflict');
+    expect(state.path, isNull);
+    expect(state.explanation, contains('original is missing'));
+    folder.running = true;
+    folder.progress = {'path': 'a.txt', 'complete': false};
+    expect(state.displayLabel, 'Conflict');
+    await expectLater(revealLocalAvailability(inspect,
+        launch: (_, __) async => fail('Missing original must not launch')),
+        throwsStateError);
+    await preserved.delete();
+    expect((await inspect()).label, 'Cloud only');
+    await Directory(preserved.path).create();
+    expect((await inspect()).label, 'Cloud only');
+    await Directory(preserved.path).delete();
+    if (!Platform.isWindows) {
+      final outside = await File(p.join(sandbox.path, 'outside')).writeAsString('mine');
+      await Link(preserved.path).create(outside.path);
+      expect((await inspect()).label, 'Cloud only');
+    }
+  });
+
+  test('missing ancestor never infers conflicts from another directory', () async {
+    const copy = 'a (conflict device 123).txt';
+    await File(p.join(root.path, copy)).writeAsString('mine');
+    folder.conflictFiles = ['missing/$copy', '../$copy', copy];
+    final state = await inspectLocalAvailability(
+        ancestry: [(id: 'root', name: 'Root'), (id: 'dir', name: 'missing'),
+          (id: 'file', name: 'a.txt')], folders: [folder], isDir: false);
+    expect(state.label, 'Cloud only');
+    expect(state.path, isNull);
+    expect((await inspect(isDir: true)).label, 'Cloud only');
+  });
+
   test('conflict in another directory never marks same-basename original', () async {
     await File(p.join(root.path, 'a.txt')).writeAsString('local');
     await Directory(p.join(root.path, 'nested')).create();

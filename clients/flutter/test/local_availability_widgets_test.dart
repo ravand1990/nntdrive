@@ -32,6 +32,7 @@ void main() {
   testWidgets('cloud-only and unknown reveal are disabled with text explanations', (tester) async {
     for (final state in [
       const LocalAvailability('Cloud only', 'No copy exists at the expected synced path.'),
+      const LocalAvailability('Conflict', 'The original is missing; a preserved conflict copy exists.'),
       LocalAvailability.unknown,
       const LocalAvailability('Not covered', 'No configured sync folder covers this entry.'),
     ]) {

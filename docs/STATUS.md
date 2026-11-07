@@ -118,8 +118,9 @@ scanner comparison is unchanged. Rows now inspect disk-derived local presence,
 show explicit coverage/unknown/error/conflict-candidate labels,
 and offer desktop reveal after fresh ancestry/confinement revalidation. Syncing
 now marks only the exact active nonterminal transfer path; discovered preserved
-copies also mark their present same-directory originals after disk validation.
-Refresh rescans conflict candidates. Presence is not a content-equality claim;
+copies also mark their same-directory originals after disk validation, including
+missing original leaves without enabling reveal. Missing ancestors cannot infer
+a pair. Refresh rescans conflict candidates. Presence is not a content-equality claim;
 full browser journal/revision reconciliation remains incomplete. The sync core
 now records matching remote revisions for identical independent additions/edits
 after fresh local hash/type/size and non-link checks, with no content transfer.

@@ -327,9 +327,11 @@ exists but the expected path is absent. **Not covered** explains missing sync
 configuration or selective-sync exclusions; **Unknown** means mapping could not
 be established safely (including unreadable or ambiguous sibling names).
 **Error** indicates an inaccessible/missing root or unsafe/unexpected local path.
-**Conflict** identifies an existing discovered conflict copy and its present
-same-directory original, after checking the copy is still a regular, non-linked
-file. This is a proposed pair, not journal-verified conflict resolution; review
+**Conflict** identifies an existing discovered conflict copy and its
+same-directory original, even when the original leaf is missing, after checking
+the copy is still a regular, non-linked file in a validated containing directory.
+An absent original remains non-revealable; a missing ancestor cannot establish a
+pair. This is a proposed pair, not journal-verified conflict resolution; review
 revalidates hashes/revisions. Discovery is refreshed with the browser and after
 sync (up to 500 copies per root). **Syncing** identifies only the exact relative
 path of the covering root's active, nonterminal file-transfer event; unrelated
