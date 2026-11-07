@@ -121,6 +121,26 @@ void main() {
         bridge.lock(foreignHandle);
       }
       await expectLater(rename('TAKEN.TXT'), throwsA(isA<RenameFailure>()));
+      // Canonical equivalents must collide in either direction, including
+      // combining-mark reordering and algorithmic Hangul composition.
+      for (final pair in [
+        ['Café.txt', 'CAFE\u0301.TXT'],
+        ['Cafe\u0301.txt', 'CAFÉ.TXT'],
+        ['a\u0323\u0302.txt', 'a\u0302\u0323.TXT'],
+        ['가.txt', '\u1100\u1161.TXT'],
+      ]) {
+        rows[1]['name_enc'] = bridge.sealName(handle, siblingId, pair[0]);
+        await expectLater(rename(pair[1]), throwsA(isA<RenameFailure>()));
+        expect(patches, hasLength(1));
+      }
+      // Similar-looking but canonically distinct names stay distinct; preserve
+      // exactly the user's spelling rather than normalizing the sealed name.
+      rows[1]['name_enc'] = bridge.sealName(handle, siblingId, 'Cafe.txt');
+      const spelling = 'Cafe\u0301.txt';
+      await rename(spelling);
+      expect(bridge.openName(handle, id, patches.last['name_enc'] as String),
+          spelling);
+      patches.removeLast();
       await expectLater(rename('../bad'), throwsA(isA<RenameFailure>()));
       rows[0]['revision'] = 8;
       await expectLater(rename('another.txt'), throwsA(isA<RenameFailure>()));

@@ -202,6 +202,24 @@ pub extern "C" fn nntdrive_device_identity() -> *mut c_char {
     })
 }
 
+/// Returns a client-local comparison key, never a server-visible equality tag.
+/// NFC before and after Unicode lowercase makes canonical equivalents compare
+/// equally without rewriting the user's encrypted spelling. This deliberately
+/// does not implement compatibility normalization or full Unicode case folding.
+///
+/// # Safety
+/// `name` must be a valid NUL-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn nntdrive_name_collision_key(name: *const c_char) -> *mut c_char {
+    guard(|| {
+        use unicode_normalization::UnicodeNormalization;
+        let name = arg(name)?;
+        let normalized: String = name.nfc().collect();
+        let comparison: String = normalized.to_lowercase().nfc().collect();
+        Ok(json!({ "comparison": comparison }))
+    })
+}
+
 /// Seals a plaintext node name with the account name key.
 ///
 /// # Safety
@@ -561,6 +579,37 @@ mod tests {
     #[test]
     fn abi_version_is_stable() {
         assert_eq!(nntdrive_abi_version(), 1);
+    }
+
+    #[test]
+    fn canonical_name_comparison_policy() {
+        fn comparison(name: &str) -> Value {
+            let name = CString::new(name).unwrap();
+            let result = unsafe { nntdrive_name_collision_key(name.as_ptr()) };
+            let value =
+                unsafe { serde_json::from_str(CStr::from_ptr(result).to_str().unwrap()) }.unwrap();
+            unsafe { nntdrive_string_free(result) };
+            value
+        }
+        for (a, b) in [
+            ("Café.TXT", "CAFE\u{301}.txt"),
+            ("a\u{323}\u{302}", "a\u{302}\u{323}"),
+            ("가", "\u{1100}\u{1161}"),
+            ("İ", "i\u{307}"),
+        ] {
+            let key = comparison(a);
+            assert_eq!(key["ok"], true);
+            assert_eq!(key, comparison(b));
+            assert_eq!(key, comparison(key["comparison"].as_str().unwrap()));
+        }
+        for (a, b) in [("cafe", "café"), ("①", "1"), ("ß", "ss"), ("ς", "σ")] {
+            assert_ne!(comparison(a), comparison(b));
+        }
+        let result = unsafe { nntdrive_name_collision_key(std::ptr::null()) };
+        let value: Value =
+            unsafe { serde_json::from_str(CStr::from_ptr(result).to_str().unwrap()) }.unwrap();
+        unsafe { nntdrive_string_free(result) };
+        assert_eq!(value["ok"], false);
     }
 
     #[test]

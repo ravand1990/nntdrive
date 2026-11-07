@@ -133,6 +133,18 @@ class NativeBridge {
     }
   }
 
+  /// Local-only canonical/case comparison; never send this value to the API.
+  String nameCollisionKey(String name) {
+    final f = _lib.lookupFunction<_Str1Native, _Str1Dart>(
+        'nntdrive_name_collision_key');
+    final p = _cstr(name);
+    try {
+      return _decode(f(p))['comparison'] as String;
+    } finally {
+      malloc.free(p);
+    }
+  }
+
   Map<String, dynamic> generateAccount(String password) {
     final f = _lib
         .lookupFunction<_Str1Native, _Str1Dart>('nntdrive_generate_account');

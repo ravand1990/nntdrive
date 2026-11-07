@@ -305,8 +305,17 @@ to an unsafe PATCH. Guarded rename is bounded to 4096 sibling entries and a
 (including legacy API routes) use the
 same lock, but old backend replicas and direct database writers do not; upgrade
 all replicas together. This is not server-enforced plaintext uniqueness: legacy
-clients can still introduce duplicate names after the guarded rename, and Unicode
-normalization beyond lowercase comparison remains unimplemented.
+clients can still introduce duplicate names after the guarded rename.
+
+Collision comparison uses Unicode NFC, Unicode lowercase, then NFC again in the
+native client. Canonically equivalent spellings (including decomposed accents,
+reordered combining marks and Hangul) collide, but the encrypted name retains
+exactly the spelling entered. This is not compatibility normalization, full case
+folding, confusable detection or a guarantee of every filesystem's equality
+rules: for example `ß`/`ss`, `ς`/`σ` and `①`/`1` remain distinct. The comparison
+value stays local and never becomes a server-visible equality tag. This requires
+the matching bundled native library; a missing comparison symbol fails closed,
+with no lowercase-only fallback. Sync scanner collision policy is unchanged.
 Move/copy, row availability indicators and secure local reveal are not yet
 implemented. Installed Windows/Linux and two-device UI rename acceptance have
 not been performed for this slice; existing sync tests are not a substitute.

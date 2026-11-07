@@ -62,6 +62,7 @@ Future<void> renameRemoteEntry({
   final invalid = renameValidationError(name);
   if (invalid != null) throw RenameFailure(invalid);
   final bridge = NativeBridge.instance;
+  final comparison = bridge.nameCollisionKey(name);
   final siblings = await api.listFiles(parentId: file.parentId);
   if (siblings.length > 4096) {
     throw RenameFailure(
@@ -82,7 +83,7 @@ Future<void> renameRemoteEntry({
       throw RenameFailure(
           'Cannot check all names in this folder. Rename cancelled.');
     }
-    if (siblingName.toLowerCase() == name.toLowerCase()) {
+    if (bridge.nameCollisionKey(siblingName) == comparison) {
       throw RenameFailure(
           'A file or folder with this name already exists. Choose another name.');
     }
