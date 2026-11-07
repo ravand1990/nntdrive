@@ -14,7 +14,9 @@
   backfill and a permanent reference-aware commit fence. All retained history
   remains protected; incomplete accounts refuse cleanup. Admin jobs show deleted
   or blocked batch results. Usenet articles are never retracted. Upgrade clients
-  before opting in; automatic Flutter backfill/live-stack acceptance remain open.
+  before opting in. Flutter now offers explicit unlocked account reference-backfill
+  batches (200 revisions / 60 seconds), local manifest validation, results and safe
+  retry. Live-stack/browser acceptance remains open.
 
 
 All notable changes are documented here. Every release tag **must** have an

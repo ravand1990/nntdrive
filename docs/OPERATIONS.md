@@ -160,7 +160,11 @@ legacy revision must first be backfilled by an unlocked client; otherwise cleanu
 reports `blocked: incomplete_version_references` without deletion or policy
 change. All history/conflicts/tombstones remain protected; no NNTP article is
 retracted. See [API compatibility/backfill](API.md) for the SDK flow and race
-semantics. No automatic Flutter backfill control is available yet. Test only on
+semantics. In the unlocked Flutter account menu choose **Prepare legacy references**,
+then Start batch and Continue / retry until the pass reports no more incomplete
+revisions. Each batch is limited to 200 revisions / 60 seconds, stops on error,
+and is safe to retry; it neither enables GC nor deletes content. GC still checks
+all references under its account lock. Test only on
 isolated fixtures; live-stack/browser acceptance for #15 remains pending.
 The Maintenance restart action remains available but is not needed for CRUD.
 Configured providers have a **Test** button that verifies DNS, TLS and

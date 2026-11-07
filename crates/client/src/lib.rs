@@ -509,6 +509,44 @@ pub async fn backfill_account_references(api: &ApiClient, master: &MasterKey) ->
     }
 }
 
+/// One explicit client batch: at most 200 revisions and 60 seconds. Always
+/// restart from the first incomplete revision; successful writes are immutable
+/// and idempotent, so interruption/ambiguous HTTP outcomes are safe to retry.
+/// Errors deliberately omit server bodies, URLs and manifest details.
+pub async fn backfill_reference_batch(api: &ApiClient, master: &MasterKey) -> serde_json::Value {
+    #[derive(serde::Deserialize)]
+    struct Revision {
+        file_id: Uuid,
+        revision_id: Uuid,
+    }
+    #[derive(serde::Deserialize)]
+    struct Page {
+        versions: Vec<Revision>,
+        next: Option<Uuid>,
+    }
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+    let mut completed = 0u64;
+    let outcome = tokio::time::timeout_at(deadline, async {
+        let response = api
+            .auth(api.http.get(api.url("/reference-backfill")))
+            .send()
+            .await?;
+        let page: Page = api.check(response).await?.json().await?;
+        let more = page.next.is_some() || page.versions.len() > 200;
+        for revision in page.versions.into_iter().take(200) {
+            backfill_version_references(api, master, revision.file_id, revision.revision_id)
+                .await?;
+            completed += 1;
+        }
+        Ok::<_, ClientError>(more)
+    })
+    .await;
+    match outcome {
+        Ok(Ok(more)) => json!({"completed": completed, "more": more, "failed": false}),
+        _ => json!({"completed": completed, "more": true, "failed": true}),
+    }
+}
+
 /// Backfill one exact historical revision only after authenticated decryption
 /// and structural/identity validation. No names, hashes or keys leave the client.
 pub async fn backfill_version_references(

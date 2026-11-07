@@ -171,7 +171,8 @@ The set is write-once; identical retries are accepted, changing a complete set
 is refused. Exact-revision manifest reads support logically deleted files;
 latest reads continue to hide them. Rust SDK helpers
 `backfill_version_references` and `backfill_account_references` implement this
-flow; no automatic Flutter backfill action is shipped yet. Wrong keys or invalid
+flow. Flutter offers an explicit unlocked account action (see CLIENTS.md); it is
+not automatic. Wrong keys or invalid
 manifests stop backfill without marking that revision complete. Concurrent old
 uploads may require another pass; GC rechecks completeness under the lock.
 

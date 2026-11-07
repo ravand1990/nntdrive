@@ -200,7 +200,7 @@ provider when both aws-lc-rs and ring are in the dependency graph.
    Android DocumentsProvider + WorkManager, iOS File Provider + background
    transfers, photo/video backup.
 8. **Provider & admin operations**: isolated live-stack/browser retention and GC
-   acceptance, automatic unlocked-client backfill UX, and stronger alerts.
+   acceptance and stronger alerts.
 9. **Security review**: fuzz yEnc/NZB/article parsers, add proxy-level rate
    limiting guidance, password-reset policy, audit-log coverage and dependency
    review.
@@ -233,7 +233,8 @@ provider when both aws-lc-rs and ring are in the dependency graph.
   historical manifest locally, including paginated/tombstoned versions. Successful
   opt-in permanently blocks legacy commits, also at the DB trigger boundary.
   Missing chunks fail commit atomically rather than publishing broken versions.
-  No automatic Flutter backfill action or isolated browser acceptance yet; see
+  Explicit unlocked Flutter reference backfill ships in bounded, retry-safe
+  account-menu batches; isolated browser acceptance remains unperformed; see
   API compatibility notes before enabling. This deletes only local metadata.
 - No AMK rotation command yet; device revocation instructs the client but does
   not perform client-side key rotation automatically.

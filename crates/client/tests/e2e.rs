@@ -253,11 +253,26 @@ async fn client_upload_download_and_dedupe_through_real_api() {
         .execute(s._db.store.pool())
         .await
         .unwrap();
+    let failed = nntdrive_client::backfill_reference_batch(&api, &wrong).await;
+    assert_eq!(
+        failed,
+        serde_json::json!({"completed":0,"more":true,"failed":true})
+    );
+    let batch = nntdrive_client::backfill_reference_batch(&api, &s.master).await;
+    assert_eq!(
+        batch,
+        serde_json::json!({"completed":200,"more":true,"failed":false})
+    );
     assert_eq!(
         nntdrive_client::backfill_account_references(&api, &s.master)
             .await
             .unwrap(),
-        201
+        1
+    );
+    let empty = nntdrive_client::backfill_reference_batch(&api, &s.master).await;
+    assert_eq!(
+        empty,
+        serde_json::json!({"completed":0,"more":false,"failed":false})
     );
     assert_eq!(
         nntdrive_client::backfill_account_references(&api, &s.master)
