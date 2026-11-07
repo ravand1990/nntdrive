@@ -130,7 +130,11 @@ per-item failures now identify exact involved paths without parsing raw diagnost
 only these paths show Error from the last completed attempt (not while running),
 with conflict precedence and safe local reveal preserved. Folder-wide exceptions
 and scan skips are not attributed to individual rows. This is not completion:
-move/copy and installed
+The file browser now includes an encrypted destination picker and guarded moves
+for files and folders, preserving opaque node identity, sealed name, content
+history and subtree membership. Client-local canonical collisions and unreadable
+destination names cancel before writes; concurrent source/destination changes
+fail atomically under the account namespace lock. Copy and installed
 Windows/Linux plus two-device acceptance remain outstanding. Legacy clients may
 still introduce duplicate names after a guarded
 rename. See [client details](CLIENTS.md#rename-in-the-file-browser-51-partial).

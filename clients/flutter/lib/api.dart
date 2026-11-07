@@ -226,6 +226,15 @@ class ApiClient {
         'siblings': siblings.map((f) => {'id': f.id, 'name_enc': f.nameEnc}).toList(),
       });
 
+  Future<void> moveFileChecked(RemoteFile source, String? parentId,
+          List<RemoteFile> siblings) =>
+      _send('POST', '/files/${source.id}/move-checked', body: {
+        'parent_id': parentId,
+        'source_parent_id': source.parentId,
+        'source_name_enc': source.nameEnc,
+        'siblings': siblings.map((f) => {'id': f.id, 'name_enc': f.nameEnc}).toList(),
+      });
+
   Future<void> moveFile(String id, String? parentId) =>
       _send('POST', '/files/$id/move', body: {'parent_id': parentId});
 

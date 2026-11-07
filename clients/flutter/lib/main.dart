@@ -13,6 +13,8 @@ import 'api.dart';
 import 'local_availability.dart';
 import 'local_availability_widgets.dart';
 import 'file_rename.dart';
+import 'file_move.dart';
+import 'move_dialog.dart';
 import 'rename_dialog.dart';
 import 'native.dart';
 import 'sync_controller.dart';
@@ -883,6 +885,25 @@ class _FilesPageState extends State<FilesPage> {
 
   bool _renaming = false;
 
+  Future<void> _move(RemoteFile file) async {
+    if (_renaming) return;
+    setState(() => _renaming = true);
+    try {
+      final destination = await showDialog<MoveDestination>(context: context,
+        builder: (_) => MoveDialog(api: _api, handle: widget.session.handle, source: file));
+      if (destination == null || !mounted) return;
+      await moveRemoteEntry(api: _api, handle: widget.session.handle,
+        file: file, parentId: destination.parentId);
+      if (mounted) await _refresh();
+    } on RenameFailure catch (e) {
+      if (mounted) _showError(e.message);
+    } catch (_) {
+      if (mounted) _showError('Move failed. Refresh and try again. Choose a different destination if it is inside the source folder.');
+    } finally {
+      if (mounted) setState(() => _renaming = false);
+    }
+  }
+
   Future<void> _rename(RemoteFile file) async {
     if (_renaming) return;
     setState(() => _renaming = true);
@@ -1582,6 +1603,11 @@ class _FilesPageState extends State<FilesPage> {
                                   tooltip: f.isDir ? 'Rename folder' : 'Rename file',
                                   icon: const Icon(Icons.edit_outlined),
                                   onPressed: _renaming ? null : () => _rename(f),
+                                ),
+                                IconButton(
+                                  tooltip: f.isDir ? 'Move folder' : 'Move file',
+                                  icon: const Icon(Icons.drive_file_move_outlined),
+                                  onPressed: _renaming ? null : () => _move(f),
                                 ),
                                 if (f.isDir) const Icon(Icons.chevron_right),
                               ],

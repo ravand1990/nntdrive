@@ -316,8 +316,31 @@ rules: for example `ß`/`ss`, `ς`/`σ` and `①`/`1` remain distinct. The compa
 value stays local and never becomes a server-visible equality tag. This requires
 the matching bundled native library; a missing comparison symbol fails closed,
 with no lowercase-only fallback. Sync scanner collision policy is unchanged.
-Move/copy and installed Windows/Linux plus two-device UI acceptance remain
+Copy and installed Windows/Linux plus two-device UI acceptance remain
 outstanding; existing sync tests are not a substitute.
+
+### Move in the file browser (#51 partial)
+
+Use the row's **Move file / Move folder** action, browse decrypted destination
+folders, and select **Move here** (or cancel). Root is selectable after navigating
+up; the current parent is disabled and the source folder is never offered as a
+destination. The backend rechecks descendant cycles even if the tree changes
+while the picker is open. If a canonical name collision is found, rename the
+source first or choose another destination; no entry is overwritten.
+
+The client opens all destination names locally and sends only opaque IDs and
+sealed envelopes to `POST /files/{id}/move-checked`. Under the same account
+namespace lock as legacy writers, the server compares the complete destination
+snapshot and source parent/name before updating the parent and publishing a move
+event. The sealed name, node ID, size, current content revision, retained history
+and child-parent relationships remain unchanged. No key sharing or re-encryption
+is involved. Concurrent namespace changes return conflict and require fresh
+preflight; there is no retry or unconditional-move fallback on older servers.
+Bounds match guarded rename: 4096 destination siblings and a 2 MiB request body.
+A content-only revision update need not invalidate a move. The server cannot
+verify plaintext uniqueness; legacy clients and old replicas can still introduce
+collisions later. Upgrade all replicas together. Installed OS and two-device UI
+propagation acceptance remain unperformed.
 
 ### Local presence and Show in folder (#51 partial)
 

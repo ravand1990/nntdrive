@@ -133,6 +133,34 @@ pub async fn move_file(
     Path(id): Path<Uuid>,
     Json(body): Json<MoveFile>,
 ) -> ApiResult<impl IntoResponse> {
+    move_impl(state, auth, id, body.parent_id, None).await
+}
+
+#[derive(Deserialize)]
+pub struct CheckedMove {
+    pub parent_id: Option<Uuid>,
+    pub source_parent_id: Option<Uuid>,
+    pub source_name_enc: String,
+    pub siblings: Vec<NameSnapshot>,
+}
+
+pub async fn move_file_checked(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+    Json(body): Json<CheckedMove>,
+) -> ApiResult<impl IntoResponse> {
+    move_impl(state, auth, id, body.parent_id, Some(body)).await
+}
+
+async fn move_impl(
+    state: AppState,
+    auth: Auth,
+    id: Uuid,
+    parent_id: Option<Uuid>,
+    guard: Option<CheckedMove>,
+) -> ApiResult<Json<Value>> {
+    let body = MoveFile { parent_id };
     let mut tx = state.pool.begin().await?;
     lock_namespace(&mut tx, auth.account_id).await?;
     let exists: bool = sqlx::query_scalar(
@@ -144,6 +172,47 @@ pub async fn move_file(
     .await?;
     if !exists {
         return Err(ApiError::NotFound);
+    }
+    if let Some(guard) = guard {
+        if guard.siblings.len() > 4096 {
+            return Err(ApiError::BadRequest(
+                "folder snapshot exceeds 4096 entries".into(),
+            ));
+        }
+        let source =
+            sqlx::query("SELECT parent_id, name_enc FROM files WHERE account_id = $1 AND id = $2")
+                .bind(auth.account_id)
+                .bind(id)
+                .fetch_one(&mut *tx)
+                .await?;
+        if source.get::<Option<Uuid>, _>("parent_id") != guard.source_parent_id
+            || source.get::<Vec<u8>, _>("name_enc") != unb64(&guard.source_name_enc)?
+        {
+            return Err(ApiError::Conflict(
+                "source changed; refresh and retry".into(),
+            ));
+        }
+        let mut expected = std::collections::BTreeMap::new();
+        for entry in guard.siblings {
+            let sealed = unb64(&entry.name_enc)?;
+            if sealed.is_empty()
+                || sealed.len() > 8192
+                || expected.insert(entry.id, sealed).is_some()
+            {
+                return Err(ApiError::BadRequest("invalid snapshot entry".into()));
+            }
+        }
+        let rows = sqlx::query("SELECT id, name_enc FROM files WHERE account_id = $1 AND deleted = FALSE AND parent_id IS NOT DISTINCT FROM $2 LIMIT 4097")
+            .bind(auth.account_id).bind(body.parent_id).fetch_all(&mut *tx).await?;
+        let actual: std::collections::BTreeMap<Uuid, Vec<u8>> = rows
+            .iter()
+            .map(|r| (r.get("id"), r.get("name_enc")))
+            .collect();
+        if actual != expected {
+            return Err(ApiError::Conflict(
+                "destination changed; refresh and retry".into(),
+            ));
+        }
     }
     if let Some(parent) = body.parent_id {
         if parent == id {
@@ -158,8 +227,10 @@ pub async fn move_file(
         .bind(parent)
         .fetch_optional(&mut *tx)
         .await?;
-        if is_dir != Some(true) {
-            return Err(ApiError::BadRequest("parent is not a folder".into()));
+        match is_dir {
+            Some(true) => {}
+            Some(false) => return Err(ApiError::BadRequest("parent is not a folder".into())),
+            None => return Err(ApiError::NotFound),
         }
         // Reject cycles using a recursive ancestor walk.
         let cycle: Option<i32> = sqlx::query_scalar(
