@@ -558,6 +558,83 @@ fn decode_b64(value: &str) -> Result<Vec<u8>, String> {
 mod tests {
     use super::*;
 
+    fn assert_sync_rejects_locked_handle(handle: u64) {
+        // A cold-start worker has no key handle. It must not touch a journal,
+        // contact the backend, or attempt conflict resolution while locked.
+        let root = std::env::temp_dir().join(format!("nntdrive-locked-{}", Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let server = CString::new(format!("http://{}", listener.local_addr().unwrap())).unwrap();
+        let token = CString::new("test-token-not-a-real-credential").unwrap();
+        let remote = CString::new(Uuid::new_v4().to_string()).unwrap();
+        let local = CString::new(root.to_str().unwrap()).unwrap();
+        let journal_path = root.join("journal.sqlite");
+        let journal = CString::new(journal_path.to_str().unwrap()).unwrap();
+        let device = CString::new("locked-worker-test").unwrap();
+        let exclusions = CString::new("[]").unwrap();
+        let assert_locked = |result| {
+            let text = unsafe { CString::from_raw(result) };
+            let value: Value = serde_json::from_slice(text.as_bytes()).unwrap();
+            assert_eq!(
+                value,
+                json!({"ok": false, "error": "invalid or locked key handle"})
+            );
+        };
+        unsafe {
+            assert_locked(nntdrive_sync_run(
+                handle,
+                server.as_ptr(),
+                token.as_ptr(),
+                remote.as_ptr(),
+                local.as_ptr(),
+                journal.as_ptr(),
+                device.as_ptr(),
+            ));
+            assert_locked(nntdrive_sync_run_ex(
+                handle,
+                server.as_ptr(),
+                token.as_ptr(),
+                remote.as_ptr(),
+                local.as_ptr(),
+                journal.as_ptr(),
+                device.as_ptr(),
+                exclusions.as_ptr(),
+            ));
+        }
+        for choice in [None, Some("both")] {
+            let mut request = json!({
+                "baseUrl": server.to_str().unwrap(), "token": token.to_str().unwrap(),
+                "remoteRootId": remote.to_str().unwrap(), "localPath": root,
+                "journalPath": journal_path, "deviceName": "locked-worker-test", "excluded": []
+            });
+            if let Some(choice) = choice {
+                request["choice"] = json!(choice);
+                request["original"] = json!("file.txt");
+                request["copy"] = json!("file (conflict test).txt");
+            }
+            let request = CString::new(request.to_string()).unwrap();
+            unsafe {
+                assert_locked(nntdrive_sync_request(handle, request.as_ptr(), None));
+            }
+        }
+        assert_eq!(
+            std::fs::read_dir(&root).unwrap().count(),
+            0,
+            "locked sync wrote local state"
+        );
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+        std::fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    fn cold_start_sync_requires_unlock_before_network_or_journal_access() {
+        assert_sync_rejects_locked_handle(0);
+    }
+
     #[test]
     fn abi_version_is_stable() {
         assert_eq!(nntdrive_abi_version(), 1);
@@ -601,5 +678,6 @@ mod tests {
         assert_eq!(opened["name"], "Steuererklärung 2025.pdf");
         nntdrive_lock(handle);
         assert!(key(handle).is_err());
+        assert_sync_rejects_locked_handle(handle);
     }
 }

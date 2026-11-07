@@ -8,10 +8,13 @@ release workflow refuses to publish if the entry is missing.
 
 ### Features
 
+- Windows/Linux same-process close-to-tray retains one unlocked sync session, with Open, sync state, Pause/Resume and Quit. Missing tray support falls back to quit; session ownership excludes duplicate clients using the same settings directory. Quit/sign-out drain active work before locking keys. This is partial #6 delivery, not autostart, cold-start unlock or a mobile worker; installed-platform acceptance remains pending.
 - Guided README installation and usage steps cover release downloads, server setup, offline recovery material, client connection, folder sync and conflicts (#52).
 
 ### Bug fixes
 
+- Sync rounds and conflict resolution reject another updated process using the same journal, with automatic operation-lease release after cancellation or process death; baseline history is preserved. This per-journal lease is separate from the desktop session owner and does not itself provide background scheduling (#6).
+- The locked-vault screen explicitly shows that synchronization is paused until unlock. Background service delivery remains incomplete; see `docs/BACKGROUND-SYNC.md` for the cold-start security constraint and remaining platform work (#6).
 - Desktop updater waits for the detached helper to start before exiting. Windows additionally requires a bounded preflight acknowledgement, preserves step diagnostics and payload backups, verifies copied files, and attempts rollback/restart with a visible failure dialog after replacement errors. Installed-build Windows acceptance remains pending (#49/#28).
 
 ## [0.5.0] - 2026-11-06

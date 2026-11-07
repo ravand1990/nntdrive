@@ -15,6 +15,76 @@ void main() {
     await expectLater(NativeBridge.instance.syncRequestAsync(0, {}),
         throwsA(isA<NativeException>()));
   });
+  test(
+      'drained native sessions reject all new async workers before network access',
+      () async {
+    final bridge = NativeBridge.instance;
+    const handle = 900000001;
+    await bridge.drainSession(handle);
+    await expectLater(bridge.syncRequestAsync(handle, {}), throwsStateError);
+    await expectLater(
+        bridge.syncRunAsync(
+            handle: handle,
+            baseUrl: '',
+            token: '',
+            remoteRootId: '',
+            localPath: '',
+            journalPath: '',
+            deviceName: ''),
+        throwsStateError);
+    await expectLater(
+        bridge.uploadAsync(
+            handle: handle,
+            baseUrl: '',
+            token: '',
+            fileId: '',
+            revisionId: '',
+            parentRevision: '',
+            path: ''),
+        throwsStateError);
+    await expectLater(
+        bridge.downloadAsync(
+            handle: handle,
+            baseUrl: '',
+            token: '',
+            fileId: '',
+            revisionId: '',
+            destination: ''),
+        throwsStateError);
+  });
+  test('native worker wrappers still cross isolates and report native failures',
+      () async {
+    final bridge = NativeBridge.instance;
+    await expectLater(
+        bridge.syncRunAsync(
+            handle: 0,
+            baseUrl: '',
+            token: '',
+            remoteRootId: '',
+            localPath: '',
+            journalPath: '',
+            deviceName: ''),
+        throwsA(isA<NativeException>()));
+    await expectLater(
+        bridge.uploadAsync(
+            handle: 0,
+            baseUrl: '',
+            token: '',
+            fileId: '',
+            revisionId: '',
+            parentRevision: '',
+            path: ''),
+        throwsA(isA<NativeException>()));
+    await expectLater(
+        bridge.downloadAsync(
+            handle: 0,
+            baseUrl: '',
+            token: '',
+            fileId: '',
+            revisionId: '',
+            destination: ''),
+        throwsA(isA<NativeException>()));
+  });
   test('native bridge creates keys and seals names', () {
     final path = Platform.environment['NNTDRIVE_FFI_PATH'];
     expect(path, isNotNull,

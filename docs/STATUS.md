@@ -26,6 +26,24 @@ source versions are 0.5.0 (`0.5.0+7` for Flutter). The historical
 live-provider, desktop and release evidence below was not repeated by this
 documentation run.
 
+## NNT-001 partial desktop lifecycle and operation exclusion
+
+Windows/Linux implement same-process close-to-tray with Open, generic status,
+Pause/Resume and drain-before-lock Quit/sign-out. The application session owns one
+controller; a per-settings-directory OS file lock is acquired before preferences
+load. Native relaunch activation and tray-host checks avoid duplicate sessions
+and intentionally un-restorable hidden windows. Linux release packaging and
+unit/native/widget tests are narrower than installed desktop acceptance.
+Autostart, cold-process unlock and mobile scheduling remain **unimplemented**;
+#6 is not complete.
+
+Whole sync rounds and conflict resolution now acquire an OS-backed SQLite lease
+on `<journal>.operation-lock.sqlite`, independent of baseline transactions.
+Competing updated owners of the same journal fail visibly; cancellation and
+process-death recovery preserve baseline history. The per-journal lease is
+separate from application ownership. See [background sync](BACKGROUND-SYNC.md)
+for compatibility limits and remaining platform/security acceptance.
+
 ## Verified working
 
 Everything below is exercised by `cargo test --workspace --all-targets`
@@ -160,9 +178,14 @@ provider when both aws-lc-rs and ring are in the dependency graph.
 - The client stores the password-wrapped keyfile in shared preferences; it is
   Argon2id-protected. The unused device-identity secret is no longer persisted.
   Move the keyfile to the platform keystore for a hardened build.
-- Sync runs only while the desktop app is open (no background service yet), but
-  files are streamed through the `Remote` adapter rather than held in memory.
-  True background sync remains future work.
+- Sync runs while the unlocked desktop process lives, including its hidden tray
+  window on supported Windows/Linux desktops. It is not an independent service;
+  autostart and cold-process resumption remain future work. The unlock screen
+  explicitly shows sync paused while the vault is locked. Native regressions
+  reject cold-start/revoked handles before network or journal access; unit tests
+  and a Linux release build are not installed background-service acceptance.
+  [Background sync](BACKGROUND-SYNC.md) records the unchanged password-required
+  cold-start boundary and remaining desktop/mobile work.
 - Remote folder renames use persisted node IDs and remap the complete journal
   subtree, including empty directories. Old journals learn IDs on their first
   successful sync after upgrade; moves before that baseline are not inferred.

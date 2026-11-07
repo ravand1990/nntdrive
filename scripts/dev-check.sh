@@ -18,7 +18,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 # Fail before consuming the host's final headroom; never prune other workloads.
 case "${1:-all}" in
-  build|fetch|rust|flutter|all)
+  build|fetch|rust|flutter|flutter-exec|all)
     available=$(df -Pk "$CHECKOUT" | tail -n 1 | tr -s ' ' | cut -d ' ' -f4)
     minimum_gib=2
     [[ -f "$CHECK_STATE/target/.rustc_info.json" ]] || minimum_gib=4
@@ -60,7 +60,10 @@ case "${1:-all}" in
   fetch) rust_deps; flutter_deps ;;
   rust) rust_deps; rust_checks ;;
   flutter) rust_deps; flutter_deps; flutter_checks ;;
+  # Custom formatting/native builds retain the lock, isolated service and cleanup.
+  # Run fetch/flutter first when dependencies or the FFI library changed.
+  flutter-exec) shift; run flutter "$@" ;;
   all) rust_deps; flutter_deps; rust_checks; flutter_checks ;;
   config) "${compose[@]}" config ;;
-  *) echo 'Usage: bash scripts/dev-check.sh {build|versions|fetch|rust|flutter|all|config}' >&2; exit 2 ;;
+  *) echo 'Usage: bash scripts/dev-check.sh {build|versions|fetch|rust|flutter|flutter-exec <command>...|all|config}' >&2; exit 2 ;;
 esac

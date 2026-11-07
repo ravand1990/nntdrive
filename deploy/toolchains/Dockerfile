@@ -29,4 +29,7 @@ RUN curl -fL --retry 3 "https://storage.googleapis.com/flutter_infra_release/rel
     && flutter precache --linux --no-android --no-web --no-ios --no-macos --no-windows \
     && rm -rf /opt/flutter/bin/cache/artifacts/engine/android* /opt/flutter/bin/cache/flutter_web_sdk \
     && chmod -R a+rwX /opt/flutter/bin/cache /opt/flutter/packages/flutter_tools/.dart_tool
+# Linux tray_manager uses maintained Ayatana AppIndicator, not GtkStatusIcon.
+RUN apt-get update && apt-get install -y --no-install-recommends libayatana-appindicator3-dev \
+    && rm -rf /var/lib/apt/lists/*
 CMD ["flutter", "--version"]
