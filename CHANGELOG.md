@@ -14,6 +14,7 @@ release workflow refuses to publish if the entry is missing.
 
 ### Bug fixes
 
+- Identical independent file additions/edits now record the matching remote revision in the sync journal without transferring content, avoiding stale baselines and later false conflicts. Adoption rechecks local hash/type/size, rejects links and unverified remote revisions, and preserves the baseline on failure (#51 partial). Browser-wide journal/revision indicators and installed/two-device acceptance remain pending.
 - File-browser Error labels use structured exact-path failures from the last completed sync report, including both move/conflict endpoints and case-collision spellings; unrelated rows and running folders do not inherit historical errors. Tooltips omit raw diagnostics and preserve independent safe local reveal; journal/revision equality remains unverified (#51 partial).
 - File-browser Syncing labels follow only the item's active transfer, not every row in a busy folder. Discovered conflict copies also mark their present originals after safe disk checks, and refresh rescans candidates; neither transfer completion nor local presence certifies journal/content equality (#51 partial).
 - Rename collision checks reject Unicode canonical equivalents using native NFC/lowercase/NFC comparison, without changing the encrypted spelling or sending equality tags to the server. Compatibility folding and filesystem-specific equality remain out of scope (#51 partial).

@@ -120,7 +120,11 @@ and offer desktop reveal after fresh ancestry/confinement revalidation. Syncing
 now marks only the exact active nonterminal transfer path; discovered preserved
 copies also mark their present same-directory originals after disk validation.
 Refresh rescans conflict candidates. Presence is not a content-equality claim;
-full journal/revision reconciliation remains incomplete. Structured client-local
+full browser journal/revision reconciliation remains incomplete. The sync core
+now records matching remote revisions for identical independent additions/edits
+after fresh local hash/type/size and non-link checks, with no content transfer.
+Unknown remote revisions and failed revalidation leave the old baseline intact;
+this does not certify the browser's current Local labels. Structured client-local
 per-item failures now identify exact involved paths without parsing raw diagnostics;
 only these paths show Error from the last completed attempt (not while running),
 with conflict precedence and safe local reveal preserved. Folder-wide exceptions

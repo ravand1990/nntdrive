@@ -349,8 +349,17 @@ while a folder is running, its previous report does not mark rows. Conflict
 candidates retain precedence. Safe disk presence/reveal remains independently
 available; excluded, ambiguous and unsafe mappings still fail closed. Folder-wide
 exceptions and scan skips are not per-item failures. Full journal/revision
-reconciliation remains future work; missing originals without an attributed
+reconciliation for browser labels remains future work; missing originals without an attributed
 failure are still labelled Cloud only.
+
+The sync core now persists the matching remote revision when both sides have
+independently added or edited a regular file to identical known hashes and sizes.
+Before updating SQLite it rechecks the local file's type, size and hash, rejects
+symlinks, and requires a real revision in the remote snapshot. No upload/download
+or transferred bytes are counted. Failed checks preserve the prior baseline for
+retry; the resulting baseline survives restart and anchors subsequent edits.
+This is a reconciliation fix, not a live browser integrity badge or protection
+against a hostile concurrent filesystem writer racing the final journal write.
 
 Refresh re-reads disk, and completion of all-folder or individual-folder sync
 refreshes the browser. An initial refresh also runs after sync settings load.
