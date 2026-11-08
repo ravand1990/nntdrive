@@ -20,15 +20,17 @@ class WorkflowPerformanceTests(unittest.TestCase):
 
     def test_independent_checks_start_in_parallel(self):
         for name, body in jobs(self.clients).items():
-            if name != "android-native-smoke":
+            if name not in {"android-native-smoke", "windows-app-smoke"}:
                 self.assertNotRegex(body, r"(?m)^    needs:", name)
         self.assertNotRegex(jobs(self.ci)["docker"], r"(?m)^    needs:")
         self.assertIn("needs: build-android", jobs(self.clients)["android-native-smoke"])
+        self.assertIn("needs: build-windows", jobs(self.clients)["windows-app-smoke"])
 
     def test_all_required_jobs_and_tests_remain(self):
         self.assertEqual(set(jobs(self.ci)), {"rust", "docker", "wrapper-contracts"})
         self.assertEqual(set(jobs(self.clients)), {
-            "analyze", "build-linux", "build-windows", "build-android", "android-native-smoke"})
+            "analyze", "build-linux", "build-windows", "build-android",
+            "android-native-smoke", "windows-app-smoke"})
         for text in (self.ci, self.clients):
             self.assertNotIn("continue-on-error", text)
             self.assertNotIn("paths-ignore:", text)
@@ -46,6 +48,11 @@ class WorkflowPerformanceTests(unittest.TestCase):
         self.assertIn("test -c /dev/kvm", smoke)
         self.assertIn("lib/x86_64/libnntdrive_ffi.so", smoke)
         self.assertIn("integration_test/android_native_test.dart", smoke)
+        windows_smoke = jobs(self.clients)["windows-app-smoke"]
+        self.assertIn("nntdrive-windows-x64", windows_smoke)
+        self.assertIn("integration_test/windows_app_smoke_test.dart", windows_smoke)
+        self.assertIn("NNTDRIVE_FFI_PATH", windows_smoke)
+        self.assertIn("nntdrive.exe", windows_smoke)
 
     def test_cache_inputs_and_nonpublishing_scope(self):
         docker = jobs(self.ci)["docker"]
