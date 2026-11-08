@@ -7,7 +7,7 @@
 Images are published to GHCR with semantic version tags:
 
 ```
-ghcr.io/ravand1990/nntdrive-backend:0.5.1
+ghcr.io/ravand1990/nntdrive-backend:0.5.2
 ghcr.io/ravand1990/nntdrive-backend:latest
 ghcr.io/ravand1990/nntdrive-backend:edge
 ```
@@ -53,7 +53,7 @@ Tagging `vX.Y.Z` runs `.github/workflows/release.yml`:
    image-only Compose files attached.
 
 Before tagging, choose a new version; **0.4.2 below is an example, not a
-published release**. Do not reuse the existing v0.5.1 tag.
+published release**. Do not reuse the existing v0.5.2 tag.
 
 ```bash
 # 1. bump the workspace version in Cargo.toml and client version in

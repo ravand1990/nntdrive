@@ -4,6 +4,12 @@ All notable changes are documented here. Every release tag **must** have an
 entry with `### Features` and/or `### Bug fixes` (at least one bullet). The
 release workflow refuses to publish if the entry is missing.
 
+## [0.5.2] - 2026-11-08
+
+### Features
+
+- Release downloads now name each client asset with its version and platform: `nntdrive-<version>-linux-x64.tar.gz`, `nntdrive-<version>-windows-x64.zip` and `nntdrive-<version>-android.apk`. Checksums cover those names, and desktop downloads keep the unversioned names as aliases so older auto-updaters can still find them.
+
 ## [0.5.1] - 2026-11-07
 
 ### Features
