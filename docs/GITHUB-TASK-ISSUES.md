@@ -201,7 +201,8 @@ Before each merge:
   update rules; never force-rebase another agent's branch.
 - Current PR workflows are CI (`rust`, `wrapper-contracts`, `docker`) and Clients
   (`analyze`, `build-linux`, `build-windows`, `build-android`,
-  `android-native-smoke`). Inspect the live workflow definitions each time;
+  `android-native-smoke`, `windows-app-smoke`). Inspect the live workflow
+  definitions each time;
   this list is not permission to omit newly applicable gates. iOS is not
   currently built in CI and remains unimplemented. Release/tag-only publishing
   is not an invented PR requirement.
