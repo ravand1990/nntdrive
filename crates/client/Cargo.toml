@@ -26,6 +26,7 @@ rustls = { version = "0.23", features = ["aws_lc_rs"] }
 tracing.workspace = true
 
 [dev-dependencies]
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "migrate"] }
 nntdrive-backend = { path = "../backend" }
 nntdrive-nntp = { path = "../nntp" }
 tempfile = "3"

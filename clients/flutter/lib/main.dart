@@ -11,6 +11,7 @@ import 'package:uuid/uuid.dart';
 
 import 'api.dart';
 import 'native.dart';
+import 'reference_backfill.dart';
 import 'sync_controller.dart';
 import 'sync_page.dart';
 import 'updater.dart';
@@ -1328,6 +1329,26 @@ class _FilesPageState extends State<FilesPage> {
               onTap: () {
                 Navigator.pop(context);
                 _openSync();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.history),
+              title: const Text('Prepare legacy references'),
+              subtitle: const Text(
+                  'Explicit account-scoped batches before admin cleanup'),
+              onTap: () {
+                Navigator.pop(context);
+                showDialog<void>(
+                  context: this.context,
+                  barrierDismissible: false,
+                  builder: (_) => ReferenceBackfillDialog(
+                    runBatch: () => NativeBridge.instance.backfillReferencesAsync(
+                      widget.session.handle,
+                      widget.session.server,
+                      widget.session.token,
+                    ),
+                  ),
+                );
               },
             ),
             ListTile(
