@@ -25,6 +25,70 @@ void main() {
   Future<LocalAvailability> inspect({bool isDir = false}) =>
       inspectLocalAvailability(ancestry: ancestry, folders: [folder], isDir: isDir);
 
+  test('browser equality is fresh, file-only and subordinate to errors/conflicts', () async {
+    await File(p.join(root.path, 'a.txt')).writeAsString('local');
+    var calls = 0;
+    var succeeds = true;
+    var throws = false;
+    var entry = RemoteFile('file', 'root', 'a.txt', false, 5, false, 1,
+        '11111111-1111-4111-8111-111111111111');
+    Future<LocalAvailability> browser() async {
+      final states = await inspectBrowserAvailability(
+        parentIds: ['root'], folders: [folder],
+        list: (parent) async => parent == null
+            ? [RemoteFile('root', null, 'Remote', true, 0, false, 1, null)]
+            : [entry],
+        decrypt: (file) => file.nameEnc,
+        comparisonKey: (name) => name.toLowerCase(),
+        verifyFile: (config, relative, remote) async {
+          expect(config, same(folder));
+          expect(relative, 'a.txt');
+          expect(remote.currentVersion, entry.currentVersion);
+          calls++;
+          if (throws) throw StateError('unreadable journal');
+          return succeeds;
+        },
+      );
+      return states['file']!;
+    }
+    var state = await browser();
+    expect(state.verifiedAtRefresh, isTrue);
+    expect(state.displayExplanation, contains('listed remote revision'));
+    folder.running = true;
+    expect(state.displayExplanation, contains('content equality is not verified'));
+    expect((await browser()).verifiedAtRefresh, isFalse);
+    expect(calls, 1);
+    folder.running = false;
+    expect(state.withoutEquality().verifiedAtRefresh, isFalse);
+    expect(state.withoutEquality().displayExplanation,
+        contains('content equality is not verified'));
+    expect(state.withoutEquality().path, state.path);
+    succeeds = false;
+    expect((await browser()).verifiedAtRefresh, isFalse);
+    throws = true;
+    expect((await browser()).displayExplanation, contains('content equality is not verified'));
+    throws = false;
+    succeeds = true;
+    folder.lastReport = {'item_errors': [
+      {'paths': ['a.txt'], 'operation': 'download', 'code': 'io'}
+    ]};
+    state = await browser();
+    expect(state.displayLabel, 'Error');
+    expect(state.verifiedAtRefresh, isFalse);
+    folder.lastReport = null;
+    folder.conflictFiles = ['a.txt'];
+    expect((await browser()).displayLabel, 'Conflict');
+    folder.conflictFiles = [];
+    entry = RemoteFile('file', 'root', 'a.txt', false, 5, false, 1, null);
+    expect((await browser()).verifiedAtRefresh, isFalse);
+    await File(p.join(root.path, 'a.txt')).delete();
+    expect((await browser()).displayLabel, 'Cloud only');
+    await Directory(p.join(root.path, 'a.txt')).create();
+    entry = RemoteFile('file', 'root', 'a.txt', true, 0, false, 1, null);
+    expect((await browser()).verifiedAtRefresh, isFalse);
+    expect(calls, 3);
+  });
+
   test('presence is read again from disk, never last report', () async {
     folder.lastReport = {'downloaded': 1};
     expect((await inspect()).label, 'Cloud only');

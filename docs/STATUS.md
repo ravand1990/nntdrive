@@ -120,12 +120,15 @@ and offer desktop reveal after fresh ancestry/confinement revalidation. Syncing
 now marks only the exact active nonterminal transfer path; discovered preserved
 copies also mark their same-directory originals after disk validation, including
 missing original leaves without enabling reveal. Missing ancestors cannot infer
-a pair. Refresh rescans conflict candidates. Presence is not a content-equality claim;
-full browser journal/revision reconciliation remains incomplete. The sync core
+a pair. Refresh rescans conflict candidates. Presence alone is not a content-equality
+claim. Idle regular files now gain a refresh-time equality tooltip only after a
+read-only exact-path journal/revision/size check and fresh confined-file hashing;
+unknown/failed checks and directories remain presence-only. This is not an atomic
+filesystem snapshot or a durability guarantee. The sync core
 now records matching remote revisions for identical independent additions/edits
 after fresh local hash/type/size and non-link checks, with no content transfer.
 Unknown remote revisions and failed revalidation leave the old baseline intact;
-this does not certify the browser's current Local labels. Structured client-local
+browser equality is checked separately on refresh. Structured client-local
 per-item failures now identify exact involved paths without parsing raw diagnostics;
 only these paths show Error from the last completed attempt (not while running),
 with conflict precedence and safe local reveal preserved. Folder-wide exceptions

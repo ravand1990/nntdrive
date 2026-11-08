@@ -145,6 +145,23 @@ class NativeBridge {
     }
   }
 
+  /// Runs disk hashing off the UI isolate; the result is a refresh-time snapshot.
+  Future<bool> localFileMatches(Map<String, dynamic> request) {
+    final encoded = jsonEncode(request);
+    return Isolate.run(() => NativeBridge.instance._localFileMatches(encoded));
+  }
+
+  bool _localFileMatches(String encoded) {
+    final f = _lib.lookupFunction<_Str1Native, _Str1Dart>(
+        'nntdrive_local_file_matches');
+    final request = _cstr(encoded);
+    try {
+      return _decode(f(request))['matches'] == true;
+    } finally {
+      malloc.free(request);
+    }
+  }
+
   Map<String, dynamic> generateAccount(String password) {
     final f = _lib
         .lookupFunction<_Str1Native, _Str1Dart>('nntdrive_generate_account');

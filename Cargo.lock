@@ -1460,6 +1460,7 @@ dependencies = [
  "nntdrive-sync",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "unicode-normalization",
  "uuid",

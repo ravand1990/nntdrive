@@ -754,6 +754,7 @@ class _FilesPageState extends State<FilesPage> {
         decrypt: (entry) => bridge.openName(
             widget.session.handle, entry.id, entry.nameEnc),
         comparisonKey: bridge.nameCollisionKey,
+        verifyFile: _sync.fileMatches,
       );
     } catch (_) {
       return {};
@@ -795,8 +796,13 @@ class _FilesPageState extends State<FilesPage> {
 
   void _onSyncChanged() {
     if (!mounted) return;
-    setState(() {});
     final active = _sync.syncing || _sync.folders.any((folder) => folder.running);
+    setState(() {
+      if (active) {
+        _availability = _availability.map(
+            (id, state) => MapEntry(id, state.withoutEquality()));
+      }
+    });
     if (_wasSyncing && !active) {
       _refresh();
     }

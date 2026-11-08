@@ -10,7 +10,8 @@ import 'sync_controller.dart';
 /// errors are explicitly identified as such rather than attributed to one file.
 class LocalAvailability {
   const LocalAvailability(this.label, this.explanation,
-      {this.path, this.folder, this.relativePath, this.isDirectory = false});
+      {this.path, this.folder, this.relativePath, this.isDirectory = false,
+      this.verifiedAtRefresh = false});
 
   final String label;
   final String explanation;
@@ -18,6 +19,11 @@ class LocalAvailability {
   final SyncFolderConfig? folder;
   final String? relativePath;
   final bool isDirectory;
+  final bool verifiedAtRefresh;
+
+  LocalAvailability withoutEquality() => LocalAvailability(label, explanation,
+      path: path, folder: folder, relativePath: relativePath,
+      isDirectory: isDirectory);
 
   static const unknown = LocalAvailability(
       'Unknown', 'Cannot safely map this entry to a configured sync folder.');
@@ -46,7 +52,9 @@ class LocalAvailability {
       : _failed
           ? 'An operation involving this exact path failed in the last completed sync attempt. '
               'Refresh or retry sync; current content equality is not verified. $explanation'
-          : explanation;
+          : verifiedAtRefresh && folder?.running != true
+              ? 'At the last refresh, freshly hashed local bytes matched the journal baseline and the listed remote revision. Refresh to recheck; this is not a durability guarantee.'
+              : explanation;
 }
 
 /// The caller supplies a freshly decrypted, unambiguous remote ancestry, from
@@ -161,6 +169,7 @@ Future<Map<String, LocalAvailability>> inspectBrowserAvailability({
   required Future<List<RemoteFile>> Function(String?) list,
   required String Function(RemoteFile) decrypt,
   required String Function(String) comparisonKey,
+  Future<bool> Function(SyncFolderConfig, String, RemoteFile)? verifyFile,
 }) async {
   final ancestry = <({String id, String name})>[];
   String? parent;
@@ -178,11 +187,26 @@ Future<Map<String, LocalAvailability>> inspectBrowserAvailability({
   final result = <String, LocalAvailability>{};
   for (final entry in entries) {
     final name = entry.parentId == parent ? names[entry.id] : null;
-    result[entry.id] = name == null
+    var state = name == null
         ? LocalAvailability.unknown
         : await inspectLocalAvailability(
             ancestry: [...ancestry, (id: entry.id, name: name)],
             folders: folders, isDir: entry.isDir);
+    if (verifyFile != null && !entry.isDir && entry.currentVersion != null &&
+        state.displayLabel == 'Local' && state.folder?.running == false &&
+        state.relativePath != null && state.path != null) {
+      try {
+        if (await verifyFile(state.folder!, state.relativePath!, entry) &&
+            !state.folder!.running) {
+          state = LocalAvailability(state.label, state.explanation,
+              path: state.path, folder: state.folder, relativePath: state.relativePath,
+              verifiedAtRefresh: true);
+        }
+      } catch (_) {
+        // Missing/old/corrupt journal or native errors retain presence-only truth.
+      }
+    }
+    result[entry.id] = state;
   }
   return result;
 }

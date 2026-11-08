@@ -366,6 +366,31 @@ pub unsafe extern "C" fn nntdrive_download(
     })
 }
 
+/// Inspect an existing local journal and freshly hash one confined file.
+/// No network access or journal initialization; errors never imply equality.
+///
+/// # Safety
+/// `request` must be a valid NUL-terminated UTF-8 JSON string.
+#[no_mangle]
+pub unsafe extern "C" fn nntdrive_local_file_matches(request: *const c_char) -> *mut c_char {
+    guard(|| {
+        let config: serde_json::Value =
+            serde_json::from_str(&arg(request)?).map_err(|_| "invalid inspection request")?;
+        let _master = key(config["handle"].as_u64().ok_or("missing handle")?)?;
+        let text = |name: &str| config[name].as_str().ok_or("invalid inspection field");
+        let revision = text("revision")?.parse().map_err(|_| "invalid revision")?;
+        let size = config["size"].as_u64().ok_or("invalid size")?;
+        let matches = runtime().block_on(nntdrive_sync::Journal::file_matches(
+            Path::new(text("journalPath")?),
+            Path::new(text("localPath")?),
+            text("relativePath")?,
+            revision,
+            size,
+        ));
+        Ok(json!({"matches": matches}))
+    })
+}
+
 /// Runs one synchronization pass for a local folder and a remote root node.
 ///
 /// # Safety
@@ -648,7 +673,44 @@ mod tests {
         unsafe { nntdrive_string_free(opened) };
         let opened: Value = serde_json::from_str(&opened_text).unwrap();
         assert_eq!(opened["name"], "Steuererklärung 2025.pdf");
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        let empty = root.join("empty");
+        std::fs::write(&empty, b"").unwrap();
+        let journal = dir.path().join("journal.sqlite");
+        let revision = Uuid::new_v4();
+        runtime().block_on(async {
+            let j = nntdrive_sync::Journal::open(&journal).await.unwrap();
+            j.upsert(&nntdrive_sync::BaselineEntry {
+                path: "empty".into(),
+                size: 0,
+                revision: Some(revision),
+                content_hash: Some(nntdrive_sync::scanner::hash_file(&empty).unwrap()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        });
+        let inspect = |revision: Uuid| {
+            let request = CString::new(
+                json!({
+                    "handle": handle, "journalPath": journal, "localPath": root,
+                    "relativePath": "empty", "revision": revision, "size": 0,
+                })
+                .to_string(),
+            )
+            .unwrap();
+            let result = unsafe { nntdrive_local_file_matches(request.as_ptr()) };
+            let value: Value =
+                unsafe { serde_json::from_str(CStr::from_ptr(result).to_str().unwrap()).unwrap() };
+            unsafe { nntdrive_string_free(result) };
+            value
+        };
+        assert_eq!(inspect(revision)["matches"], true);
+        assert_eq!(inspect(Uuid::new_v4())["matches"], false);
         nntdrive_lock(handle);
+        assert_eq!(inspect(revision)["ok"], false);
         assert!(key(handle).is_err());
     }
 }

@@ -15,7 +15,7 @@ void main() {
     await expectLater(NativeBridge.instance.syncRequestAsync(0, {}),
         throwsA(isA<NativeException>()));
   });
-  test('native bridge creates keys and seals names', () {
+  test('native bridge creates keys and seals names', () async {
     final path = Platform.environment['NNTDRIVE_FFI_PATH'];
     expect(path, isNotNull,
         reason: 'Build the Rust core and set NNTDRIVE_FFI_PATH');
@@ -46,7 +46,25 @@ void main() {
       () => bridge.openName(otherUnlocked['handle'] as int, nodeId, sealed),
       throwsA(isA<NativeException>()),
     );
-    bridge.lock(handle);
+    final sandbox = await Directory.systemTemp.createTemp('journal-inspect-');
+    try {
+      final request = <String, dynamic>{
+        'handle': handle,
+        'journalPath': '${sandbox.path}/missing.sqlite',
+        'localPath': sandbox.path,
+        'relativePath': 'file',
+        'revision': nodeId,
+        'size': 0,
+      };
+      expect(await bridge.localFileMatches(request), isFalse);
+      expect(await File('${sandbox.path}/missing.sqlite').exists(), isFalse);
+      bridge.lock(handle);
+      await expectLater(bridge.localFileMatches(request),
+          throwsA(isA<NativeException>()));
+    } finally {
+      bridge.lock(handle);
+      await sandbox.delete(recursive: true);
+    }
     bridge.lock(otherUnlocked['handle'] as int);
   });
 }

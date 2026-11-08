@@ -427,6 +427,36 @@ async fn excluded_paths_are_skipped_in_both_directions() {
 }
 
 #[tokio::test]
+async fn browser_equality_tracks_real_synced_journal_and_remote_revision() {
+    let Some(s) = stack().await else { return };
+    let api = api(&s);
+    let root = make_root(&s, &api, "EqualityRoot").await;
+    let a = tempfile::tempdir().unwrap();
+    let b = tempfile::tempdir().unwrap();
+    let journals = tempfile::tempdir().unwrap();
+    let ja = journals.path().join("a.sqlite");
+    let jb = journals.path().join("b.sqlite");
+    std::fs::write(a.path().join("file"), b"same").unwrap();
+    assert!(sync(&s, root, a.path(), &ja, "a").await.errors.is_empty());
+    assert!(sync(&s, root, b.path(), &jb, "b").await.errors.is_empty());
+    let node = api.list_files(Some(root)).await.unwrap().remove(0);
+    let revision = node.current_version.unwrap();
+    assert!(Journal::file_matches(&jb, b.path(), "file", revision, 4).await);
+    // A same-sized local edit cannot inherit the previously synced indication.
+    std::fs::write(b.path().join("file"), b"edit").unwrap();
+    assert!(!Journal::file_matches(&jb, b.path(), "file", revision, 4).await);
+    std::fs::write(b.path().join("file"), b"same").unwrap();
+    std::fs::write(a.path().join("file"), b"next").unwrap();
+    assert!(sync(&s, root, a.path(), &ja, "a").await.errors.is_empty());
+    let changed = api.list_files(Some(root)).await.unwrap().remove(0);
+    let next = changed.current_version.unwrap();
+    assert_ne!(revision, next);
+    assert!(!Journal::file_matches(&jb, b.path(), "file", next, 4).await);
+    assert!(sync(&s, root, b.path(), &jb, "b").await.errors.is_empty());
+    assert!(Journal::file_matches(&jb, b.path(), "file", next, 4).await);
+}
+
+#[tokio::test]
 async fn remote_folder_rename_moves_subtree_without_transfers() {
     let Some(s) = stack().await else { return };
     let api = api(&s);

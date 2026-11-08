@@ -373,9 +373,25 @@ historical evidence of an attempted operation, not current revision equality;
 while a folder is running, its previous report does not mark rows. Conflict
 candidates retain precedence. Safe disk presence/reveal remains independently
 available; excluded, ambiguous and unsafe mappings still fail closed. Folder-wide
-exceptions and scan skips are not per-item failures. Full journal/revision
-reconciliation for browser labels remains future work; missing originals without an attributed
-failure are still labelled Cloud only.
+exceptions and scan skips are not per-item failures. Missing originals without an
+attributed failure are still labelled Cloud only.
+
+For a present regular file in an idle root, refresh now checks its exact relative
+path in the existing SQLite baseline, compares the listed remote content revision
+and size, and freshly hashes the confined local file on a worker isolate. A
+matching result adds an explicit **Local** tooltip confirming equality at that
+refresh. No size/mtime hash cache or terminal progress event establishes equality.
+Missing, legacy, corrupt or unreadable journals, pending moves, unknown revisions,
+changed bytes and native failures retain the presence-only explanation; inspection
+never creates, migrates or updates a journal. Directories remain presence-only,
+not recursive subtree certificates. Conflict/error labels take precedence, and
+starting sync suppresses the previous equality tooltip until a fresh idle check.
+No names, hashes or journal paths are sent to the backend by this inspection.
+Hashing reads the full file on each refresh and can take time for large folders.
+This is a snapshot of observed local bytes and listed metadata, not an atomic
+guarantee against hostile filesystem swaps, later edits, remote rollback or
+provider retention loss. Installed Windows/Linux and two-device UI acceptance
+remain outstanding, as does independent encrypted Copy.
 
 The sync core now persists the matching remote revision when both sides have
 independently added or edited a regular file to identical known hashes and sizes.
