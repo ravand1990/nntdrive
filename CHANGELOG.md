@@ -8,6 +8,7 @@ release workflow refuses to publish if the entry is missing.
 
 ### Bug fixes
 
+- Upgrade the NZB XML parser to quick-xml 0.41.0 while retaining duplicate-attribute checks; malformed/duplicate attributes on parsed file, segment and metadata tags now return errors. Preserve entity-containing metadata and article IDs with the newer streaming API (#16 partial).
 - Live sync event streams recheck the original credential and account/device status with a two-second authorization lease, closing after logout, revocation, disable or expiry (#16 partial). Already admitted/buffered frames cannot be retracted.
 
 ## [0.6.0] - 2026-11-09
