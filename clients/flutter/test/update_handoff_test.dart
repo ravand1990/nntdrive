@@ -5,6 +5,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nntdrive/update_handoff.dart';
 
 void main() {
+  test('PowerShell command encoding preserves literal Unicode UTF-16LE', () {
+    expect(encodePowerShellCommand("A'😀雪"), 'QQAnAD3YAN7qlg==');
+  });
+
   test('handoff waits for both launch and acknowledgement before app may exit',
       () async {
     final launch = Completer<Process>();

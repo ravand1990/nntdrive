@@ -8,7 +8,7 @@ release workflow refuses to publish if the entry is missing.
 
 ### Bug fixes
 
-- Windows updater launches PowerShell with valid standard handles while remaining detached, retains startup error output and the helper PID, and exercises handoff across real parent exit with a compiled executable regression (#49). Installed-release acceptance remains separate.
+- Windows updater sends PowerShell an explicit UTF-16LE encoded command, closes unused startup input while remaining detached, retains startup error output and the helper PID, and exercises handoff across real parent exit with a compiled executable regression (#49). Installed-release acceptance remains separate.
 
 ## [0.7.0] - 2026-11-09
 

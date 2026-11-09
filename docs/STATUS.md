@@ -411,8 +411,8 @@ rename. See [client details](CLIENTS.md#rename-in-the-file-browser-51-partial).
   remains tracked in NNT-103 (#28); implementation is not proof of that acceptance.
   Issue #49 adds awaited helper launch and Windows preflight acknowledgement,
   step diagnostics, backup/hash-verified replacement and attempted rollback.
-  The detached Windows PowerShell launch retains standard handles and startup
-  stderr/PID diagnostics; the real-parent executable fixture covers replacement
+  The detached Windows PowerShell launch uses an encoded command, closes unused
+  input and retains startup stderr/PID diagnostics; the real-parent executable fixture covers replacement
   and a probe restart, not a packaged Flutter window or installed-release upgrade.
   Native helper fixtures are distinct from the still-required installed-build
   update/restart/version/data and locked-file manual checks.

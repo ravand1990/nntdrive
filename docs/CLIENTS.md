@@ -286,8 +286,9 @@ inaccessible feeds never prevent using the app. The updater:
 4. unpacks to a temporary directory and starts a detached helper;
 5. exits, letting the helper replace the install directory and restart the app.
 
-The helper launch is awaited before the app exits. Windows uses detached-with-
-stdio mode so PowerShell receives valid standard handles; startup stderr is
+The helper launch is awaited before the app exits. Windows sends the script with
+PowerShell's UTF-16LE `-EncodedCommand`, uses detached-with-stdio mode and closes
+unused stdin immediately; startup stderr is
 retained in `helper-stderr.log`, and the app drains output without waiting for
 helper termination. On Windows, the helper must
 also acknowledge its archive-layout and directory-write preflight within 15

@@ -1,5 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+
+/// PowerShell -EncodedCommand expects UTF-16LE, not UTF-8. Avoid the native
+/// command-line parser interpreting the script's quotes or multiline syntax.
+String encodePowerShellCommand(String source) => base64Encode([
+      for (final unit in source.codeUnits) ...[unit & 0xff, unit >> 8],
+    ]);
 
 /// Do not let the UI exit until the detached process actually exists. A bare
 /// Process.start future can be abandoned by exit(0), also hiding launch errors.
@@ -31,11 +38,18 @@ Future<Directory> launchWindowsUpdateHelper({
     () async {
       final helper = await Process.start(
         'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-Command', source],
-        // Windows PowerShell requires valid standard handles even when the
-        // script writes only to files. Plain detached mode supplies none.
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-EncodedCommand',
+          encodePowerShellCommand(source)
+        ],
+        // Retain startup stderr without coupling helper lifetime to the app.
         mode: ProcessStartMode.detachedWithStdio,
       );
+      // No input is ever sent to the helper. Close the pipe so PowerShell
+      // cannot wait for input/EOF before executing a redirected invocation.
+      await helper.stdin.close();
       // Drain startup output while the app lives; do not await helper exit.
       // The script itself retains all post-exit diagnostics in update.log.
       helper.stdout.listen((_) {}, onError: (Object _) {});
