@@ -16,8 +16,9 @@ takes precedence over autonomous task selection, but never over safety rules.
 - **GitHub Issues:** task scope, acceptance criteria, dependencies, handoff and
   priority. Do not create a second backlog. `TASKS.md` is a pointer only.
 - **NNTDrive GitHub Project:** authoritative task phase (`Backlog`, `Ready`,
-  `In Progress`, `Ready For Review`, `Blocked`, `Done`). Only the
-  coordinator/user may move an issue from Backlog to Ready. Do not recreate
+  `In Progress`, `Ready For Review`, `Blocked`, `Done`). Workers may move an
+  issue from `Backlog` to `Ready` only through the end-of-run backlog review in
+  section 3; no other status transition is delegated. Do not recreate
   status labels.
 - **`docs/GITHUB-TASK-ISSUES.md`:** detailed live GitHub API/Project procedures,
   current standing merge authorization, and post-merge reconciliation.
@@ -131,6 +132,22 @@ nothing durable done while eligible work exists.
   security, changing acceptance criteria, or taking over another worker's branch.
 - Report only work actually done; a truthful blocker is acceptable when no
   eligible work remains, but never inflate or fabricate progress.
+
+**End-of-run backlog review (coordinator delegation):** after finishing the
+run's task, or recording why no task was possible, and after reconciling its
+state, review the Project `Backlog` and promote to `Ready` every issue that
+meets all of:
+
+- open, unowned, with no active claim, branch or PR;
+- dependencies closed or integrated, or the first slice does not need them;
+- no outstanding human decision, missing credential/hardware or other blocker;
+- one priority label and a concrete, bounded scope;
+- actionable by the next worker without new context.
+
+Set Project Status `Ready` and read it back for each promotion. Do not promote
+blocked items, epics without a first slice, or anything created in the current
+run; newly filed issues start in `Backlog` and can be promoted only in a later
+run. List promoted issues with a one-line reason in the run handoff.
 
 **Concurrency rule:** GitHub comments, assignees and Project updates are **not
 atomic locks**. A branch name containing an issue ID is only a collision signal,
@@ -295,7 +312,9 @@ For an unrelated finding, first de-duplicate against issues/PRs, then create
 an issue with outcome, scope/exclusions, testable acceptance, dependencies,
 verification and handoff. Give it **one** `priority:P0`, `priority:P1` or
 `priority:P2` label, Project Status `Backlog`; verify Project membership and
-readback. Do not self-promote new tasks to `Ready`.
+readback. Newly created issues start in `Backlog`; they cannot be promoted to
+`Ready` in the run that created them, but the end-of-run review in section 3 may
+promote older `Backlog` items.
 Report sensitive vulnerabilities privately rather than posting secrets or
 exploit details in a public issue.
 

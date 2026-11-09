@@ -35,6 +35,15 @@ class AgentPolicyTests(unittest.TestCase):
         self.assertNotIn("and the user approves", text)
         self.assertNotIn("use the **same github pat**", text)
 
+    def test_end_of_run_backlog_promotion(self):
+        text = self.read("AGENTS.md").lower()
+        self.assertIn("end-of-run backlog review", text)
+        self.assertIn("promote to `ready`", text)
+        self.assertIn("created in the current", text)
+        other = self.read("docs/GITHUB-TASK-ISSUES.md").lower()
+        self.assertIn("end of a run", other)
+        self.assertIn("promote", other)
+
     def test_agent_comment_format(self):
         text = self.read("AGENTS.md")
         for required in (

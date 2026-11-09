@@ -70,7 +70,15 @@ guard, not an access-control boundary; permissions must enforce policy.
 Project Status is the sole queue and phase tracker. `Backlog` means not authorized
 to start; `Ready` means authorized and eligible once dependencies are satisfied.
 There is no separate readiness field in issue text, and status labels must not be
-recreated. Only the coordinator/user may move an issue from `Backlog` to `Ready`.
+recreated. Workers promote `Backlog` to `Ready` only through the end-of-run
+backlog review defined in `AGENTS.md` §3.
+
+At the end of a run, after task reconciliation, review every `Backlog` item and
+promote it when it is open, unowned, has no active claim/branch/PR, has no
+unresolved blocker, has one priority label and a bounded first slice, and its
+dependencies are closed/integrated or unnecessary for that slice. Read back each
+Status. Do not promote blocked items, unsliced epics, or issues created in the
+same run, and list promotions with a one-line reason in the handoff.
 
 `In Progress`, `Ready For Review`, `Blocked` and `Done` are not eligible for new
 selection regardless of history. A closed issue is never eligible. `Ready` still
