@@ -9,7 +9,8 @@ class MoveDestination {
 
 /// Navigates fresh remote folders; no local paths or plaintext go to the API.
 class MoveDialog extends StatefulWidget {
-  const MoveDialog({super.key, required this.api, required this.handle, required this.source});
+  const MoveDialog({super.key, required this.api, required this.handle, required this.source, this.copy = false});
+  final bool copy;
   final ApiClient api;
   final int handle;
   final RemoteFile source;
@@ -53,7 +54,7 @@ class _MoveDialogState extends State<MoveDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Move to…'),
+    title: Text(widget.copy ? 'Copy file to…' : 'Move to…'),
     content: SizedBox(width: 420, height: 320, child: Column(children: [
       Row(children: [
         IconButton(tooltip: 'Up', onPressed: _loading || _path.isEmpty ? null : () { _path.removeLast(); _load(); }, icon: const Icon(Icons.arrow_upward)),
@@ -67,7 +68,7 @@ class _MoveDialogState extends State<MoveDialog> {
     ])),
     actions: [
       TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-      FilledButton(onPressed: _loading || _error != null || _parent == widget.source.parentId ? null : () => Navigator.pop(context, MoveDestination(_parent)), child: const Text('Move here')),
+      FilledButton(onPressed: _loading || _error != null || _parent == widget.source.parentId ? null : () => Navigator.pop(context, MoveDestination(_parent)), child: Text(widget.copy ? 'Copy here' : 'Move here')),
     ],
   );
 }

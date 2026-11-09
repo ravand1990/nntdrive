@@ -14,6 +14,7 @@ import 'local_availability.dart';
 import 'local_availability_widgets.dart';
 import 'file_rename.dart';
 import 'file_move.dart';
+import 'file_copy.dart';
 import 'move_dialog.dart';
 import 'rename_dialog.dart';
 import 'native.dart';
@@ -892,6 +893,25 @@ class _FilesPageState extends State<FilesPage> {
 
   bool _renaming = false;
 
+  Future<void> _copy(RemoteFile file) async {
+    if (_renaming || file.isDir) return;
+    setState(() => _renaming = true);
+    try {
+      final destination = await showDialog<MoveDestination>(context: context,
+        builder: (_) => MoveDialog(api: _api, handle: widget.session.handle, source: file, copy: true));
+      if (destination == null || !mounted) return;
+      final attempted = await showDialog<bool>(context: context,
+        barrierDismissible: false,
+        builder: (_) => CopyFileDialog(runCopy: () => copyRemoteFile(api: _api,
+          handle: widget.session.handle, file: file, parentId: destination.parentId)));
+      if (attempted == true && mounted) await _refresh();
+    } catch (_) {
+      if (mounted) _showError('Copy was not confirmed. Refresh the destination before starting another copy.');
+    } finally {
+      if (mounted) setState(() => _renaming = false);
+    }
+  }
+
   Future<void> _move(RemoteFile file) async {
     if (_renaming) return;
     setState(() => _renaming = true);
@@ -1636,6 +1656,8 @@ class _FilesPageState extends State<FilesPage> {
                                   icon: const Icon(Icons.drive_file_move_outlined),
                                   onPressed: _renaming ? null : () => _move(f),
                                 ),
+                                CopyFileButton(isDir: f.isDir, busy: _renaming,
+                                  onCopy: () => _copy(f)),
                                 if (f.isDir) const Icon(Icons.chevron_right),
                               ],
                             ),

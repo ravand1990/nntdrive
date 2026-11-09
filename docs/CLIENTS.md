@@ -341,7 +341,7 @@ rules: for example `ß`/`ss`, `ς`/`σ` and `①`/`1` remain distinct. The compa
 value stays local and never becomes a server-visible equality tag. This requires
 the matching bundled native library; a missing comparison symbol fails closed,
 with no lowercase-only fallback. Sync scanner collision policy is unchanged.
-Copy and installed Windows/Linux plus two-device UI acceptance remain
+Folder Copy and installed Windows/Linux plus two-device UI acceptance remain
 outstanding; existing sync tests are not a substitute.
 
 ### Move in the file browser (#51 partial)
@@ -366,6 +366,31 @@ A content-only revision update need not invalidate a move. The server cannot
 verify plaintext uniqueness; legacy clients and old replicas can still introduce
 collisions later. Upgrade all replicas together. Installed OS and two-device UI
 propagation acceptance remain unperformed.
+
+### Copy in the file browser (#51 partial)
+
+Use **Copy file**, choose another destination folder (Root is a valid choice),
+then explicitly confirm **Copy**. The same name is retained; the current folder
+is disabled. Collisions never overwrite an entry: cancel, rename the source or
+choose a different folder. **Folder Copy is not supported** is disabled for
+folders; recursive atomic tree publication remains unfinished.
+
+The matching `nntdrive_copy_file` native export runs the guarded SDK operation in
+a top-level worker-isolate helper with one owned result, freed exactly once.
+Keys stay in Rust. The source listing revision/name/parent and complete encrypted
+destination namespace are checked atomically by the backend. Names/manifests are
+resealed for fresh node/revision IDs; immutable v1 chunks retain same-account safe
+dedupe, not independent content revocation. Source content/history is untouched.
+Older cores/servers fail safely without a legacy fallback. Bounds and remaining
+security assumptions are in [Copy design](COPY-DESIGN.md).
+
+Only one attempt is admitted while the dialog is open, with no retry button.
+After failure, **Copy was not confirmed** does not imply rollback: a lost response
+may have committed. **Refresh** reloads the current browser; inspect the chosen
+destination before initiating another copy. Never blindly retry with fresh IDs.
+Errors omit native/server diagnostics and credentials. Copy-time renaming,
+durable replay receipts and installed-client/two-device acceptance are deferred.
+Native loopback HTTP tests are separate from widget-binding tests.
 
 ### Local presence and Show in folder (#51 partial)
 

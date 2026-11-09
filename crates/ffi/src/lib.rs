@@ -589,6 +589,40 @@ pub unsafe extern "C" fn nntdrive_backfill_references(
     })
 }
 
+/// Copies one current file using the guarded SDK protocol. No retries or fallback.
+///
+/// # Safety
+/// `request` is NUL-terminated UTF-8 JSON. Free the owned result exactly once.
+/// Blocking: invoke from a worker isolate. Errors never return server diagnostics.
+#[no_mangle]
+pub unsafe extern "C" fn nntdrive_copy_file(handle: u64, request: *const c_char) -> *mut c_char {
+    guard(|| {
+        let master = key(handle)?;
+        #[derive(serde::Deserialize)]
+        struct Request {
+            #[serde(rename = "baseUrl")]
+            base_url: String,
+            token: String,
+            source: nntdrive_client::FileDto,
+            parent_id: Option<Uuid>,
+        }
+        let request = arg(request)?;
+        if request.len() > 32768 {
+            return Err("invalid copy request".into());
+        }
+        let config: Request = serde_json::from_str(&request).map_err(|_| "invalid copy request")?;
+        if config.source.is_dir {
+            return Err("Folder Copy is not supported.".into());
+        }
+        let mut api = ApiClient::new(config.base_url).map_err(|_| "invalid backend URL")?;
+        api.set_token(config.token);
+        let (id, revision_id) = runtime()
+            .block_on(api.copy_file_checked(&master, &config.source, config.parent_id))
+            .map_err(|_| "Copy was not confirmed. The name may collide or the source or destination changed. Refresh the destination before starting another copy; a lost response may already have committed.")?;
+        Ok(json!({"id": id, "revision_id": revision_id}))
+    })
+}
+
 /// Creates a recovery kit for an unlocked account.
 ///
 /// # Safety
@@ -622,6 +656,38 @@ fn decode_b64(value: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn copy_bridge_rejects_locked_malformed_and_folder_requests() {
+        fn invoke(handle: u64, request: &str) -> Value {
+            let request = CString::new(request).unwrap();
+            let result = unsafe { nntdrive_copy_file(handle, request.as_ptr()) };
+            let value =
+                unsafe { serde_json::from_str(CStr::from_ptr(result).to_str().unwrap()).unwrap() };
+            unsafe { nntdrive_string_free(result) };
+            value
+        }
+        assert_eq!(invoke(0, "{}")["error"], "invalid or locked key handle");
+        let handle = NEXT_HANDLE.fetch_add(1, Ordering::Relaxed);
+        handles()
+            .lock()
+            .unwrap()
+            .insert(handle, MasterKey::generate(Uuid::new_v4(), 0));
+        assert_eq!(invoke(handle, "not json")["error"], "invalid copy request");
+        assert_eq!(
+            invoke(handle, &"x".repeat(32769))["error"],
+            "invalid copy request"
+        );
+        let request = json!({"baseUrl": "invalid", "token": "private-fixture",
+            "source": {"id": Uuid::new_v4(), "parent_id": null, "name_enc": "opaque",
+                "is_dir": true, "size": 0, "favorite": false, "revision": 1, "current_version": null},
+            "parent_id": null});
+        assert_eq!(
+            invoke(handle, &request.to_string())["error"],
+            "Folder Copy is not supported."
+        );
+        nntdrive_lock(handle);
+    }
 
     #[test]
     fn abi_version_is_stable() {

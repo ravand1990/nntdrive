@@ -73,6 +73,9 @@ typedef _BackfillDart = Pointer<Utf8> Function(int, Pointer<Utf8>);
 Future<Map<String, dynamic>> _runBackfill(int handle, String request) =>
     Isolate.run(() => NativeBridge.instance._backfill(handle, request));
 
+Future<Map<String, dynamic>> _runCopy(int handle, String request) =>
+    Isolate.run(() => NativeBridge.instance._copyFile(handle, request));
+
 class NativeBridge {
   NativeBridge._(this._lib) {
     _free = _lib.lookupFunction<_FreeNative, _FreeDart>('nntdrive_string_free');
@@ -230,6 +233,21 @@ class NativeBridge {
   Map<String, dynamic> _backfill(int handle, String request) {
     final f = _lib.lookupFunction<_BackfillNative, _BackfillDart>(
         'nntdrive_backfill_references');
+    final input = _cstr(request);
+    try {
+      return _decode(f(handle, input));
+    } finally {
+      malloc.free(input);
+    }
+  }
+
+  Future<Map<String, dynamic>> copyFileAsync(
+          int handle, Map<String, dynamic> request) =>
+      _runCopy(handle, jsonEncode(request));
+
+  Map<String, dynamic> _copyFile(int handle, String request) {
+    final f = _lib.lookupFunction<_BackfillNative, _BackfillDart>(
+        'nntdrive_copy_file');
     final input = _cstr(request);
     try {
       return _decode(f(handle, input));

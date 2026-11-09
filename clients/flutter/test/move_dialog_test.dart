@@ -46,6 +46,27 @@ void main() {
     expect(result?.parentId, id);
   });
 
+  testWidgets('Copy picker distinguishes root selection from cancel and excludes current folder', (tester) async {
+    final api = FolderApi();
+    MoveDestination? result;
+    await tester.pumpWidget(MaterialApp(home: Builder(builder: (context) => TextButton(onPressed: () async {
+      result = await showDialog<MoveDestination>(context: context, builder: (_) => MoveDialog(api: api, handle: 0,
+        source: RemoteFile('source', 'other-parent', 'opaque', false, 0, false, 1, null), copy: true));
+    }, child: const Text('Open')))));
+    await tester.tap(find.text('Open'));
+    await tester.pumpAndSettle();
+    expect(find.text('Copy file to…'), findsOneWidget);
+    await tester.tap(find.text('Copy here'));
+    await tester.pumpAndSettle();
+    expect(result, isNotNull);
+    expect(result!.parentId, isNull);
+    await tester.tap(find.text('Open'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(result, isNull);
+  });
+
   testWidgets('move picker excludes source, disables current parent and cancels', (tester) async {
     final api = FolderApi();
     MoveDestination? result;
