@@ -839,6 +839,10 @@ pub async fn list_events(
     Ok(Json(json!({ "events": events })))
 }
 
+// Poll and authorization lease are short even for idle or backpressured bodies.
+// See docs/SECURITY.md for in-flight frames and the database deadline.
+const SSE_AUTH_INTERVAL: Duration = Duration::from_secs(2);
+
 pub async fn stream_events(
     State(state): State<AppState>,
     auth: Auth,
@@ -848,28 +852,36 @@ pub async fn stream_events(
         let mut last = q.since;
         let mut idle = 0u32;
         loop {
-            match fetch_events(&state, auth.account_id, last, 200).await {
-                Ok(events) => {
-                    for e in events {
-                        if let Some(seq) = e.get("seq").and_then(|s| s.as_i64()) {
-                            last = last.max(seq);
-                        }
-                        yield Ok(Event::default().event("change").data(e.to_string()));
-                        idle = 0;
+            let mut checked_at = tokio::time::Instant::now();
+            let batch = tokio::time::timeout(SSE_AUTH_INTERVAL, async {
+                auth.revalidate(&state).await?;
+                fetch_events(&state, auth.account_id, last, 200).await
+            }).await;
+            // Invalid credentials, database errors and deadlines all fail closed.
+            // Do not send database diagnostics or credential details over SSE.
+            let Ok(Ok(events)) = batch else { return };
+            for e in events {
+                // A suspended body may resume long after this batch was fetched.
+                // Never drain an indefinitely stale authorization snapshot.
+                if checked_at.elapsed() >= SSE_AUTH_INTERVAL {
+                    checked_at = tokio::time::Instant::now();
+                    if !matches!(tokio::time::timeout(SSE_AUTH_INTERVAL, auth.revalidate(&state)).await, Ok(Ok(()))) {
+                        return;
                     }
                 }
-                Err(e) => {
-                    yield Ok(Event::default().event("error").data(
-                        json!({"error": e.to_string()}).to_string()
-                    ));
-                    return;
+                if let Some(seq) = e.get("seq").and_then(|s| s.as_i64()) {
+                    last = last.max(seq);
                 }
+                yield Ok(Event::default().event("change").data(e.to_string()));
+                idle = 0;
             }
             idle += 1;
             if idle % 15 == 0 {
                 yield Ok(Event::default().comment("keepalive"));
             }
-            tokio::time::sleep(Duration::from_secs(2)).await;
+            // Count processing time toward the poll bound rather than adding
+            // another full interval after a slow batch.
+            tokio::time::sleep_until(checked_at + SSE_AUTH_INTERVAL).await;
         }
     };
     Sse::new(stream).keep_alive(axum::response::sse::KeepAlive::default())

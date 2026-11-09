@@ -112,6 +112,327 @@ async fn register(state: &AppState, email: &str) -> Account {
     }
 }
 
+// These tests poll the real response body before invalidation: opening a fresh
+// request after revocation alone cannot detect a stale live-stream credential.
+async fn sse_change(body: &mut Body) -> Value {
+    tokio::time::timeout(std::time::Duration::from_secs(6), async {
+        loop {
+            let frame = body
+                .frame()
+                .await
+                .expect("stream ended before change")
+                .unwrap();
+            if let Ok(bytes) = frame.into_data() {
+                let text = std::str::from_utf8(&bytes).unwrap();
+                if text.contains("event: change") {
+                    let data = text
+                        .lines()
+                        .find_map(|line| line.strip_prefix("data: "))
+                        .unwrap();
+                    return serde_json::from_str(data).unwrap();
+                }
+            }
+        }
+    })
+    .await
+    .expect("stream did not produce a change")
+}
+
+async fn sse_fixture_event(state: &AppState, account_id: Uuid, seq: i64) {
+    sqlx::query(
+        "INSERT INTO sync_events (account_id, seq, kind, payload) VALUES ($1, $2, 'test', '{}')",
+    )
+    .bind(account_id)
+    .bind(seq)
+    .execute(&state.pool)
+    .await
+    .unwrap();
+}
+
+#[derive(Clone, Copy)]
+enum SseInvalidation {
+    Logout,
+    TokenRevoke,
+    TokenReplacement,
+    DeviceRevoke,
+    Disable,
+    Expiry,
+}
+
+async fn sse_invalidation(case: SseInvalidation) {
+    // Unlike ordinary optional local integration tests, these security regressions
+    // fail closed if their disposable PostgreSQL prerequisite is unavailable.
+    let env = env()
+        .await
+        .expect("SSE regressions require isolated PostgreSQL");
+    let account = register(&env.state, "sse@example.com").await;
+    // An independent backend state has no shared in-memory cancellation channel.
+    let other = AppState::new(
+        env.state.pool.clone(),
+        Arc::new(NntpPool::new(vec![env._server.client_config()]).unwrap()),
+        (*env.state.config).clone(),
+    )
+    .unwrap();
+    let (status, extra) = call(
+        &other,
+        req(
+            "POST",
+            "/api/v1/tokens",
+            Some(&account.token),
+            Some(json!({"label": "still-valid"})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let other_token = extra["token"].as_str().unwrap();
+    sse_fixture_event(&other, account.account_id, 1).await;
+    let response = app(env.state.clone())
+        .oneshot(req(
+            "GET",
+            "/api/v1/events/stream",
+            Some(&account.token),
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body();
+    assert_eq!(sse_change(&mut body).await["seq"], 1);
+
+    match case {
+        SseInvalidation::Logout => {
+            assert_eq!(
+                call(
+                    &other,
+                    req("POST", "/api/v1/auth/logout", Some(&account.token), None)
+                )
+                .await
+                .0,
+                StatusCode::OK
+            );
+        }
+        SseInvalidation::DeviceRevoke => {
+            assert_eq!(
+                call(
+                    &other,
+                    req(
+                        "DELETE",
+                        &format!("/api/v1/devices/{}", account.device_id),
+                        Some(&account.token),
+                        None
+                    )
+                )
+                .await
+                .0,
+                StatusCode::OK
+            );
+        }
+        SseInvalidation::TokenRevoke => {
+            sqlx::query(
+                "UPDATE api_tokens SET revoked_at = now() WHERE token_hash = decode($1, 'hex')",
+            )
+            .bind(nntdrive_backend::auth::token_hash_hex(&account.token))
+            .execute(&other.pool)
+            .await
+            .unwrap();
+        }
+        SseInvalidation::TokenReplacement => {
+            // Even replacing the digest on the same row must not transfer the
+            // original stream's authority to a different bearer credential.
+            sqlx::query("UPDATE api_tokens SET token_hash = decode($1, 'hex') WHERE token_hash = decode($2, 'hex')")
+                .bind(nntdrive_backend::auth::token_hash_hex("replacement-test-credential-not-issued"))
+                .bind(nntdrive_backend::auth::token_hash_hex(&account.token))
+                .execute(&other.pool).await.unwrap();
+        }
+        SseInvalidation::Disable => {
+            // Check the account flag independently of token revocation (including
+            // the admin handler's gap between its two updates).
+            sqlx::query("UPDATE accounts SET disabled = true WHERE id = $1")
+                .bind(account.account_id)
+                .execute(&other.pool)
+                .await
+                .unwrap();
+        }
+        SseInvalidation::Expiry => {
+            sqlx::query("UPDATE api_tokens SET expires_at = now() + interval '250 milliseconds' WHERE token_hash = decode($1, 'hex')")
+                .bind(nntdrive_backend::auth::token_hash_hex(&account.token)).execute(&other.pool).await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(350)).await;
+        }
+    }
+    // New requests must fail as well, but this is not the live-body assertion.
+    assert_eq!(
+        call(
+            &other,
+            req("GET", "/api/v1/events/stream", Some(&account.token), None)
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    if matches!(
+        case,
+        SseInvalidation::Logout | SseInvalidation::TokenRevoke | SseInvalidation::Expiry
+    ) {
+        // A valid replacement token must not revive the originally opened stream.
+        assert_eq!(
+            call(&other, req("GET", "/api/v1/me", Some(other_token), None))
+                .await
+                .0,
+            StatusCode::OK
+        );
+    }
+    // No batch containing this event could have been admitted before invalidation.
+    sse_fixture_event(&other, account.account_id, 2).await;
+    tokio::time::timeout(std::time::Duration::from_secs(6), async {
+        while let Some(frame) = body.frame().await {
+            let frame = frame.unwrap();
+            if let Ok(bytes) = frame.into_data() {
+                assert!(
+                    !std::str::from_utf8(&bytes)
+                        .unwrap()
+                        .contains("event: change"),
+                    "already-open SSE emitted a change after credential invalidation"
+                );
+            }
+        }
+    })
+    .await
+    .expect("invalidated SSE did not close within polling bound plus test slack");
+}
+
+#[tokio::test]
+async fn sse_live_logout() {
+    sse_invalidation(SseInvalidation::Logout).await;
+}
+#[tokio::test]
+async fn sse_live_token_revoke() {
+    sse_invalidation(SseInvalidation::TokenRevoke).await;
+}
+#[tokio::test]
+async fn sse_live_device_revoke() {
+    sse_invalidation(SseInvalidation::DeviceRevoke).await;
+}
+#[tokio::test]
+async fn sse_live_account_disable() {
+    sse_invalidation(SseInvalidation::Disable).await;
+}
+#[tokio::test]
+async fn sse_live_expiry() {
+    sse_invalidation(SseInvalidation::Expiry).await;
+}
+
+#[tokio::test]
+async fn sse_live_token_replacement() {
+    sse_invalidation(SseInvalidation::TokenReplacement).await;
+}
+
+#[tokio::test]
+async fn sse_live_backpressured_batch_rechecks_before_resuming() {
+    let env = env()
+        .await
+        .expect("SSE regressions require isolated PostgreSQL");
+    let account = register(&env.state, "sse-paused@example.com").await;
+    sse_fixture_event(&env.state, account.account_id, 1).await;
+    sse_fixture_event(&env.state, account.account_id, 2).await;
+    let response = app(env.state.clone())
+        .oneshot(req(
+            "GET",
+            "/api/v1/events/stream",
+            Some(&account.token),
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body();
+    assert_eq!(sse_change(&mut body).await["seq"], 1);
+    assert_eq!(
+        call(
+            &env.state,
+            req("POST", "/api/v1/auth/logout", Some(&account.token), None)
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    // Leave the second already-fetched event suspended beyond the auth lease.
+    tokio::time::sleep(std::time::Duration::from_millis(2100)).await;
+    let next = tokio::time::timeout(std::time::Duration::from_secs(3), body.frame())
+        .await
+        .expect("resumed invalidated SSE did not close");
+    assert!(
+        next.is_none(),
+        "resumed SSE drained an expired authorized batch"
+    );
+}
+
+#[tokio::test]
+async fn sse_live_database_deadline_fails_closed() {
+    let env = env()
+        .await
+        .expect("SSE regressions require isolated PostgreSQL");
+    let account = register(&env.state, "sse-deadline@example.com").await;
+    sse_fixture_event(&env.state, account.account_id, 1).await;
+    let response = app(env.state.clone())
+        .oneshot(req(
+            "GET",
+            "/api/v1/events/stream",
+            Some(&account.token),
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body();
+    assert_eq!(sse_change(&mut body).await["seq"], 1);
+    // Real PostgreSQL lock stalls the next auth SELECT without stopping the DB
+    // or touching anything outside this test's isolated schema.
+    let mut blocker = env.state.pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE api_tokens IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *blocker)
+        .await
+        .unwrap();
+    let next = tokio::time::timeout(std::time::Duration::from_secs(6), body.frame())
+        .await
+        .expect("blocked authorization did not close SSE by its deadline");
+    assert!(
+        next.is_none(),
+        "failed authorization exposed a frame or diagnostics"
+    );
+    blocker.rollback().await.unwrap();
+}
+
+#[tokio::test]
+async fn sse_live_valid_token_stays_tenant_scoped() {
+    let env = env()
+        .await
+        .expect("SSE regressions require isolated PostgreSQL");
+    let alice = register(&env.state, "sse-alice@example.com").await;
+    let bob = register(&env.state, "sse-bob@example.com").await;
+    // Exercise the supported NULL expiry and device-less token cases, too.
+    sqlx::query("UPDATE api_tokens SET expires_at = NULL, device_id = NULL WHERE account_id = $1")
+        .bind(alice.account_id)
+        .execute(&env.state.pool)
+        .await
+        .unwrap();
+    sse_fixture_event(&env.state, alice.account_id, 1).await;
+    sse_fixture_event(&env.state, bob.account_id, 100).await;
+    let response = app(env.state.clone())
+        .oneshot(req(
+            "GET",
+            "/api/v1/events/stream",
+            Some(&alice.token),
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut body = response.into_body();
+    assert_eq!(sse_change(&mut body).await["seq"], 1);
+    sse_fixture_event(&env.state, alice.account_id, 2).await;
+    assert_eq!(sse_change(&mut body).await["seq"], 2);
+}
+
 fn base64_key(bytes: &[u8]) -> String {
     use base64::Engine;
     base64::engine::general_purpose::STANDARD.encode(bytes)
