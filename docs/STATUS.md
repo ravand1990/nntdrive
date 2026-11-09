@@ -1,5 +1,22 @@
 # Project status
 
+## Live SSE authorization follow-up (#16 partial, 2026-11-09)
+
+Live event streams revalidate the original hashed credential and tenant/device
+binding against PostgreSQL before each batch, with a two-second poll/authorization
+lease and fail-closed database deadlines. Resuming a backpressured batch after the
+lease requires another check. See [security bounds](SECURITY.md#live-event-stream-authorization)
+for admitted/buffered frame limits; this does not provide instantaneous revocation.
+Five real already-open-body regressions (logout, token/device revoke, account
+flag disable and natural expiry) failed against the original implementation by
+receiving a post-invalidation change. They pass after the fix, along with token
+identity replacement, backpressure, database-lock timeout and tenant-scoped
+NULL-expiry/device-less-token cases, plus a digest Debug-redaction unit test.
+Canonical `bash scripts/dev-check.sh rust` passed formatting, workspace check,
+Clippy (`-D warnings`) and **149 Rust tests**, with one existing ignored subprocess
+helper and no PostgreSQL skips (isolated PostgreSQL 16.15). These are router/body
+and database checks, not deployed proxy-buffering or separate-process acceptance.
+
 A bounded encrypted file/folder Copy SDK + guarded backend publication protocol
 is implemented (#51), with atomic namespace/source-subtree guards and GC-safe
 complete references. Flutter/FFI/UI supports explicit file and recursive folder
