@@ -3,10 +3,43 @@ import 'dart:io';
 
 /// Do not let the UI exit until the detached process actually exists. A bare
 /// Process.start future can be abandoned by exit(0), also hiding launch errors.
-Future<void> startUpdateHelper(
-    Future<Process> Function() launch, Future<void> Function() acknowledge) async {
+Future<void> startUpdateHelper(Future<Process> Function() launch,
+    Future<void> Function() acknowledge) async {
   await launch();
   await acknowledge();
+}
+
+/// Launch exactly the same detached helper from the app and the real-process
+/// regression probe. The returned directory contains diagnostics, not secrets.
+Future<Directory> launchWindowsUpdateHelper({
+  required Directory stage,
+  required String install,
+  required int parentPid,
+  bool showFailureDialog = true,
+}) async {
+  final state = await stage.parent.createTemp('nntdrive-update-handoff-');
+  final source = windowsUpdateScript(
+    stage: stage.path,
+    install: install,
+    state: state.path,
+    parentPid: parentPid,
+    showFailureDialog: showFailureDialog,
+  );
+  // Retain the exact script. Do not modify machine execution policy.
+  await File('${state.path}/update.ps1').writeAsString('\ufeff$source');
+  await startUpdateHelper(
+    () => Process.start(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          source,
+        ],
+        mode: ProcessStartMode.detached),
+    () => waitForWindowsHelper(state),
+  );
+  return state;
 }
 
 /// Windows PowerShell single-quoted strings do not interpolate paths or IDs.
@@ -21,7 +54,8 @@ String windowsUpdateScript({
   required int parentPid,
   String executable = 'nntdrive.exe',
   bool showFailureDialog = true,
-}) => '''
+}) =>
+    '''
 \$ErrorActionPreference = 'Stop'
 \$stage = ${_literal(stage)}
 \$install = ${_literal(install)}
@@ -137,11 +171,16 @@ Future<void> waitForWindowsHelper(Directory state,
   final watch = Stopwatch()..start();
   while (watch.elapsed < timeout) {
     if (File('${state.path}${Platform.pathSeparator}failed').existsSync()) {
-      throw StateError('Update helper preflight failed. See ${state.path} for diagnostics; the app has not closed.');
+      throw StateError(
+          'Update helper preflight failed. See ${state.path} for diagnostics; the app has not closed.');
     }
-    if (File('${state.path}${Platform.pathSeparator}ready').existsSync()) return;
+    if (File('${state.path}${Platform.pathSeparator}ready').existsSync()) {
+      return;
+    }
     await Future<void>.delayed(const Duration(milliseconds: 100));
   }
-  File('${state.path}${Platform.pathSeparator}cancel').writeAsStringSync('cancel');
-  throw StateError('Update helper did not acknowledge startup. See ${state.path} for diagnostics; the app has not closed.');
+  File('${state.path}${Platform.pathSeparator}cancel')
+      .writeAsStringSync('cancel');
+  throw StateError(
+      'Update helper did not acknowledge startup. See ${state.path} for diagnostics; the app has not closed.');
 }

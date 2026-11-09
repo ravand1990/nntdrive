@@ -110,7 +110,8 @@ class Updater {
   /// user-readable message when the release feed cannot be read.
   Future<UpdateInfo?> check() async {
     if (!supported) {
-      throw const UpdateException('Automatic updates are only supported on Windows and Linux.');
+      throw const UpdateException(
+          'Automatic updates are only supported on Windows and Linux.');
     }
     final current = await currentVersion();
     final res = await http.get(
@@ -125,14 +126,18 @@ class Updater {
       );
     }
     if (res.statusCode == 401) {
-      throw const UpdateException('The access token was rejected. Check that it is valid and has not expired.');
+      throw const UpdateException(
+          'The access token was rejected. Check that it is valid and has not expired.');
     }
     if (res.statusCode != 200) {
       throw UpdateException('GitHub release check failed (${res.statusCode}).');
     }
     final release = jsonDecode(res.body) as Map<String, dynamic>;
-    final tag = (release['tag_name'] as String? ?? '').replaceFirst(RegExp(r'^v'), '');
-    if (tag.isEmpty) throw const UpdateException('The latest release has no version tag.');
+    final tag =
+        (release['tag_name'] as String? ?? '').replaceFirst(RegExp(r'^v'), '');
+    if (tag.isEmpty) {
+      throw const UpdateException('The latest release has no version tag.');
+    }
     if (!isNewerVersion(tag, current)) return null;
 
     final assets = (release['assets'] as List? ?? const [])
@@ -144,9 +149,7 @@ class Updater {
           'Release $tag has no ${platformAssetName(tag)} asset.');
     }
     final assetName = asset['name'] as String;
-    final sums = assets
-        .where((a) => a['name'] == 'SHA256SUMS.txt')
-        .firstOrNull;
+    final sums = assets.where((a) => a['name'] == 'SHA256SUMS.txt').firstOrNull;
     final checksum =
         sums == null ? null : await _fetchChecksum(sums, assetName);
     return UpdateInfo(
@@ -165,14 +168,16 @@ class Updater {
   Future<void> install(UpdateInfo info) async {
     final tmp = await getTemporaryDirectory();
     final archive = File(p.join(tmp.path, info.assetName));
-    final stage = Directory(p.join(tmp.path, 'nntdrive-update-${info.version}'));
+    final stage =
+        Directory(p.join(tmp.path, 'nntdrive-update-${info.version}'));
     try {
       await _download(info.assetUrl, archive,
           accept: config.token.isEmpty ? null : 'application/octet-stream');
       if (info.sha256 != null) {
         final actual = await sha256.bind(archive.openRead()).first;
         if (actual.toString().toLowerCase() != info.sha256!.toLowerCase()) {
-          throw const UpdateException('Downloaded update failed its checksum; nothing was replaced.');
+          throw const UpdateException(
+              'Downloaded update failed its checksum; nothing was replaced.');
         }
       }
       if (stage.existsSync()) stage.deleteSync(recursive: true);
@@ -252,30 +257,18 @@ class Updater {
   }
 
   Future<void> _extractTar(File archive, Directory stage) async {
-    final res = await Process.run('tar', ['-xzf', archive.path, '-C', stage.path]);
+    final res =
+        await Process.run('tar', ['-xzf', archive.path, '-C', stage.path]);
     if (res.exitCode != 0) {
       throw UpdateException('Could not unpack the update: ${res.stderr}');
     }
   }
 
   Future<void> _launchWindowsHelper(Directory stage) async {
-    final state = await Directory(stage.parent.path)
-        .createTemp('nntdrive-update-handoff-');
-    final script = File(p.join(state.path, 'update.ps1'));
-    final source = windowsUpdateScript(
-      stage: stage.path,
+    await launchWindowsUpdateHelper(
+      stage: stage,
       install: p.dirname(Platform.resolvedExecutable),
-      state: state.path,
       parentPid: pid,
-    );
-    // Retain the exact script for diagnostics. -Command runs the source without
-    // modifying the machine's script execution policy.
-    await script.writeAsString('\ufeff$source');
-    await startUpdateHelper(
-      () => Process.start('powershell.exe', [
-        '-NoProfile', '-NonInteractive', '-Command', source,
-      ], mode: ProcessStartMode.detached),
-      () => waitForWindowsHelper(state),
     );
   }
 
@@ -343,7 +336,8 @@ Map<String, dynamic>? selectPlatformAsset(
 /// Compares dotted numeric versions, ignoring any `-prerelease` suffix.
 bool isNewerVersion(String candidate, String current) {
   List<int> parse(String value) {
-    final core = value.toLowerCase().replaceFirst(RegExp(r'^v'), '').split('-').first;
+    final core =
+        value.toLowerCase().replaceFirst(RegExp(r'^v'), '').split('-').first;
     final parts = core.split('.').map((e) => int.tryParse(e) ?? 0).toList();
     while (parts.length < 3) {
       parts.add(0);
@@ -365,7 +359,8 @@ String? parseChecksum(String body, String assetName) {
     final parts = line.trim().split(RegExp(r'\s+'));
     if (parts.length < 2) continue;
     final name = parts.last.replaceFirst(RegExp(r'^\*'), '');
-    if (name == assetName && RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(parts.first)) {
+    if (name == assetName &&
+        RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(parts.first)) {
       return parts.first.toLowerCase();
     }
   }
