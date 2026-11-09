@@ -73,6 +73,9 @@ typedef _BackfillDart = Pointer<Utf8> Function(int, Pointer<Utf8>);
 Future<Map<String, dynamic>> _runBackfill(int handle, String request) =>
     Isolate.run(() => NativeBridge.instance._backfill(handle, request));
 
+Future<Map<String, dynamic>> _runCopy(int handle, String request) =>
+    Isolate.run(() => NativeBridge.instance._copyFile(handle, request));
+
 class NativeBridge {
   NativeBridge._(this._lib) {
     _free = _lib.lookupFunction<_FreeNative, _FreeDart>('nntdrive_string_free');
@@ -141,6 +144,35 @@ class NativeBridge {
     }
   }
 
+  /// Local-only canonical/case comparison; never send this value to the API.
+  String nameCollisionKey(String name) {
+    final f = _lib.lookupFunction<_Str1Native, _Str1Dart>(
+        'nntdrive_name_collision_key');
+    final p = _cstr(name);
+    try {
+      return _decode(f(p))['comparison'] as String;
+    } finally {
+      malloc.free(p);
+    }
+  }
+
+  /// Runs disk hashing off the UI isolate; the result is a refresh-time snapshot.
+  Future<bool> localFileMatches(Map<String, dynamic> request) {
+    final encoded = jsonEncode(request);
+    return Isolate.run(() => NativeBridge.instance._localFileMatches(encoded));
+  }
+
+  bool _localFileMatches(String encoded) {
+    final f = _lib.lookupFunction<_Str1Native, _Str1Dart>(
+        'nntdrive_local_file_matches');
+    final request = _cstr(encoded);
+    try {
+      return _decode(f(request))['matches'] == true;
+    } finally {
+      malloc.free(request);
+    }
+  }
+
   Map<String, dynamic> generateAccount(String password) {
     final f = _lib
         .lookupFunction<_Str1Native, _Str1Dart>('nntdrive_generate_account');
@@ -201,6 +233,21 @@ class NativeBridge {
   Map<String, dynamic> _backfill(int handle, String request) {
     final f = _lib.lookupFunction<_BackfillNative, _BackfillDart>(
         'nntdrive_backfill_references');
+    final input = _cstr(request);
+    try {
+      return _decode(f(handle, input));
+    } finally {
+      malloc.free(input);
+    }
+  }
+
+  Future<Map<String, dynamic>> copyFileAsync(
+          int handle, Map<String, dynamic> request) =>
+      _runCopy(handle, jsonEncode(request));
+
+  Map<String, dynamic> _copyFile(int handle, String request) {
+    final f = _lib.lookupFunction<_BackfillNative, _BackfillDart>(
+        'nntdrive_copy_file');
     final input = _cstr(request);
     try {
       return _decode(f(handle, input));

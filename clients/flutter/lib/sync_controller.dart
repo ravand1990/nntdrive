@@ -203,6 +203,23 @@ class SyncController extends ChangeNotifier {
     await _save();
   }
 
+  /// Read-only equality evidence for one freshly listed remote file.
+  Future<bool> fileMatches(SyncFolderConfig folder, String relative,
+      RemoteFile entry) async {
+    if (folder.running || entry.isDir || entry.currentVersion == null) return false;
+    final support = await getApplicationSupportDirectory();
+    if (folder.running) return false;
+    final matches = await NativeBridge.instance.localFileMatches({
+      'handle': handle,
+      'journalPath': p.join(support.path, 'sync', '${folder.id}.sqlite'),
+      'localPath': p.normalize(p.absolute(folder.localPath)),
+      'relativePath': relative,
+      'revision': entry.currentVersion,
+      'size': entry.size,
+    });
+    return !folder.running && matches;
+  }
+
   Future<void> setEnabled(SyncFolderConfig folder, bool enabled) async {
     folder.enabled = enabled;
     await _save();

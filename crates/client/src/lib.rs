@@ -19,6 +19,8 @@ use uuid::Uuid;
 
 const COMPRESSION_LEVEL: i32 = 3;
 
+pub mod copy;
+mod copy_tree;
 pub mod sync_remote;
 pub use sync_remote::HttpRemote;
 

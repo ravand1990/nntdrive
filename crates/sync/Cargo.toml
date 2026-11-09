@@ -18,5 +18,6 @@ blake3.workspace = true
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "uuid", "chrono"] }
 
 [dev-dependencies]
+serde_json.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tempfile = "3"

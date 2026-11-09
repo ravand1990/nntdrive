@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Add bounded encrypted file Copy through the Rust SDK and dedicated guarded
+  publication endpoint: fresh metadata identities, canonical collision preflight,
+  atomic source/destination snapshots and GC-safe tenant references (#51 partial).
+  Flutter/FFI now exposes **Copy file / Copy folder** with an encrypted destination picker,
+  explicit confirmation and a single worker-isolate attempt. Ambiguous failures
+  require refreshing the destination, not blind retry. Recursive folder Copy
+  remaps fresh authenticated node/revision metadata and publishes all or nothing
+  under exact subtree/destination guards and the GC lock. Nested/empty folders
+  are supported, bounded to 256 entries, depth 31 and bounded metadata/references.
+  Copy-time renaming and durable retry receipts remain unsupported.
+- Fix file/folder Copy quota checks to reuse the publication transaction's
+  connection instead of exhausting the database pool while holding its locks.
+  Real HTTP regressions cover a one-connection backend pool, concurrent Copy,
+  quota rejection/rollback and shared-content downloads (#51 partial).
+
 - Apply admin provider CRUD to the serving backend without restart, pinning one
   provider snapshot per storage operation. Reject invalid configs/credentials
   before commit; retain DB management when the final provider is removed.
@@ -33,6 +48,12 @@ release workflow refuses to publish if the entry is missing.
 
 ### Features
 
+- Added the initial SDK Copy metadata preparation with fresh node/revision IDs and re-encrypted authenticated names/manifests; account-scoped immutable v1 chunk references retain safe dedupe. This release's preparation-only stage is superseded by the guarded file/folder publication and Flutter/FFI UI described under Unreleased (see `docs/COPY-DESIGN.md`, #51 partial).
+
+- Local file tooltips now distinguish presence from refresh-time journal/content-revision equality using fresh confined-file hashing off the UI isolate and a read-only existing journal. Missing/invalid evidence, active sync and directories remain unverified; conflict/error precedence and independent safe reveal are preserved (#51 partial). This is not an atomic filesystem snapshot or a durability guarantee; installed Windows/Linux and two-device acceptance remain outstanding.
+- File rows show disk-derived local presence and explanatory availability labels; desktop **Show in folder** revalidates fresh remote ancestry and confined local paths before opening a file's containing folder (folders open themselves). Symlinks, traversal, ambiguous names and excluded/uncovered paths fail closed (#51 partial). Local presence does not certify content/revision equality; installed desktop acceptance remains pending.
+- File/folder rows now offer **Move to…** with an encrypted folder picker and a dedicated guarded move endpoint (#51, partial). Canonical client-local destination collision checks fail closed on unreadable names; the server atomically checks source identity/name/parent and complete destination membership under the account namespace lock. Moves preserve the node, sealed name, content versions and subtree; stale checks require refresh, with no unsafe old-server fallback. Installed Windows/Linux and two-device acceptance remain outstanding.
+- File/folder rows offer encrypted rename with portable-name validation, fresh local-decryption collision checks and stale-entry rejection (#51, partial). Guarded rename atomically compares the opaque sibling snapshot and emits a sync event; concurrent namespace changes require refresh. Installed Windows/Linux and two-device acceptance remain outstanding; legacy clients can still introduce duplicate names after a guarded rename.
 - Guided README installation and usage steps cover release downloads, server setup, offline recovery material, client connection, folder sync and conflicts (#52).
 
 ### Features
@@ -41,6 +62,12 @@ release workflow refuses to publish if the entry is missing.
 
 ### Bug fixes
 
+- File-browser Conflict labels now retain a safely discovered same-directory conflict copy when its original is missing, without enabling Show in folder for the absent original. Missing ancestors, stale copies, directories and links cannot establish the pair; journal/revision equality remains unverified (#51 partial).
+- Identical independent file additions/edits now record the matching remote revision in the sync journal without transferring content, avoiding stale baselines and later false conflicts. Adoption rechecks local hash/type/size, rejects links and unverified remote revisions, and preserves the baseline on failure (#51 partial). Browser-wide journal/revision indicators and installed/two-device acceptance remain pending.
+- File-browser Error labels use structured exact-path failures from the last completed sync report, including both move/conflict endpoints and case-collision spellings; unrelated rows and running folders do not inherit historical errors. Tooltips omit raw diagnostics and preserve independent safe local reveal; journal/revision equality remains unverified (#51 partial).
+- File-browser Syncing labels follow only the item's active transfer, not every row in a busy folder. Discovered conflict copies also mark their present originals after safe disk checks, and refresh rescans candidates; neither transfer completion nor local presence certifies journal/content equality (#51 partial).
+- Rename collision checks reject Unicode canonical equivalents using native NFC/lowercase/NFC comparison, without changing the encrypted spelling or sending equality tags to the server. Compatibility folding and filesystem-specific equality remain out of scope (#51 partial).
+- Rename rejects Windows superscript-digit device aliases and device stems with spaces before extensions; malformed UTF-16 names fail before network access rather than being silently substituted during UTF-8 encoding (#51 partial).
 - Desktop updater waits for the detached helper to start before exiting. Windows additionally requires a bounded preflight acknowledgement, preserves step diagnostics and payload backups, verifies copied files, and attempts rollback/restart with a visible failure dialog after replacement errors. Installed-build Windows acceptance remains pending (#49/#28).
 
 ## [0.5.0] - 2026-11-06

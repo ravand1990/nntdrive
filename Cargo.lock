@@ -1424,6 +1424,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+ "unicode-normalization",
  "uuid",
  "zstd",
 ]
@@ -1461,7 +1462,9 @@ dependencies = [
  "nntdrive-sync",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
+ "unicode-normalization",
  "uuid",
 ]
 
@@ -1516,6 +1519,7 @@ dependencies = [
  "blake3",
  "chrono",
  "serde",
+ "serde_json",
  "sqlx",
  "tempfile",
  "thiserror",

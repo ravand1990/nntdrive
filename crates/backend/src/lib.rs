@@ -15,6 +15,8 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 
+mod copy;
+mod copy_tree;
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../migrations");
 
 pub fn app(state: state::AppState) -> Router {
@@ -30,7 +32,29 @@ pub fn app(state: state::AppState) -> Router {
         .route("/devices/{id}", delete(auth::revoke_device))
         .route("/files", get(api::list_files).post(api::create_file))
         .route("/files/{id}", patch(api::patch_file))
+        .route(
+            "/files/{id}/copy-checked",
+            post(copy::publish).layer(axum::extract::DefaultBodyLimit::max(2 * 1024 * 1024)),
+        )
+        .route(
+            "/copy-tree-destination",
+            get(copy_tree::destination_snapshot),
+        )
+        .route("/files/{id}/copy-tree-snapshot", get(copy_tree::snapshot))
+        .route(
+            "/files/{id}/copy-tree-checked",
+            post(copy_tree::publish).layer(axum::extract::DefaultBodyLimit::max(12 * 1024 * 1024)),
+        )
         .route("/files/{id}/move", post(api::move_file))
+        .route(
+            "/files/{id}/move-checked",
+            post(api::move_file_checked)
+                .layer(axum::extract::DefaultBodyLimit::max(2 * 1024 * 1024)),
+        )
+        .route(
+            "/files/{id}/rename",
+            post(api::rename_file).layer(axum::extract::DefaultBodyLimit::max(2 * 1024 * 1024)),
+        )
         .route(
             "/files/{id}/versions",
             get(api::list_versions).post(api::commit_version),

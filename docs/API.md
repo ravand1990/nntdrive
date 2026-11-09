@@ -7,6 +7,24 @@ Base path: `/api/v1`. All endpoints except registration/login require
 The server cannot decrypt names or manifests. `name_enc` and
 `sealed_manifest` are base64-encoded client ciphertext.
 
+## Guarded file/folder Copy
+
+`POST /files/{source}/copy-checked` publishes one same-account current file,
+returning 201 `{id, revision_id}`. It requires authenticated ciphertext preparation,
+complete source/destination snapshot guards and explicit complete chunk references.
+See [the Copy protocol](COPY-DESIGN.md) for exact fields, bounds, transaction/GC
+locking, collision policy, error semantics and ambiguous-response handling.
+That endpoint intentionally rejects folders. For atomic recursive folder Copy,
+use `GET /files/{source}/copy-tree-snapshot`,
+`GET /copy-tree-destination?parent_id=…` (omit the parameter for root), then
+`POST /files/{source}/copy-tree-checked` with the complete `source` snapshot,
+complete destination `siblings`, destination `parent_id`, and prepared `nodes`.
+The server remaps parents and publishes all nodes, complete references and events
+in one guarded transaction. Returns 201 `{id}` for the new root. Trees are bounded
+to 256 nodes and depth 31; the publication body is at most 12 MiB, with additional
+metadata/reference limits detailed in the Copy design. There is no truncated
+success, legacy fallback or automatic retry for either protocol.
+
 ## Identity
 
 | Method | Path | Body |

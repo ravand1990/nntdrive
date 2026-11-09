@@ -118,6 +118,474 @@ fn base64_key(bytes: &[u8]) -> String {
 }
 
 #[tokio::test]
+async fn guarded_move_preserves_subtree_and_rejects_stale_or_foreign_inputs() {
+    let Some(env) = env().await else { return };
+    let alice = register(&env.state, "move-alice@example.com").await;
+    let bob = register(&env.state, "move-bob@example.com").await;
+    let source = Uuid::new_v4();
+    let destination = Uuid::new_v4();
+    let child = Uuid::new_v4();
+    for (id, parent, is_dir) in [
+        (source, None, true),
+        (destination, None, true),
+        (child, Some(source), false),
+    ] {
+        assert_eq!(call(&env.state, req("POST", "/api/v1/files", Some(&alice.token), Some(json!({
+            "id": id, "parent_id": parent, "is_dir": is_dir, "name_enc": base64_key(id.as_bytes())
+        })))).await.0, StatusCode::CREATED);
+    }
+    let uri = format!("/api/v1/files/{source}/move-checked");
+    let body = json!({"parent_id": destination, "source_parent_id": null,
+        "source_name_enc": base64_key(source.as_bytes()), "siblings": []});
+    for token in [&bob.token] {
+        assert_eq!(
+            call(
+                &env.state,
+                req("POST", &uri, Some(token), Some(body.clone()))
+            )
+            .await
+            .0,
+            StatusCode::NOT_FOUND
+        );
+    }
+    let mut stale = body.clone();
+    stale["source_name_enc"] = json!(base64_key(b"stale"));
+    assert_eq!(
+        call(
+            &env.state,
+            req("POST", &uri, Some(&alice.token), Some(stale))
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    let mut cycle = body.clone();
+    cycle["parent_id"] = json!(source);
+    cycle["siblings"] = json!([{"id": child, "name_enc": base64_key(child.as_bytes())}]);
+    assert_eq!(
+        call(
+            &env.state,
+            req("POST", &uri, Some(&alice.token), Some(cycle))
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    let mut foreign = body.clone();
+    foreign["parent_id"] = json!(Uuid::new_v4());
+    assert_eq!(
+        call(
+            &env.state,
+            req("POST", &uri, Some(&alice.token), Some(foreign))
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    let nested = Uuid::new_v4();
+    assert_eq!(call(&env.state, req("POST", "/api/v1/files", Some(&alice.token), Some(json!({
+        "id": nested, "parent_id": source, "is_dir": true, "name_enc": base64_key(b"nested")
+    })))).await.0, StatusCode::CREATED);
+    let mut descendant = body.clone();
+    descendant["parent_id"] = json!(nested);
+    assert_eq!(
+        call(
+            &env.state,
+            req("POST", &uri, Some(&alice.token), Some(descendant))
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    let foreign_folder = Uuid::new_v4();
+    assert_eq!(
+        call(
+            &env.state,
+            req(
+                "POST",
+                "/api/v1/files",
+                Some(&bob.token),
+                Some(json!({
+                    "id": foreign_folder, "is_dir": true, "name_enc": base64_key(b"foreign")
+                }))
+            )
+        )
+        .await
+        .0,
+        StatusCode::CREATED
+    );
+    for target in [foreign_folder, Uuid::new_v4()] {
+        let mut invalid = body.clone();
+        invalid["parent_id"] = json!(target);
+        assert_eq!(
+            call(
+                &env.state,
+                req("POST", &uri, Some(&alice.token), Some(invalid))
+            )
+            .await
+            .0,
+            StatusCode::NOT_FOUND
+        );
+    }
+    let mut oversized = body.clone();
+    oversized["siblings"] = json!(vec![
+        json!({"id": child, "name_enc": base64_key(b"opaque")});
+        4097
+    ]);
+    assert_eq!(
+        call(
+            &env.state,
+            req("POST", &uri, Some(&alice.token), Some(oversized))
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    // Membership changes invalidate the destination snapshot, even though the
+    // backend cannot compare plaintext names itself.
+    let added = Uuid::new_v4();
+    assert_eq!(
+        call(
+            &env.state,
+            req(
+                "POST",
+                "/api/v1/files",
+                Some(&alice.token),
+                Some(json!({
+                    "id": added, "parent_id": destination, "name_enc": base64_key(b"opaque")
+                }))
+            )
+        )
+        .await
+        .0,
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        call(
+            &env.state,
+            req("POST", &uri, Some(&alice.token), Some(body.clone()))
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    let mut valid = body.clone();
+    valid["siblings"] = json!([{"id": added, "name_enc": base64_key(b"opaque")}]);
+    // The guard must wait for the same account namespace lock as legacy writers.
+    let mut owner = env.state.pool.begin().await.unwrap();
+    sqlx::query("SELECT id FROM accounts WHERE id = $1 FOR UPDATE")
+        .bind(alice.account_id)
+        .fetch_one(&mut *owner)
+        .await
+        .unwrap();
+    let state = env.state.clone();
+    let token = alice.token.clone();
+    let blocked_uri = uri.clone();
+    let blocked_body = valid.clone();
+    let mut blocked = tokio::spawn(async move {
+        call(
+            &state,
+            req("POST", &blocked_uri, Some(&token), Some(blocked_body)),
+        )
+        .await
+    });
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), &mut blocked)
+            .await
+            .is_err()
+    );
+    owner.rollback().await.unwrap();
+    assert_eq!(blocked.await.unwrap().0, StatusCode::OK);
+    assert_eq!(
+        call(
+            &env.state,
+            req("POST", &uri, Some(&alice.token), Some(valid))
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    let parent: Option<Uuid> =
+        sqlx::query_scalar("SELECT parent_id FROM files WHERE account_id = $1 AND id = $2")
+            .bind(alice.account_id)
+            .bind(child)
+            .fetch_one(&env.state.pool)
+            .await
+            .unwrap();
+    assert_eq!(parent, Some(source));
+    let name: Vec<u8> =
+        sqlx::query_scalar("SELECT name_enc FROM files WHERE account_id = $1 AND id = $2")
+            .bind(alice.account_id)
+            .bind(source)
+            .fetch_one(&env.state.pool)
+            .await
+            .unwrap();
+    assert_eq!(name, source.as_bytes());
+}
+
+#[tokio::test]
+async fn guarded_rename_rejects_namespace_races_and_foreign_nodes() {
+    let Some(env) = env().await else { return };
+    let alice = register(&env.state, "guard-alice@example.com").await;
+    let bob = register(&env.state, "guard-bob@example.com").await;
+    let ids = [Uuid::new_v4(), Uuid::new_v4()];
+    for id in ids {
+        let (s, _) = call(
+            &env.state,
+            req(
+                "POST",
+                "/api/v1/files",
+                Some(&alice.token),
+                Some(json!({"id": id, "name_enc": base64_key(id.as_bytes()), "is_dir": false})),
+            ),
+        )
+        .await;
+        assert_eq!(s, StatusCode::CREATED);
+    }
+    let snapshot = json!([
+        {"id": ids[0], "name_enc": base64_key(ids[0].as_bytes())},
+        {"id": ids[1], "name_enc": base64_key(ids[1].as_bytes())}
+    ]);
+    let body =
+        json!({"parent_id": null, "name_enc": base64_key(b"new envelope"), "siblings": snapshot});
+    let uri = format!("/api/v1/files/{}/rename", ids[0]);
+    for target in [ids[0], Uuid::new_v4()] {
+        let (s, _) = call(
+            &env.state,
+            req(
+                "POST",
+                &format!("/api/v1/files/{target}/rename"),
+                Some(&bob.token),
+                Some(body.clone()),
+            ),
+        )
+        .await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
+    }
+    let mut missing = body.clone();
+    missing["siblings"] = json!([]);
+    let (s, _) = call(
+        &env.state,
+        req("POST", &uri, Some(&alice.token), Some(missing)),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CONFLICT);
+    let mut duplicate = body.clone();
+    duplicate["siblings"] = json!([snapshot[0], snapshot[0]]);
+    let (s, _) = call(
+        &env.state,
+        req("POST", &uri, Some(&alice.token), Some(duplicate)),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+
+    let mut oversized = body.clone();
+    oversized["siblings"] = json!(vec![snapshot[0].clone(); 4097]);
+    let (s, _) = call(
+        &env.state,
+        req("POST", &uri, Some(&alice.token), Some(oversized)),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let mut huge_body = body.clone();
+    huge_body["name_enc"] = json!("a".repeat(2 * 1024 * 1024));
+    let (s, _) = call(
+        &env.state,
+        req("POST", &uri, Some(&alice.token), Some(huge_body)),
+    )
+    .await;
+    assert_eq!(s, StatusCode::PAYLOAD_TOO_LARGE);
+
+    // Every namespace dimension checked locally must be checked atomically:
+    // sibling addition, sibling rename, and source move all invalidate a guard.
+    let folder = Uuid::new_v4();
+    let (s, _) = call(
+        &env.state,
+        req(
+            "POST",
+            "/api/v1/files",
+            Some(&alice.token),
+            Some(json!({"id": folder, "name_enc": base64_key(b"folder envelope"), "is_dir": true})),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED);
+    let (s, _) = call(
+        &env.state,
+        req("POST", &uri, Some(&alice.token), Some(body.clone())),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CONFLICT);
+    let (_, with_folder) = call(
+        &env.state,
+        req("GET", "/api/v1/files", Some(&alice.token), None),
+    )
+    .await;
+    let mut including_folder = body.clone();
+    including_folder["siblings"] = with_folder["files"].clone();
+    let (s, _) = call(
+        &env.state,
+        req(
+            "POST",
+            &format!("/api/v1/files/{}/move", ids[0]),
+            Some(&alice.token),
+            Some(json!({"parent_id": folder})),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, _) = call(
+        &env.state,
+        req("POST", &uri, Some(&alice.token), Some(including_folder)),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CONFLICT);
+    let (s, _) = call(
+        &env.state,
+        req(
+            "POST",
+            &format!("/api/v1/files/{}/move", ids[0]),
+            Some(&alice.token),
+            Some(json!({"parent_id": null})),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, _) = call(
+        &env.state,
+        req(
+            "PATCH",
+            &format!("/api/v1/files/{folder}"),
+            Some(&alice.token),
+            Some(json!({"deleted": true})),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, _) = call(
+        &env.state,
+        req(
+            "PATCH",
+            &format!("/api/v1/files/{}", ids[1]),
+            Some(&alice.token),
+            Some(json!({"name_enc": base64_key(b"legacy new name")})),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, _) = call(
+        &env.state,
+        req("POST", &uri, Some(&alice.token), Some(body.clone())),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CONFLICT);
+    let (s, _) = call(
+        &env.state,
+        req(
+            "PATCH",
+            &format!("/api/v1/files/{}", ids[1]),
+            Some(&alice.token),
+            Some(json!({"name_enc": base64_key(ids[1].as_bytes())})),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+
+    // Prove the guarded endpoint actually waits for namespace ownership, rather
+    // than relying on favorable task scheduling in the race below.
+    let mut owner = env.state.pool.begin().await.unwrap();
+    sqlx::query("SELECT id FROM accounts WHERE id = $1 FOR UPDATE")
+        .bind(alice.account_id)
+        .fetch_one(&mut *owner)
+        .await
+        .unwrap();
+    let state = env.state.clone();
+    let token = alice.token.clone();
+    let blocked_uri = uri.clone();
+    let mut invalid = body.clone();
+    invalid["siblings"] = json!([]);
+    let mut blocked = tokio::spawn(async move {
+        call(
+            &state,
+            req("POST", &blocked_uri, Some(&token), Some(invalid)),
+        )
+        .await
+    });
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(100), &mut blocked)
+            .await
+            .is_err()
+    );
+    owner.rollback().await.unwrap();
+    assert_eq!(blocked.await.unwrap().0, StatusCode::CONFLICT);
+
+    // Two valid collision-preflight requests from the same snapshot cannot both
+    // commit, even though their independently sealed names differ in ciphertext.
+    let mut other = body.clone();
+    other["name_enc"] = json!(base64_key(b"another randomized envelope"));
+    let uri2 = format!("/api/v1/files/{}/rename", ids[1]);
+    let (first, second) = tokio::join!(
+        call(
+            &env.state,
+            req("POST", &uri, Some(&alice.token), Some(body.clone()))
+        ),
+        call(
+            &env.state,
+            req("POST", &uri2, Some(&alice.token), Some(other))
+        )
+    );
+    let mut statuses = [first.0.as_u16(), second.0.as_u16()];
+    statuses.sort();
+    assert_eq!(statuses, [200, 409]);
+    let (_, listing) = call(
+        &env.state,
+        req("GET", "/api/v1/files", Some(&alice.token), None),
+    )
+    .await;
+    let rows = listing["files"].as_array().unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(
+        rows.iter()
+            .filter(|r| {
+                r["name_enc"] == base64_key(b"new envelope")
+                    || r["name_enc"] == base64_key(b"another randomized envelope")
+            })
+            .count(),
+        1
+    );
+    assert!(rows.iter().all(|r| r["current_version"].is_null()));
+    let events: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM sync_events WHERE account_id = $1 AND kind = 'rename'",
+    )
+    .bind(alice.account_id)
+    .fetch_one(&env.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(events, 1);
+
+    // A fresh snapshot is invalidated by legacy namespace writers as well.
+    let fresh = json!({"parent_id": null, "name_enc": base64_key(b"next envelope"),
+        "siblings": rows.iter().map(|r| json!({"id": r["id"], "name_enc": r["name_enc"]})).collect::<Vec<_>>()});
+    let (s, _) = call(
+        &env.state,
+        req(
+            "PATCH",
+            &format!("/api/v1/files/{}", ids[1]),
+            Some(&alice.token),
+            Some(json!({"deleted": true})),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK);
+    let (s, _) = call(
+        &env.state,
+        req("POST", &uri, Some(&alice.token), Some(fresh)),
+    )
+    .await;
+    assert!(s == StatusCode::CONFLICT || s == StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn orphan_gc_api_is_opt_in_and_reports_batch_results() {
     let Some(env) = env().await else { return };
     let admin = register(&env.state, "gc-admin@example.test").await;

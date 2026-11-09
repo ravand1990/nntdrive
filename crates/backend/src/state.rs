@@ -127,13 +127,25 @@ impl AppState {
         account_id: uuid::Uuid,
         additional: u64,
     ) -> Result<(), ApiError> {
+        self.check_quota_on(&self.pool, account_id, additional)
+            .await
+    }
+
+    /// Reuse the caller's transaction connection when locks are already held;
+    /// acquiring from the pool here can exhaust it (even with one request).
+    pub(crate) async fn check_quota_on<'e>(
+        &self,
+        executor: impl sqlx::PgExecutor<'e>,
+        account_id: uuid::Uuid,
+        additional: u64,
+    ) -> Result<(), ApiError> {
         let row = sqlx::query_as::<_, (Option<i64>, Option<i64>)>(
             "SELECT a.quota_bytes,
                     (SELECT COALESCE(SUM(plaintext_len),0)::bigint FROM chunks c WHERE c.account_id = a.id)
              FROM accounts a WHERE a.id = $1",
         )
         .bind(account_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(executor)
         .await?
         .ok_or(ApiError::Unauthorized)?;
         if let Some(limit) = row.0 {

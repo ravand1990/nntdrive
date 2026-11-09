@@ -1,5 +1,27 @@
 # Project status
 
+A bounded encrypted file/folder Copy SDK + guarded backend publication protocol
+is implemented (#51), with atomic namespace/source-subtree guards and GC-safe
+complete references. Flutter/FFI/UI supports explicit file and recursive folder
+Copy with an encrypted destination picker and secret-free ambiguity/refresh
+guidance. Folder trees publish all or nothing (256 nodes, depth 31, bounded
+metadata/references). Copy-time renaming and durable retry receipts remain
+unimplemented. Installed-client and two-device UI acceptance remain unverified.
+See [Copy design](COPY-DESIGN.md) for bounds, retry policy and v1 key/dedupe limits.
+The recursive Copy slice passed canonical `bash scripts/dev-check.sh all`: 123 Rust
+passes (real PostgreSQL, no skips), release FFI build, clean Flutter analysis and
+61 Flutter passes / 3 Windows-only skips. Weakening exact subtree equality to
+subset matching failed the added-descendant HTTP regression (201 instead of 409);
+it was restored before the complete run. These are isolated Linux-container results, not installed
+client or two-device UI acceptance.
+The quota-check follow-up reuses each Copy publication transaction's connection.
+Three real HTTP regressions with a one-connection backend pool failed against
+the original pool-based quota calls (bounded pool exhaustion), then passed after the fix:
+file/folder quota denial and shared-content downloads, plus concurrent file/folder
+publication. The follow-up canonical `all` run passed **126 Rust tests** (no skips),
+release FFI build, clean Flutter analysis and **61 Flutter tests / 3 Windows-only
+skips**; all **8 agent-policy tests** and `git diff --check` passed.
+
 Last updated: 2026-11-06. This file is the handoff record for the next agent.
 
 ## NNT-016 verification snapshot (2026-11-05)
@@ -105,6 +127,43 @@ Eweka provider notes for the next agent: use `news.eweka.nl:563` (retrieval,
 credentials; posting must be enabled on the plan. The article `From` header must
 be a valid internet address and Rustls needs an explicitly installed crypto
 provider when both aws-lc-rs and ring are in the dependency graph.
+
+## Issue #51 partial file management
+
+File/folder rows now offer native-encrypted rename, portable component validation,
+fresh sibling collision checks and stale-entry rejection. Guarded rename now
+atomically compares the opaque sibling snapshot under an account namespace lock
+and emits a sync event; stale folders require refresh. Rename collision checks
+now use native NFC/lowercase/NFC comparison while preserving the sealed spelling;
+this is not full case folding or every filesystem's equality policy, and sync
+scanner comparison is unchanged. Rows now inspect disk-derived local presence,
+show explicit coverage/unknown/error/conflict-candidate labels,
+and offer desktop reveal after fresh ancestry/confinement revalidation. Syncing
+now marks only the exact active nonterminal transfer path; discovered preserved
+copies also mark their same-directory originals after disk validation, including
+missing original leaves without enabling reveal. Missing ancestors cannot infer
+a pair. Refresh rescans conflict candidates. Presence alone is not a content-equality
+claim. Idle regular files now gain a refresh-time equality tooltip only after a
+read-only exact-path journal/revision/size check and fresh confined-file hashing;
+unknown/failed checks and directories remain presence-only. This is not an atomic
+filesystem snapshot or a durability guarantee. The sync core
+now records matching remote revisions for identical independent additions/edits
+after fresh local hash/type/size and non-link checks, with no content transfer.
+Unknown remote revisions and failed revalidation leave the old baseline intact;
+browser equality is checked separately on refresh. Structured client-local
+per-item failures now identify exact involved paths without parsing raw diagnostics;
+only these paths show Error from the last completed attempt (not while running),
+with conflict precedence and safe local reveal preserved. Folder-wide exceptions
+and scan skips are not attributed to individual rows. This is not completion:
+The file browser now includes an encrypted destination picker and guarded moves
+for files and folders, preserving opaque node identity, sealed name, content
+history and subtree membership. Client-local canonical collisions and unreadable
+destination names cancel before writes; concurrent source/destination changes
+fail atomically under the account namespace lock. Bounded encrypted file/folder
+Copy is implemented as described above; installed Windows/Linux plus two-device
+acceptance remain outstanding. Legacy clients may
+still introduce duplicate names after a guarded
+rename. See [client details](CLIENTS.md#rename-in-the-file-browser-51-partial).
 
 ## Recent implementation milestones
 

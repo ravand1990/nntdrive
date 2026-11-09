@@ -12,6 +12,11 @@ use std::path::Path;
 use std::sync::Arc;
 use uuid::Uuid;
 
+#[path = "e2e/copy_pool.rs"]
+mod copy_pool_tests;
+#[path = "e2e/copy_tree.rs"]
+mod copy_tree_tests;
+
 struct Stack {
     _db: TestDb,
     _nntp: MockNntpServer,
@@ -24,7 +29,29 @@ struct Stack {
 }
 
 async fn stack() -> Option<Stack> {
+    stack_with_pool_limit(None).await
+}
+
+async fn stack_with_pool_limit(max_connections: Option<u32>) -> Option<Stack> {
     let db = TestDb::create().await?;
+    let backend_pool = if let Some(max) = max_connections {
+        let schema = db.schema.clone();
+        sqlx::postgres::PgPoolOptions::new()
+            .max_connections(max)
+            .acquire_timeout(std::time::Duration::from_secs(2))
+            .after_connect(move |conn, _| {
+                let sql = format!("SET search_path TO \"{schema}\"");
+                Box::pin(async move {
+                    sqlx::query(&sql).execute(conn).await?;
+                    Ok(())
+                })
+            })
+            .connect_with((*db.store.pool().connect_options()).clone())
+            .await
+            .unwrap()
+    } else {
+        db.store.pool().clone()
+    };
     let nntp = MockNntpServer::start(MockConfig::default()).await;
     let pool = Arc::new(NntpPool::new(vec![nntp.client_config()]).unwrap());
     let cache = tempfile::tempdir().unwrap();
@@ -39,7 +66,7 @@ async fn stack() -> Option<Stack> {
         retention_refresh_days: 30,
         retention_interval_secs: 3600,
     };
-    let state = AppState::new(db.store.pool().clone(), pool, config).unwrap();
+    let state = AppState::new(backend_pool, pool, config).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let app = nntdrive_backend::app(state);
@@ -309,6 +336,257 @@ async fn client_upload_download_and_dedupe_through_real_api() {
     }
     let _ = s.account_id;
     let _ = Path::new("");
+}
+
+#[tokio::test]
+async fn guarded_copy_publication_retains_bytes_and_rejects_races() {
+    let Some(s) = stack().await else { return };
+    let mut api = ApiClient::new(s.base_url.clone()).unwrap();
+    api.set_token(s.token.clone());
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("input");
+    let output = dir.path().join("output");
+    let data = b"guarded encrypted copy bytes";
+    tokio::fs::write(&input, data).await.unwrap();
+    let id = create_node(&api, &s.master, "Caf\u{e9}.txt").await;
+    let revision = Uuid::new_v4();
+    upload_file(&api, &s.master, id, revision, None, &input)
+        .await
+        .unwrap();
+    let folder = Uuid::new_v4();
+    api.create_file(
+        folder,
+        None,
+        s.master
+            .seal_name(folder, "destination")
+            .unwrap()
+            .to_bytes(),
+        true,
+    )
+    .await
+    .unwrap();
+    let files = api.list_files(None).await.unwrap();
+    let source = files.iter().find(|f| f.id == id).unwrap();
+    // Real native crypto and HTTP; same-folder canonical collision fails closed.
+    assert!(api
+        .copy_file_checked(&s.master, source, None)
+        .await
+        .is_err());
+    let (copied, copied_revision) = api
+        .copy_file_checked(&s.master, source, Some(folder))
+        .await
+        .unwrap();
+    assert_ne!(copied, id);
+    assert_ne!(copied_revision, revision);
+    download_file(&api, &s.master, copied, None, &output)
+        .await
+        .unwrap();
+    assert_eq!(tokio::fs::read(&output).await.unwrap(), data);
+    assert!(api
+        .copy_file_checked(&s.master, source, Some(folder))
+        .await
+        .is_err());
+    // A canonically equivalent but differently encrypted spelling also collides.
+    api.rename_file(
+        copied,
+        &base64(
+            &s.master
+                .seal_name(copied, "Cafe\u{301}.txt")
+                .unwrap()
+                .to_bytes(),
+        ),
+    )
+    .await
+    .unwrap();
+    assert!(api
+        .copy_file_checked(&s.master, source, Some(folder))
+        .await
+        .is_err());
+
+    let (sealed, _) = api.manifest(id, Some(revision)).await.unwrap();
+    let candidate = nntdrive_client::copy::prepare_file_copy(
+        &s.master,
+        id,
+        revision,
+        &base64_decode(&source.name_enc),
+        &sealed,
+    )
+    .unwrap();
+    let body = json!({"source_revision":revision,"source_parent_id":null,"source_name_enc":source.name_enc,
+        "parent_id":folder,"siblings":[],"id":candidate.file_id,"revision_id":candidate.revision_id,
+        "size":candidate.size,"name_enc":base64(&candidate.name_enc),"sealed_manifest":base64(&candidate.sealed_manifest),"chunk_ids":candidate.chunk_ids});
+    let http = reqwest::Client::new();
+    let url = format!("{}/api/v1/files/{id}/copy-checked", s.base_url);
+    // Destination membership/name guards must reject a stale opaque snapshot.
+    assert_eq!(
+        http.post(&url)
+            .bearer_auth(&s.token)
+            .json(&body)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        409
+    );
+    let siblings = api.list_files(Some(folder)).await.unwrap();
+    let mut valid = body.clone();
+    valid["siblings"] = json!(siblings
+        .iter()
+        .map(|f| json!({"id":f.id,"name_enc":f.name_enc}))
+        .collect::<Vec<_>>());
+    for (field, value, status) in [
+        ("source_revision", json!(Uuid::new_v4()), 409),
+        ("source_parent_id", json!(folder), 409),
+        (
+            "source_name_enc",
+            json!(base64(
+                &s.master.seal_name(id, "changed").unwrap().to_bytes()
+            )),
+            409,
+        ),
+        ("parent_id", json!(Uuid::new_v4()), 404),
+        ("chunk_ids", json!([Uuid::new_v4()]), 400),
+        ("chunk_ids", json!([]), 400),
+        ("id", json!(copied), 409),
+        ("revision_id", json!(copied_revision), 409),
+        (
+            "siblings",
+            json!(vec![json!({"id":copied,"name_enc":source.name_enc}); 4097]),
+            400,
+        ),
+    ] {
+        let mut bad = valid.clone();
+        bad[field] = value;
+        assert_eq!(
+            http.post(&url)
+                .bearer_auth(&s.token)
+                .json(&bad)
+                .send()
+                .await
+                .unwrap()
+                .status()
+                .as_u16(),
+            status,
+            "field {field}"
+        );
+    }
+    // All rejected transactions leave neither candidate nor references/events.
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM files WHERE id=$1")
+        .bind(candidate.file_id)
+        .fetch_one(s._db.store.pool())
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+    for lock in [
+        "SELECT pg_advisory_xact_lock(hashtext($1))",
+        "SELECT id FROM accounts WHERE id=$1::uuid FOR UPDATE",
+    ] {
+        let mut owner = s._db.store.pool().begin().await.unwrap();
+        sqlx::query(lock)
+            .bind(s.account_id.to_string())
+            .execute(&mut *owner)
+            .await
+            .unwrap();
+        let client = http.clone();
+        let uri = url.clone();
+        let token = s.token.clone();
+        let payload = body.clone();
+        let mut blocked = tokio::spawn(async move {
+            client
+                .post(uri)
+                .bearer_auth(token)
+                .json(&payload)
+                .send()
+                .await
+                .unwrap()
+        });
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), &mut blocked)
+                .await
+                .is_err()
+        );
+        owner.rollback().await.unwrap();
+        assert_eq!(blocked.await.unwrap().status(), 409);
+    }
+    // Foreign source and nonexistent source have identical opaque responses.
+    let foreign = s._db.create_account("foreign-copy@example.test").await;
+    let foreign_file = s._db.create_file(foreign, None, vec![1]).await;
+    for other in [foreign_file, Uuid::new_v4()] {
+        assert_eq!(
+            http.post(format!("{}/api/v1/files/{other}/copy-checked", s.base_url))
+                .bearer_auth(&s.token)
+                .json(&valid)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            404
+        );
+    }
+    // Foreign destination/chunks are rejected without publishing the candidate.
+    let foreign_chunk = Uuid::new_v4();
+    sqlx::query("INSERT INTO chunks(id,account_id,plaintext_hash,plaintext_len,ciphertext_len) VALUES($1,$2,$3,1,42)")
+        .bind(foreign_chunk).bind(foreign).bind(vec![9u8;32]).execute(s._db.store.pool()).await.unwrap();
+    for (field, value, status) in [
+        ("parent_id", json!(foreign_file), 404),
+        ("chunk_ids", json!([foreign_chunk]), 400),
+    ] {
+        let mut bad = valid.clone();
+        bad[field] = value;
+        assert_eq!(
+            http.post(&url)
+                .bearer_auth(&s.token)
+                .json(&bad)
+                .send()
+                .await
+                .unwrap()
+                .status()
+                .as_u16(),
+            status
+        );
+    }
+    // Empty files publish an explicitly complete empty reference set.
+    let empty = create_node(&api, &s.master, "empty.txt").await;
+    let empty_input = dir.path().join("empty");
+    tokio::fs::write(&empty_input, b"").await.unwrap();
+    upload_file(&api, &s.master, empty, Uuid::new_v4(), None, &empty_input)
+        .await
+        .unwrap();
+    let empty_source = api
+        .list_files(None)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|f| f.id == empty)
+        .unwrap();
+    let (empty_copy, _) = api
+        .copy_file_checked(&s.master, &empty_source, Some(folder))
+        .await
+        .unwrap();
+    download_file(&api, &s.master, empty_copy, None, &output)
+        .await
+        .unwrap();
+    assert!(tokio::fs::read(&output).await.unwrap().is_empty());
+    // Independent edits and source tombstone preserve the copy's old references.
+    tokio::fs::write(&input, b"independent edit").await.unwrap();
+    upload_file(&api, &s.master, id, Uuid::new_v4(), Some(revision), &input)
+        .await
+        .unwrap();
+    api.delete_file(id).await.unwrap();
+    assert_eq!(
+        s._db
+            .store
+            .collect_orphan_chunks(s.account_id, 1, 100)
+            .await
+            .unwrap(),
+        0
+    );
+    download_file(&api, &s.master, copied, Some(copied_revision), &output)
+        .await
+        .unwrap();
+    assert_eq!(tokio::fs::read(output).await.unwrap(), data);
+    let protected: i64=sqlx::query_scalar("SELECT count(*) FROM version_chunks vc JOIN file_versions v ON v.id=vc.version_id WHERE v.account_id=$1 AND v.file_id=$2 AND v.references_complete").bind(s.account_id).bind(copied).fetch_one(s._db.store.pool()).await.unwrap();
+    assert!(protected > 0);
 }
 
 fn base64_decode(s: &str) -> Vec<u8> {

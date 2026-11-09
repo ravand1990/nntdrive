@@ -202,6 +202,24 @@ pub extern "C" fn nntdrive_device_identity() -> *mut c_char {
     })
 }
 
+/// Returns a client-local comparison key, never a server-visible equality tag.
+/// NFC before and after Unicode lowercase makes canonical equivalents compare
+/// equally without rewriting the user's encrypted spelling. This deliberately
+/// does not implement compatibility normalization or full Unicode case folding.
+///
+/// # Safety
+/// `name` must be a valid NUL-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn nntdrive_name_collision_key(name: *const c_char) -> *mut c_char {
+    guard(|| {
+        use unicode_normalization::UnicodeNormalization;
+        let name = arg(name)?;
+        let normalized: String = name.nfc().collect();
+        let comparison: String = normalized.to_lowercase().nfc().collect();
+        Ok(json!({ "comparison": comparison }))
+    })
+}
+
 /// Seals a plaintext node name with the account name key.
 ///
 /// # Safety
@@ -345,6 +363,31 @@ pub unsafe extern "C" fn nntdrive_download(
             ))
             .map_err(|e| e.to_string())?;
         serde_json::to_value(result).map_err(|e| e.to_string())
+    })
+}
+
+/// Inspect an existing local journal and freshly hash one confined file.
+/// No network access or journal initialization; errors never imply equality.
+///
+/// # Safety
+/// `request` must be a valid NUL-terminated UTF-8 JSON string.
+#[no_mangle]
+pub unsafe extern "C" fn nntdrive_local_file_matches(request: *const c_char) -> *mut c_char {
+    guard(|| {
+        let config: serde_json::Value =
+            serde_json::from_str(&arg(request)?).map_err(|_| "invalid inspection request")?;
+        let _master = key(config["handle"].as_u64().ok_or("missing handle")?)?;
+        let text = |name: &str| config[name].as_str().ok_or("invalid inspection field");
+        let revision = text("revision")?.parse().map_err(|_| "invalid revision")?;
+        let size = config["size"].as_u64().ok_or("invalid size")?;
+        let matches = runtime().block_on(nntdrive_sync::Journal::file_matches(
+            Path::new(text("journalPath")?),
+            Path::new(text("localPath")?),
+            text("relativePath")?,
+            revision,
+            size,
+        ));
+        Ok(json!({"matches": matches}))
     })
 }
 
@@ -546,6 +589,45 @@ pub unsafe extern "C" fn nntdrive_backfill_references(
     })
 }
 
+/// Copies a current file or bounded folder subtree using guarded SDK protocols.
+///
+/// # Safety
+/// `request` is NUL-terminated UTF-8 JSON. Free the owned result exactly once.
+/// Blocking: invoke from a worker isolate. Errors never return server diagnostics.
+#[no_mangle]
+pub unsafe extern "C" fn nntdrive_copy_file(handle: u64, request: *const c_char) -> *mut c_char {
+    guard(|| {
+        let master = key(handle)?;
+        #[derive(serde::Deserialize)]
+        struct Request {
+            #[serde(rename = "baseUrl")]
+            base_url: String,
+            token: String,
+            source: nntdrive_client::FileDto,
+            parent_id: Option<Uuid>,
+        }
+        let request = arg(request)?;
+        if request.len() > 32768 {
+            return Err("invalid copy request".into());
+        }
+        let config: Request = serde_json::from_str(&request).map_err(|_| "invalid copy request")?;
+        let mut api = ApiClient::new(config.base_url).map_err(|_| "invalid backend URL")?;
+        api.set_token(config.token);
+        let result = if config.source.is_dir {
+            runtime()
+                .block_on(api.copy_folder_checked(&master, &config.source, config.parent_id))
+                .map(|id| (id, None))
+        } else {
+            runtime()
+                .block_on(api.copy_file_checked(&master, &config.source, config.parent_id))
+                .map(|(id, revision)| (id, Some(revision)))
+        };
+        let (id, revision_id) = result
+            .map_err(|_| "Copy was not confirmed. The name may collide or the source or destination changed, or the folder exceeds the supported bounds. Refresh the destination before starting another copy; a lost response may already have committed.")?;
+        Ok(json!({"id": id, "revision_id": revision_id}))
+    })
+}
+
 /// Creates a recovery kit for an unlocked account.
 ///
 /// # Safety
@@ -581,8 +663,71 @@ mod tests {
     use super::*;
 
     #[test]
+    fn copy_bridge_rejects_locked_malformed_and_folder_requests() {
+        fn invoke(handle: u64, request: &str) -> Value {
+            let request = CString::new(request).unwrap();
+            let result = unsafe { nntdrive_copy_file(handle, request.as_ptr()) };
+            let value =
+                unsafe { serde_json::from_str(CStr::from_ptr(result).to_str().unwrap()).unwrap() };
+            unsafe { nntdrive_string_free(result) };
+            value
+        }
+        assert_eq!(invoke(0, "{}")["error"], "invalid or locked key handle");
+        let handle = NEXT_HANDLE.fetch_add(1, Ordering::Relaxed);
+        handles()
+            .lock()
+            .unwrap()
+            .insert(handle, MasterKey::generate(Uuid::new_v4(), 0));
+        assert_eq!(invoke(handle, "not json")["error"], "invalid copy request");
+        assert_eq!(
+            invoke(handle, &"x".repeat(32769))["error"],
+            "invalid copy request"
+        );
+        let request = json!({"baseUrl": "invalid", "token": "private-fixture",
+            "source": {"id": Uuid::new_v4(), "parent_id": null, "name_enc": "opaque",
+                "is_dir": true, "size": 0, "favorite": false, "revision": 1, "current_version": null},
+            "parent_id": null});
+        assert!(invoke(handle, &request.to_string())["error"]
+            .as_str()
+            .unwrap()
+            .contains("Refresh"));
+        nntdrive_lock(handle);
+    }
+
+    #[test]
     fn abi_version_is_stable() {
         assert_eq!(nntdrive_abi_version(), 1);
+    }
+
+    #[test]
+    fn canonical_name_comparison_policy() {
+        fn comparison(name: &str) -> Value {
+            let name = CString::new(name).unwrap();
+            let result = unsafe { nntdrive_name_collision_key(name.as_ptr()) };
+            let value =
+                unsafe { serde_json::from_str(CStr::from_ptr(result).to_str().unwrap()) }.unwrap();
+            unsafe { nntdrive_string_free(result) };
+            value
+        }
+        for (a, b) in [
+            ("Café.TXT", "CAFE\u{301}.txt"),
+            ("a\u{323}\u{302}", "a\u{302}\u{323}"),
+            ("가", "\u{1100}\u{1161}"),
+            ("İ", "i\u{307}"),
+        ] {
+            let key = comparison(a);
+            assert_eq!(key["ok"], true);
+            assert_eq!(key, comparison(b));
+            assert_eq!(key, comparison(key["comparison"].as_str().unwrap()));
+        }
+        for (a, b) in [("cafe", "café"), ("①", "1"), ("ß", "ss"), ("ς", "σ")] {
+            assert_ne!(comparison(a), comparison(b));
+        }
+        let result = unsafe { nntdrive_name_collision_key(std::ptr::null()) };
+        let value: Value =
+            unsafe { serde_json::from_str(CStr::from_ptr(result).to_str().unwrap()) }.unwrap();
+        unsafe { nntdrive_string_free(result) };
+        assert_eq!(value["ok"], false);
     }
 
     #[test]
@@ -621,7 +766,44 @@ mod tests {
         unsafe { nntdrive_string_free(opened) };
         let opened: Value = serde_json::from_str(&opened_text).unwrap();
         assert_eq!(opened["name"], "Steuererklärung 2025.pdf");
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        let empty = root.join("empty");
+        std::fs::write(&empty, b"").unwrap();
+        let journal = dir.path().join("journal.sqlite");
+        let revision = Uuid::new_v4();
+        runtime().block_on(async {
+            let j = nntdrive_sync::Journal::open(&journal).await.unwrap();
+            j.upsert(&nntdrive_sync::BaselineEntry {
+                path: "empty".into(),
+                size: 0,
+                revision: Some(revision),
+                content_hash: Some(nntdrive_sync::scanner::hash_file(&empty).unwrap()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        });
+        let inspect = |revision: Uuid| {
+            let request = CString::new(
+                json!({
+                    "handle": handle, "journalPath": journal, "localPath": root,
+                    "relativePath": "empty", "revision": revision, "size": 0,
+                })
+                .to_string(),
+            )
+            .unwrap();
+            let result = unsafe { nntdrive_local_file_matches(request.as_ptr()) };
+            let value: Value =
+                unsafe { serde_json::from_str(CStr::from_ptr(result).to_str().unwrap()).unwrap() };
+            unsafe { nntdrive_string_free(result) };
+            value
+        };
+        assert_eq!(inspect(revision)["matches"], true);
+        assert_eq!(inspect(Uuid::new_v4())["matches"], false);
         nntdrive_lock(handle);
+        assert_eq!(inspect(revision)["ok"], false);
         assert!(key(handle).is_err());
     }
 }
