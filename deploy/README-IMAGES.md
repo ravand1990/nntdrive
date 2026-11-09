@@ -3,12 +3,10 @@
 ## 1. Download the deployment files
 
 Download matching `docker-compose.release.yml`, `nntdrive-compose.py` and
-`env.release.example` into one empty installation directory. The launcher is
-unreleased: until a [GitHub release](https://github.com/ravand1990/nntdrive/releases)
-includes it, use the matching deployment files from `main` as shown in the root
-README. Older releases (including v0.6.0) do not contain this launcher. No source
-checkout or local build is needed. The launcher works with the published 0.6.0
-backend image. Requires Linux/WSL, Python 3 and Docker Compose **2.24+**.
+`env.release.example` from the same [GitHub release](https://github.com/ravand1990/nntdrive/releases).
+Releases from v0.7.0 include the generate-once launcher; older releases
+(including v0.6.0) do not. No source checkout or local build is needed. Requires
+Linux/WSL, Python 3 and Docker Compose **2.24+**.
 
 The backend image is `ghcr.io/ravand1990/nntdrive-backend`. Pin a version in
 `.env` instead of using `latest` for unattended upgrades. GHCR package visibility
@@ -22,7 +20,7 @@ echo "$GHCR_TOKEN" | docker login ghcr.io -u ravand1990 --password-stdin
 ## 2. Configure
 
 Optionally rename `env.release.example` to `.env`, protect it with `chmod 600
-.env`, and set `NNTDRIVE_VERSION=0.6.0`. Leave `POSTGRES_PASSWORD` and
+.env`, and set `NNTDRIVE_VERSION=0.7.0`. Leave `POSTGRES_PASSWORD` and
 `NNTDRIVE_SECRET_KEY` empty. An absent or completely empty `.env` also works,
 using the default image `latest`, loopback binding and port 8080. No manual
 OpenSSL command, host SDK or local image build is needed.

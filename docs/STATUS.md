@@ -1,6 +1,6 @@
 # Project status
 
-## Android folder access (#69, unreleased)
+## Android folder access (#69, v0.7.0)
 
 Shared-folder sync now explains and explicitly requests Android all-files access
 for the current path-based Rust engine (legacy read/write grants on Android 6–10).
@@ -22,7 +22,7 @@ grant/deny/revoke/restart and shared-folder encrypted transfer acceptance remain
 unrun, tracked separately in [#75](https://github.com/ravand1990/nntdrive/issues/75).
 See [access model and limits](CLIENTS.md#android-folder-access-69).
 
-## Generate-once image deployment secrets (#62, unreleased)
+## Generate-once image deployment secrets (#62, v0.7.0)
 
 The image-only `nntdrive-compose.py` launcher supplies a persisted OS-random
 PostgreSQL password and 32-byte-base64 provider key, with independently explicit
@@ -30,8 +30,8 @@ first-boot overrides. `.env` may be empty or absent. Secret storage is 0600/0700
 locked, flushed and atomically published without overwrite; corrupt/insecure
 state, override conflicts and missing secrets with existing project resources
 fail closed. This is not rotation or existing-install migration; source Compose
-and bare-backend defaults are unchanged. The next release workflow includes the
-launcher; current v0.6.0 assets do not. See the image guide's threat model.
+and bare-backend defaults are unchanged. Releases from v0.7.0 include the launcher;
+v0.6.0 assets do not. See the image guide's threat model.
 
 Focused tests cover actual filesystem persistence, concurrent processes,
 interrupted publication, explicit/empty/corrupt state, symlinks/permissions,
@@ -105,8 +105,8 @@ Linux/Android/Windows builds and Android native smoke. Exact-head CI run
 passed. NNT-017 changed only Flutter code; the 93 Rust tests above remain the
 latest recorded Rust count, not a new post-merge run.
 
-The latest published release is **v0.6.0** (2026-11-09); Cargo and Flutter
-source versions are 0.6.0 (`0.6.0+10` for Flutter). The historical
+The latest published release is **v0.7.0** (2026-11-09); Cargo and Flutter
+source versions are 0.7.0 (`0.7.0+11` for Flutter). The historical
 live-provider, desktop and release evidence below was not repeated by this
 documentation run.
 
@@ -165,7 +165,7 @@ decrypt, verify) and through the Flutter FFI sync layer.
 | Real Eweka round-trip: post via `post.eweka.nl:563`, retrieve via `news.eweka.nl:563`, decrypt, verify hash | 4 KB live upload; both articles STAT-verified |
 | Live deployment: dev Compose stack with mock NNTP; register/upload/download through the API | `crates/client/examples/smoke.rs` (verified) |
 | Docker image build, Compose stack, healthcheck, admin page, CLI bootstrap, admin API | ✅ verified locally (image built, stack started, `/healthz` 200, admin stats returned) |
-| Versioned image release: tests → GHCR push (`0.6.0`, `0.6`, `latest`, `sha-*`) → GitHub release with Compose files, checksums and Linux/Android/Windows client builds | ✅ v0.6.0 published |
+| Versioned image release: tests → GHCR push (`0.7.0`, `0.7`, `latest`, `sha-*`) → GitHub release with Compose files, checksums and Linux/Android/Windows client builds | ✅ v0.7.0 published |
 | Flutter client analyze/tests, Linux/Android/Windows release builds | ✅ clean analyze, Dart FFI tests pass; Linux/Windows bundles run, Android APK (~77 MB, debug-signed) embeds all ABIs |
 
 Run it yourself:
@@ -281,7 +281,7 @@ rename. See [client details](CLIENTS.md#rename-in-the-file-browser-51-partial).
   serialized automatic/manual checks and prompts, in-app update settings
   (repository + optional read-only token for private releases), SHA-256
   verification, detached in-place replacement and restart.
-- Tag-driven release pipeline: tests, GHCR image `0.6.0`/`0.6`/`latest`/`sha-*`,
+- Tag-driven release pipeline: tests, GHCR image `0.7.0`/`0.7`/`latest`/`sha-*`,
   and a GitHub release with the image-only Compose files, `SHA256SUMS.txt` and
   Linux, Android and Windows client builds. The image is amd64 only; arm64 needs
   native runners or a longer QEMU build. iOS requires macOS/Xcode and is not
