@@ -298,7 +298,8 @@ restart can itself fail, so this is not a durability guarantee.
 
 Windows diagnostics remain in the system temporary directory under a unique
 `nntdrive-update-handoff-*` directory: `update.log` names the failing step,
-`failed`/`complete` records the outcome, `update.ps1` retains the helper source,
+`failed`/`complete` records the outcome, `helper-pid` identifies the launched
+helper, `update.ps1` retains its source,
 and `backup/` retains overwritten files. Failed stages/backups are deliberately
 not deleted. These files contain local install paths, not update tokens or keys;
 review/redact paths before sharing a log. After confirming a working install,

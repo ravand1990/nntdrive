@@ -19,6 +19,8 @@ Future<void> main(List<String> args) async {
   // The helper restarts the new executable without arguments. Keep it alive
   // until the supervisor verifies the marker, then terminates this exact PID.
   final install = File(Platform.resolvedExecutable).parent;
-  File('${install.path}/restarted-pid').writeAsStringSync('$pid');
+  final marker = File('${install.path}/restarted-pid.tmp');
+  marker.writeAsStringSync('$pid');
+  marker.renameSync('${install.path}/restarted-pid');
   await Future<void>.delayed(const Duration(minutes: 1));
 }

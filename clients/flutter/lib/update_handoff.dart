@@ -28,15 +28,31 @@ Future<Directory> launchWindowsUpdateHelper({
   // Retain the exact script. Do not modify machine execution policy.
   await File('${state.path}/update.ps1').writeAsString('\ufeff$source');
   await startUpdateHelper(
-    () => Process.start(
+    () async {
+      final helper = await Process.start(
         'powershell.exe',
-        [
-          '-NoProfile',
-          '-NonInteractive',
-          '-Command',
-          source,
-        ],
-        mode: ProcessStartMode.detached),
+        ['-NoProfile', '-NonInteractive', '-Command', source],
+        // Windows PowerShell requires valid standard handles even when the
+        // script writes only to files. Plain detached mode supplies none.
+        mode: ProcessStartMode.detachedWithStdio,
+      );
+      // Drain startup output while the app lives; do not await helper exit.
+      // The script itself retains all post-exit diagnostics in update.log.
+      helper.stdout.listen((_) {}, onError: (Object _) {});
+      helper.stderr.listen((bytes) {
+        try {
+          File('${state.path}/helper-stderr.log')
+              .writeAsBytesSync(bytes, mode: FileMode.append);
+        } on FileSystemException catch (_) {
+          // A diagnostic write must not interrupt the acknowledgement wait.
+        }
+      }, onError: (Object _) {});
+      // Retain the exact launched PID for diagnostics and bounded fixture cleanup.
+      final marker = File('${state.path}/helper-pid.tmp');
+      await marker.writeAsString('${helper.pid}');
+      await marker.rename('${state.path}/helper-pid');
+      return helper;
+    },
     () => waitForWindowsHelper(state),
   );
   return state;

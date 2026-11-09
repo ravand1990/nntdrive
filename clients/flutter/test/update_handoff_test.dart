@@ -130,16 +130,40 @@ void main() {
     Process? parent;
     int? restartedPid;
     addTearDown(() async {
+      // Stop the exact detached helper before killing its parent: otherwise
+      // teardown itself could authorize replacement/restart during deletion.
+      for (final entry in root.listSync().whereType<Directory>()) {
+        if (!entry.path.contains('nntdrive-update-handoff-')) continue;
+        File('${entry.path}/cancel').writeAsStringSync('cancel');
+        final helperMarker = File('${entry.path}/helper-pid');
+        if (helperMarker.existsSync()) {
+          final helperPid = int.parse(helperMarker.readAsStringSync());
+          await Process.run('taskkill', [
+            '/PID',
+            '$helperPid',
+            '/T',
+            '/F',
+            '/FI',
+            'IMAGENAME eq powershell.exe',
+          ]);
+        }
+      }
       parent?.kill();
       if (parent != null) await parent.exitCode;
-      if (restartedPid != null) {
-        // Terminate only the exact probe child; do not touch other app processes.
-        final stopped =
-            await Process.run('taskkill', ['/PID', '$restartedPid', '/F']);
-        expect(stopped.exitCode, 0,
-            reason: '${stopped.stdout}\n${stopped.stderr}');
-        await Future<void>.delayed(const Duration(milliseconds: 500));
+      final restartMarker = File('${root.path}/install/restarted-pid');
+      if (restartMarker.existsSync()) {
+        restartedPid = int.parse(restartMarker.readAsStringSync());
       }
+      if (restartedPid != null) {
+        await Process.run('taskkill', [
+          '/PID',
+          '$restartedPid',
+          '/F',
+          '/FI',
+          'IMAGENAME eq nntdrive.exe',
+        ]);
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 500));
       await root.delete(recursive: true);
     });
     final install = await Directory('${root.path}/install').create();
@@ -169,8 +193,18 @@ void main() {
         parent.stderr.transform(const SystemEncoding().decoder).join();
     final stdout =
         parent.stdout.transform(const SystemEncoding().decoder).join();
-    expect(await parent.exitCode.timeout(const Duration(seconds: 25)), 0,
-        reason: '${await stdout}\n${await stderr}');
+    final parentExit =
+        await parent.exitCode.timeout(const Duration(seconds: 25));
+    final startupLogs = root
+        .listSync()
+        .whereType<Directory>()
+        .expand((dir) => ['update.log', 'helper-stderr.log']
+            .map((name) => File('${dir.path}/$name')))
+        .where((file) => file.existsSync())
+        .map((file) => file.readAsStringSync())
+        .join('\n');
+    expect(parentExit, 0,
+        reason: '${await stdout}\n${await stderr}\n$startupLogs');
     final statePath = File('${install.path}/handoff-state').readAsStringSync();
     final watch = Stopwatch()..start();
     final marker = File('${install.path}/restarted-pid');
