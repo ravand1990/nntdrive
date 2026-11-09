@@ -1,5 +1,28 @@
 # Project status
 
+## Generate-once image deployment secrets (#62, unreleased)
+
+The image-only `nntdrive-compose.py` launcher supplies a persisted OS-random
+PostgreSQL password and 32-byte-base64 provider key, with independently explicit
+first-boot overrides. `.env` may be empty or absent. Secret storage is 0600/0700,
+locked, flushed and atomically published without overwrite; corrupt/insecure
+state, override conflicts and missing secrets with existing project resources
+fail closed. This is not rotation or existing-install migration; source Compose
+and bare-backend defaults are unchanged. The next release workflow includes the
+launcher; current v0.6.0 assets do not. See the image guide's threat model.
+
+Focused tests cover actual filesystem persistence, concurrent processes,
+interrupted publication, explicit/empty/corrupt state, symlinks/permissions,
+existing-data guard decisions, URL encoding and secret-free failure diagnostics.
+Real Compose configuration tests cover dotenv precedence and rendering with no
+`.env`/domain, plus the real launcher's read-only Docker `ps` path with absent then
+empty `.env`. `python3 scripts/test-deployment-secrets.py` passed **13 tests**;
+**10** filesystem/process tests also passed through the approved isolated
+`dev-check.sh flutter-exec` wrapper. The absent-env rendering regression fails
+against the original release Compose file. Live image pull, fresh backend/PostgreSQL startup, provider-password
+read-back and Docker `down`/`up`/recreation acceptance have not been exercised;
+filesystem tests are not a substitute for that live-stack acceptance.
+
 ## Live SSE authorization follow-up (#16 partial, 2026-11-09)
 
 Live event streams revalidate the original hashed credential and tenant/device
