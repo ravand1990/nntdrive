@@ -8,6 +8,24 @@ import 'package:nntdrive/sync_controller.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  testWidgets('session controller announces completed load and stops equality admission', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    final sync = SyncController(server: 'http://unused', token: '', handle: 0,
+      api: ApiClient(baseUrl: 'http://unused'));
+    addTearDown(sync.dispose);
+    final loadedNotifications = <bool>[];
+    sync.addListener(() => loadedNotifications.add(sync.loaded));
+    expect(sync.loaded, isFalse);
+    await sync.load();
+    expect(sync.loaded, isTrue);
+    expect(loadedNotifications.last, isTrue);
+    await sync.stopAndDrain();
+    // No platform directory lookup or native core access after stop.
+    expect(await sync.fileMatches(SyncFolderConfig(id: 'id', name: 'folder',
+      localPath: '/unused', remoteRootId: 'root'), 'file',
+      RemoteFile('file', 'root', 'opaque', false, 0, false, 1, 'revision')), isFalse);
+  });
+
   testWidgets(
       'stop cancels initial and recurring timers, including late load/start',
       (tester) async {

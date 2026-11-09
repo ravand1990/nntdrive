@@ -108,6 +108,30 @@ No login autostart, cold-start automatic unlock or mobile background worker is
 registered. A cold process still requires the password. See
 [background sync](BACKGROUND-SYNC.md) for security boundaries and remaining work.
 
+## Legacy reference preparation
+
+After unlocking, open the account menu → **Prepare legacy references** →
+**Start batch**. The client validates/decrypts manifests locally, including
+historical and deleted-file revisions, then submits only opaque chunk IDs using
+that session's bearer token. No keys or plaintext are sent to the server. Each
+explicit batch processes at most 200 revisions within a 60-second deadline.
+Results show confirmed revisions for that batch, remaining work, or a safe error;
+**Continue / retry** restarts at the first incomplete revision. Confirmed writes
+are immutable/idempotent, including retries after an ambiguous timeout. Counts
+are acknowledgements, not a whole-account total. There are no automatic retries.
+A bad manifest/wrong key stops the batch; resolve the cause rather than skipping
+it. A clean pass does not enable GC or guarantee a concurrently uploading legacy
+client cannot add incomplete history. Upgrade every client; admin GC independently
+rechecks completeness. No NNTP articles or file versions are deleted.
+
+`nntdrive_backfill_references(handle, request_json)` runs off the UI thread in a
+separate top-level isolate helper and returns one owned JSON result, freed exactly
+once with `nntdrive_string_free`; it retains no native callback/listener. Locked
+handles fail before HTTP. Old cores missing this additive export fail safely;
+ship Flutter and its native library together. Live browser acceptance is separate
+and remains unperformed.
+
+
 ## Build instructions
 
 ### Linux and Android (all-in-one)
@@ -255,7 +279,9 @@ and prompts are serialized across automatic and manual triggers, and offline or
 inaccessible feeds never prevent using the app. The updater:
 
 1. reads `releases/latest` and compares the tag with the installed version;
-2. selects `nntdrive-windows-x64.zip` or `nntdrive-linux-x64.tar.gz`;
+2. selects `nntdrive-<version>-windows-x64.zip` or
+   `nntdrive-<version>-linux-x64.tar.gz`, falling back to the unversioned name
+   used by older releases;
 3. downloads over HTTPS and verifies the SHA-256 from `SHA256SUMS.txt`;
 4. unpacks to a temporary directory and starts a detached helper;
 5. exits, letting the helper replace the install directory and restart the app.
@@ -294,6 +320,181 @@ provide a fallback with
 `--dart-define=NNTDRIVE_UPDATE_REPO=owner/repo`. Android and iOS are not updated
 by this mechanism (Android requires the system package installer; iOS requires
 App Store/TestFlight or a signed enterprise install).
+
+## Rename in the file browser (#51 partial)
+
+Use the edit icon beside a file or folder to **Rename** it; Cancel leaves it
+unchanged. Names are sealed by the native client for the existing node ID; only
+`name_enc` changes via `POST /files/{id}/rename`, so contents and immutable revision history are retained.
+The client refreshes siblings before renaming, decrypts their names locally and
+rejects case-insensitive collisions, unreadable names, stale source entries and
+non-portable path components. Device-name validation includes Windows `COM¹`,
+`COM²`, `COM³` / `LPT¹`, `LPT²`, `LPT³` aliases and spaces before an extension
+(for example `NUL .txt`). Malformed UTF-16 is rejected before network access, so
+UTF-8 replacement cannot change the spelling between validation and encryption;
+valid supplementary characters such as emoji are retained. These are portable
+validation tests, not proof of installed Windows behavior.
+Failures leave the dialog workflow recoverable
+without displaying raw backend/native diagnostics. Sync still runs on its normal
+schedule or via **Sync now**, not as a side effect of renaming.
+
+This is a bounded implementation slice, not full #51 acceptance. Rename sends
+its complete opaque sibling-name snapshot and parent ID. The backend compares
+that snapshot and updates the name in one account-locked transaction; a changed
+name, added/deleted sibling or moved source returns 409 and requires refresh and
+a new local collision check. Successful rename emits a sync event. No plaintext
+name, deterministic equality tag or new encryption format is introduced. Older
+servers lack the dedicated endpoint: the client fails rather than falling back
+to an unsafe PATCH. Guarded rename is bounded to 4096 sibling entries and a
+2 MiB request body; larger folders fail closed. Namespace writes on this backend
+(including legacy API routes) use the
+same lock, but old backend replicas and direct database writers do not; upgrade
+all replicas together. This is not server-enforced plaintext uniqueness: legacy
+clients can still introduce duplicate names after the guarded rename.
+
+Collision comparison uses Unicode NFC, Unicode lowercase, then NFC again in the
+native client. Canonically equivalent spellings (including decomposed accents,
+reordered combining marks and Hangul) collide, but the encrypted name retains
+exactly the spelling entered. This is not compatibility normalization, full case
+folding, confusable detection or a guarantee of every filesystem's equality
+rules: for example `ß`/`ss`, `ς`/`σ` and `①`/`1` remain distinct. The comparison
+value stays local and never becomes a server-visible equality tag. This requires
+the matching bundled native library; a missing comparison symbol fails closed,
+with no lowercase-only fallback. Sync scanner collision policy is unchanged.
+Installed Windows/Linux plus two-device UI acceptance remain outstanding;
+existing sync tests are not a substitute.
+
+### Move in the file browser (#51 partial)
+
+Use the row's **Move file / Move folder** action, browse decrypted destination
+folders, and select **Move here** (or cancel). Root is selectable after navigating
+up; the current parent is disabled and the source folder is never offered as a
+destination. The backend rechecks descendant cycles even if the tree changes
+while the picker is open. If a canonical name collision is found, rename the
+source first or choose another destination; no entry is overwritten.
+
+The client opens all destination names locally and sends only opaque IDs and
+sealed envelopes to `POST /files/{id}/move-checked`. Under the same account
+namespace lock as legacy writers, the server compares the complete destination
+snapshot and source parent/name before updating the parent and publishing a move
+event. The sealed name, node ID, size, current content revision, retained history
+and child-parent relationships remain unchanged. No key sharing or re-encryption
+is involved. Concurrent namespace changes return conflict and require fresh
+preflight; there is no retry or unconditional-move fallback on older servers.
+Bounds match guarded rename: 4096 destination siblings and a 2 MiB request body.
+A content-only revision update need not invalidate a move. The server cannot
+verify plaintext uniqueness; legacy clients and old replicas can still introduce
+collisions later. Upgrade all replicas together. Installed OS and two-device UI
+propagation acceptance remain unperformed.
+
+### Copy in the file browser (#51 partial)
+
+Use **Copy file / Copy folder**, choose another destination folder (Root is a valid choice),
+then explicitly confirm **Copy**. The same name is retained; the current folder
+is disabled. Collisions never overwrite an entry: cancel, rename the source or
+choose a different folder. Folder Copy publishes the entire current subtree
+atomically, including nested and empty folders. It excludes deleted entries and
+old versions, leaves source history intact, and rejects destinations within the
+source. It is bounded to 256 entries including the root, depth 31, 8 MiB candidate
+metadata and 16384 references, with additional per-node/body/destination limits.
+An oversized or unreadable tree fails without publishing a subset.
+
+The matching `nntdrive_copy_file` native export runs the guarded SDK operation in
+a top-level worker-isolate helper with one owned result, freed exactly once.
+Keys stay in Rust. The source listing revision/name/parent and complete encrypted
+destination namespace are checked atomically by the backend. Names/manifests are
+resealed for fresh node/revision IDs; immutable v1 chunks retain same-account safe
+dedupe, not independent content revocation. Source content/history is untouched.
+Older cores/servers fail safely without a legacy fallback. Bounds and remaining
+security assumptions are in [Copy design](COPY-DESIGN.md).
+
+Only one attempt is admitted while the dialog is open, with no retry button.
+After failure, **Copy was not confirmed** does not imply rollback: a lost response
+may have committed. **Refresh** reloads the current browser; inspect the chosen
+destination before initiating another copy. Never blindly retry with fresh IDs.
+Errors omit native/server diagnostics and credentials. Copy-time renaming,
+durable replay receipts and installed-client/two-device acceptance are deferred.
+Native loopback HTTP tests are separate from widget-binding tests.
+
+### Local presence and Show in folder (#51 partial)
+
+Rows display **Local** only when the expected path exists under the configured
+sync root with the correct file/directory type. **Cloud only** means that root
+exists but the expected path is absent. **Not covered** explains missing sync
+configuration or selective-sync exclusions; **Unknown** means mapping could not
+be established safely (including unreadable or ambiguous sibling names).
+**Error** indicates an inaccessible/missing root or unsafe/unexpected local path.
+**Conflict** identifies an existing discovered conflict copy and its
+same-directory original, even when the original leaf is missing, after checking
+the copy is still a regular, non-linked file in a validated containing directory.
+An absent original remains non-revealable; a missing ancestor cannot establish a
+pair. This is a proposed pair, not journal-verified conflict resolution; review
+revalidates hashes/revisions. Discovery is refreshed with the browser and after
+sync (up to 500 copies per root). **Syncing** identifies only the exact relative
+path of the covering root's active, nonterminal file-transfer event; unrelated
+rows, directories and completed events retain their disk-derived labels. A
+conflict label takes precedence over transfer activity. Local presence does not
+prove journal/revision/content equality, even after a terminal transfer event;
+folder transfer errors are not falsely attributed to every file in that folder.
+Completed sync reports now include additive client-local `item_errors` records
+with exact `paths`, an `operation` and a diagnostic-free error `code`. Action
+failures identify all involved paths (both move endpoints/conflict candidates);
+case collisions identify both spellings and missing-source folder moves both
+endpoints. Legacy `errors` tuples remain unchanged. The browser marks only exact
+paths from the last completed report as **Error**, never parses legacy diagnostic
+labels, and never copies raw messages into the availability tooltip. Reports are
+historical evidence of an attempted operation, not current revision equality;
+while a folder is running, its previous report does not mark rows. Conflict
+candidates retain precedence. Safe disk presence/reveal remains independently
+available; excluded, ambiguous and unsafe mappings still fail closed. Folder-wide
+exceptions and scan skips are not per-item failures. Missing originals without an
+attributed failure are still labelled Cloud only.
+
+For a present regular file in an idle root, refresh now checks its exact relative
+path in the existing SQLite baseline, compares the listed remote content revision
+and size, and freshly hashes the confined local file on a worker isolate. A
+matching result adds an explicit **Local** tooltip confirming equality at that
+refresh. No size/mtime hash cache or terminal progress event establishes equality.
+Missing, legacy, corrupt or unreadable journals, pending moves, unknown revisions,
+changed bytes and native failures retain the presence-only explanation; inspection
+never creates, migrates or updates a journal. Directories remain presence-only,
+not recursive subtree certificates. Conflict/error labels take precedence, and
+starting sync suppresses the previous equality tooltip until a fresh idle check.
+No names, hashes or journal paths are sent to the backend by this inspection.
+Hashing reads the full file on each refresh and can take time for large folders.
+This is a snapshot of observed local bytes and listed metadata, not an atomic
+guarantee against hostile filesystem swaps, later edits, remote rollback or
+provider retention loss. Bounded encrypted file/folder Copy is available as
+described above; installed Windows/Linux and two-device UI acceptance remain
+outstanding.
+
+The sync core now persists the matching remote revision when both sides have
+independently added or edited a regular file to identical known hashes and sizes.
+Before updating SQLite it rechecks the local file's type, size and hash, rejects
+symlinks, and requires a real revision in the remote snapshot. No upload/download
+or transferred bytes are counted. Failed checks preserve the prior baseline for
+retry; the resulting baseline survives restart and anchors subsequent edits.
+This is a reconciliation fix, not a live browser integrity badge or protection
+against a hostile concurrent filesystem writer racing the final journal write.
+
+Refresh re-reads disk, and completion of all-folder or individual-folder sync
+refreshes the browser. An initial refresh also runs after sync settings load.
+Ancestry is re-listed and decrypted locally using opaque root IDs; stale cached
+breadcrumb names are not used for filesystem lookup. Canonical-name ambiguity
+fails closed. No names, comparison keys or local paths are sent to the backend.
+
+Desktop **Show in folder** opens a file's containing directory; for a directory
+it opens that directory itself (including a configured root, never its parent).
+The action is disabled with an explanation without an inspected local path and
+on mobile. Clicking re-lists remote ancestry and rechecks disk before launching
+`explorer.exe`, `xdg-open` or macOS `open` with one argument, without a shell or
+executing the selected file. Traversal, reserved/invalid components, symlinks
+(including symlinked roots/ancestors), unexpected types and overlapping remote
+root mappings are rejected. This is not a sandbox against a hostile concurrent
+local writer: path validation and a separate OS file manager cannot be atomic,
+and a filesystem swap after validation can still race the external application.
+Installed Windows/Linux reveal and state-by-state manual acceptance have not
+been performed; launcher fixtures do not establish OS integration acceptance.
 
 ## Folder sync walkthrough
 

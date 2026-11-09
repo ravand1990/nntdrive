@@ -51,6 +51,15 @@ pub trait Remote {
     async fn move_path(&mut self, from: &str, to: &str) -> Result<()>;
 }
 
+/// Client-local attribution, never sent to the backend. No raw diagnostics are
+/// included: paths come from the action itself, not a formatted error message.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ItemError {
+    pub paths: Vec<String>,
+    pub operation: &'static str,
+    pub code: &'static str,
+}
+
 #[derive(Debug, Default, Clone, serde::Serialize)]
 pub struct SyncReport {
     pub uploaded: usize,
@@ -64,6 +73,7 @@ pub struct SyncReport {
     pub uploaded_bytes: u64,
     pub skipped: Vec<(String, String)>,
     pub errors: Vec<(String, String)>,
+    pub item_errors: Vec<ItemError>,
 }
 
 pub struct SyncEngine {
@@ -393,7 +403,19 @@ impl SyncEngine {
             skipped: scan.skipped.clone(),
             ..Default::default()
         };
+        for (from, to) in &missing_sources {
+            report.item_errors.push(ItemError {
+                paths: vec![from.clone(), to.clone()],
+                operation: "move_local",
+                code: "missing_source",
+            });
+        }
         for (a, b) in &scan.case_collisions {
+            report.item_errors.push(ItemError {
+                paths: vec![a.clone(), b.clone()],
+                operation: "scan",
+                code: "case_collision",
+            });
             report
                 .errors
                 .push((b.clone(), format!("case-only collision with '{a}'")));
@@ -411,16 +433,49 @@ impl SyncEngine {
                     continue;
                 }
             }
-            if let Action::Download { path, .. } = &action {
+            if let Action::Download { path, .. } | Action::AdoptRevision { path, .. } = &action {
                 if blocked.contains(path.as_str()) {
                     continue;
                 }
             }
             let label = action_label(&action);
+            let mut item_error = action_item_error(&action);
+            if let Action::AdoptRevision {
+                path,
+                revision,
+                size,
+                hash,
+            } = &action
+            {
+                // detect_remote historically synthesizes IDs for unversioned
+                // entries. Such an ID must never become an acknowledged base.
+                if !remote_entries.iter().any(|entry| {
+                    entry.path == *path
+                        && !entry.deleted
+                        && !entry.is_dir
+                        && entry.revision == Some(*revision)
+                        && entry.size == *size
+                        && entry.content_hash.as_ref() == Some(hash)
+                }) {
+                    item_error.code = "unverified_revision";
+                    report.item_errors.push(item_error);
+                    report
+                        .errors
+                        .push((label, "remote revision is not verified".into()));
+                    continue;
+                }
+            }
             if let Err(e) = self
                 .apply(remote, root.as_path(), journal, action, now, &mut report)
                 .await
             {
+                item_error.code = match &e {
+                    SyncError::Io(_) => "io",
+                    SyncError::Journal(_) => "journal",
+                    SyncError::Remote(_) => "remote",
+                    SyncError::UnsafePath(_) => "unsafe_path",
+                };
+                report.item_errors.push(item_error);
                 report.errors.push((label, e.to_string()));
             }
         }
@@ -500,6 +555,47 @@ impl SyncEngine {
                     .await?;
                 report.uploaded += 1;
                 report.uploaded_bytes += size;
+            }
+            Action::AdoptRevision {
+                path,
+                revision,
+                size,
+                hash,
+            } => {
+                let local = local_path(root, &path)?;
+                ensure_no_symlinks(root, &path).await?;
+                if !tokio::fs::symlink_metadata(root).await?.is_dir() {
+                    return Err(SyncError::UnsafePath(path));
+                }
+                let metadata = tokio::fs::symlink_metadata(&local).await?;
+                if !metadata.is_file() || metadata.len() != size {
+                    return Err(SyncError::Remote(
+                        "local content changed before convergence".into(),
+                    ));
+                }
+                let actual = tokio::task::spawn_blocking({
+                    let local = local.clone();
+                    move || scanner::hash_file(&local)
+                })
+                .await
+                .map_err(|e| SyncError::Remote(format!("hash task failed: {e}")))??;
+                ensure_no_symlinks(root, &path).await?;
+                if actual != hash {
+                    return Err(SyncError::Remote(
+                        "local content changed before convergence".into(),
+                    ));
+                }
+                journal
+                    .upsert(&BaselineEntry {
+                        path,
+                        is_dir: false,
+                        size,
+                        content_hash: Some(hash),
+                        revision: Some(revision),
+                        deleted: false,
+                    })
+                    .await?;
+                // No transferred bytes or completed upload/download to report.
             }
             Action::Download { path, revision } => {
                 let rev = revision.ok_or_else(|| SyncError::Remote("missing revision".into()))?;
@@ -674,9 +770,32 @@ impl SyncEngine {
     }
 }
 
+fn action_item_error(a: &Action) -> ItemError {
+    let (operation, paths) = match a {
+        Action::Upload { path, .. } => ("upload", vec![path.clone()]),
+        Action::AdoptRevision { path, .. } => ("adopt_revision", vec![path.clone()]),
+        Action::Download { path, .. } => ("download", vec![path.clone()]),
+        Action::DeleteRemote { path, .. } => ("delete_remote", vec![path.clone()]),
+        Action::DeleteLocal { path } => ("delete_local", vec![path.clone()]),
+        Action::CreateLocalDir { path } => ("mkdir_local", vec![path.clone()]),
+        Action::CreateRemoteDir { path } => ("mkdir_remote", vec![path.clone()]),
+        Action::RenameLocal { from, to } => ("move_local", vec![from.clone(), to.clone()]),
+        Action::MoveRemote { from, to } => ("move_remote", vec![from.clone(), to.clone()]),
+        Action::Conflict {
+            path, local_copy, ..
+        } => ("conflict", vec![path.clone(), local_copy.clone()]),
+    };
+    ItemError {
+        paths,
+        operation,
+        code: "unknown",
+    }
+}
+
 fn action_label(a: &Action) -> String {
     match a {
         Action::Upload { path, .. } => format!("upload {path}"),
+        Action::AdoptRevision { path, .. } => format!("adopt revision {path}"),
         Action::Download { path, .. } => format!("download {path}"),
         Action::DeleteRemote { path, .. } => format!("delete remote {path}"),
         Action::DeleteLocal { path } => format!("delete local {path}"),
@@ -795,6 +914,7 @@ mod tests {
         uploads: usize,
         fail_upload: bool,
         fail_move: bool,
+        omit_revision: bool,
     }
 
     #[derive(Clone, Default)]
@@ -808,7 +928,7 @@ mod tests {
                 .iter()
                 .map(|(path, (data, rev))| RemoteEntry {
                     path: path.clone(),
-                    revision: Some(*rev),
+                    revision: (!state.omit_revision).then_some(*rev),
                     parent_revision: None,
                     is_dir: false,
                     size: data.len() as u64,
@@ -925,6 +1045,222 @@ mod tests {
         assert!(journal.load().await.unwrap().is_empty());
         drop(lease);
         run(&engine, &mut remote, dir.path(), &journal).await;
+    }
+
+    #[tokio::test]
+    async fn identical_edits_record_revision_and_survive_restart() {
+        // Both initial additions and concurrent edits must establish a baseline.
+        for existing_baseline in [false, true] {
+            let mut remote = FakeRemote::default();
+            let a = tempfile::tempdir().unwrap();
+            let b = tempfile::tempdir().unwrap();
+            let state = tempfile::tempdir().unwrap();
+            let journal_path = state.path().join("journal.sqlite");
+            let ja = Journal::in_memory().await.unwrap();
+            let jb = Journal::open(&journal_path).await.unwrap();
+            let engine = SyncEngine::new("device");
+            if existing_baseline {
+                tokio::fs::write(a.path().join("f.txt"), b"base")
+                    .await
+                    .unwrap();
+                run(&engine, &mut remote, a.path(), &ja).await;
+                run(&engine, &mut remote, b.path(), &jb).await;
+            }
+            for dir in [&a, &b] {
+                tokio::fs::write(dir.path().join("f.txt"), b"identical edit")
+                    .await
+                    .unwrap();
+            }
+            run(&engine, &mut remote, a.path(), &ja).await;
+            let expected = ja.load().await.unwrap()["f.txt"].clone();
+            let report = engine
+                .run_once(&mut remote, b.path(), &jb, "T")
+                .await
+                .unwrap();
+            assert!(report.errors.is_empty(), "{report:?}");
+            assert_eq!(
+                (report.uploaded, report.downloaded, report.conflicts),
+                (0, 0, 0)
+            );
+            assert_eq!(jb.load().await.unwrap().get("f.txt"), Some(&expected));
+            drop(jb);
+            let jb = Journal::open(&journal_path).await.unwrap();
+            assert_eq!(jb.load().await.unwrap().get("f.txt"), Some(&expected));
+            let uploads = remote.0.lock().await.uploads;
+            run(&engine, &mut remote, b.path(), &jb).await;
+            assert_eq!(remote.0.lock().await.uploads, uploads);
+            // A later edit on B is based on the adopted revision, not a false
+            // conflict against the pre-convergence revision (or missing base).
+            tokio::fs::write(b.path().join("f.txt"), b"later B edit")
+                .await
+                .unwrap();
+            let report = engine
+                .run_once(&mut remote, b.path(), &jb, "T2")
+                .await
+                .unwrap();
+            assert!(report.errors.is_empty(), "{report:?}");
+            assert_eq!(
+                (report.uploaded, report.downloaded, report.conflicts),
+                (1, 0, 0)
+            );
+            assert_eq!(remote.0.lock().await.files.len(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn unversioned_snapshot_cannot_establish_convergence() {
+        let root = tempfile::tempdir().unwrap();
+        tokio::fs::write(root.path().join("f"), b"same")
+            .await
+            .unwrap();
+        let journal = Journal::in_memory().await.unwrap();
+        let mut remote = FakeRemote::default();
+        {
+            let mut state = remote.0.lock().await;
+            state
+                .files
+                .insert("f".into(), (b"same".to_vec(), Uuid::new_v4()));
+            state.omit_revision = true;
+        }
+        let report = SyncEngine::new("device")
+            .run_once(&mut remote, root.path(), &journal, "T")
+            .await
+            .unwrap();
+        assert!(journal.load().await.unwrap().is_empty());
+        assert_eq!(report.errors.len(), 1);
+        assert_eq!(report.item_errors[0].operation, "adopt_revision");
+        assert_eq!(report.item_errors[0].code, "unverified_revision");
+        assert_eq!(report.item_errors[0].paths, vec!["f"]);
+        assert_eq!(
+            (report.uploaded, report.downloaded, report.conflicts),
+            (0, 0, 0)
+        );
+        remote.0.lock().await.omit_revision = false;
+        run(
+            &SyncEngine::new("device"),
+            &mut remote,
+            root.path(),
+            &journal,
+        )
+        .await;
+        assert!(journal.load().await.unwrap()["f"].revision.is_some());
+    }
+
+    #[tokio::test]
+    async fn adoption_revalidates_content_and_preserves_baseline_on_failure() {
+        let root = tempfile::tempdir().unwrap();
+        let journal = Journal::in_memory().await.unwrap();
+        let base = BaselineEntry {
+            path: "f".into(),
+            revision: Some(Uuid::new_v4()),
+            content_hash: Some("old".into()),
+            size: 3,
+            ..Default::default()
+        };
+        journal.upsert(&base).await.unwrap();
+        let action = Action::AdoptRevision {
+            path: "f".into(),
+            revision: Uuid::new_v4(),
+            size: 4,
+            hash: blake3::hash(b"same").to_hex().to_string(),
+        };
+        let engine = SyncEngine::new("device");
+        let mut remote = FakeRemote::default();
+        // Changed content of the same size, changed size, missing file and type
+        // replacement must not commit the planned remote revision.
+        for content in [b"edit".as_slice(), b"long edit".as_slice()] {
+            tokio::fs::write(root.path().join("f"), content)
+                .await
+                .unwrap();
+            assert!(engine
+                .apply(
+                    &mut remote,
+                    root.path(),
+                    &journal,
+                    action.clone(),
+                    "T",
+                    &mut SyncReport::default()
+                )
+                .await
+                .is_err());
+            assert_eq!(journal.load().await.unwrap()["f"], base);
+        }
+        tokio::fs::remove_file(root.path().join("f")).await.unwrap();
+        assert!(engine
+            .apply(
+                &mut remote,
+                root.path(),
+                &journal,
+                action.clone(),
+                "T",
+                &mut SyncReport::default()
+            )
+            .await
+            .is_err());
+        tokio::fs::create_dir(root.path().join("f")).await.unwrap();
+        assert!(engine
+            .apply(
+                &mut remote,
+                root.path(),
+                &journal,
+                action.clone(),
+                "T",
+                &mut SyncReport::default()
+            )
+            .await
+            .is_err());
+        assert_eq!(journal.load().await.unwrap()["f"], base);
+        // Unconfined paths must also fail before touching journal state.
+        let unsafe_action = Action::AdoptRevision {
+            path: "../outside".into(),
+            revision: Uuid::new_v4(),
+            size: 0,
+            hash: String::new(),
+        };
+        assert!(engine
+            .apply(
+                &mut remote,
+                root.path(),
+                &journal,
+                unsafe_action,
+                "T",
+                &mut SyncReport::default()
+            )
+            .await
+            .is_err());
+        #[cfg(unix)]
+        {
+            let outside = tempfile::tempdir().unwrap();
+            tokio::fs::write(outside.path().join("f"), b"same")
+                .await
+                .unwrap();
+            tokio::fs::remove_dir(root.path().join("f")).await.unwrap();
+            std::os::unix::fs::symlink(outside.path().join("f"), root.path().join("f")).unwrap();
+            assert!(engine
+                .apply(
+                    &mut remote,
+                    root.path(),
+                    &journal,
+                    action.clone(),
+                    "T",
+                    &mut SyncReport::default()
+                )
+                .await
+                .is_err());
+            std::os::unix::fs::symlink(outside.path(), root.path().join("linked-root")).unwrap();
+            assert!(engine
+                .apply(
+                    &mut remote,
+                    &root.path().join("linked-root"),
+                    &journal,
+                    action,
+                    "T",
+                    &mut SyncReport::default()
+                )
+                .await
+                .is_err());
+            assert_eq!(journal.load().await.unwrap()["f"], base);
+        }
     }
 
     #[tokio::test]
@@ -1143,6 +1479,154 @@ mod tests {
         run(&engine, &mut remote.clone(), b.path(), &jb).await;
         assert!(b.path().join("docs/new.md").exists());
         assert!(!b.path().join("docs/old.md").exists());
+    }
+
+    #[test]
+    fn structured_action_errors_include_all_involved_paths() {
+        let from = "upload x -> y".to_string();
+        let to = "nested/final.txt".to_string();
+        let cases = [
+            (
+                Action::Upload {
+                    path: from.clone(),
+                    base_revision: None,
+                },
+                "upload",
+                false,
+            ),
+            (
+                Action::Download {
+                    path: from.clone(),
+                    revision: None,
+                },
+                "download",
+                false,
+            ),
+            (
+                Action::DeleteRemote {
+                    path: from.clone(),
+                    base_revision: None,
+                },
+                "delete_remote",
+                false,
+            ),
+            (
+                Action::DeleteLocal { path: from.clone() },
+                "delete_local",
+                false,
+            ),
+            (
+                Action::CreateLocalDir { path: from.clone() },
+                "mkdir_local",
+                false,
+            ),
+            (
+                Action::CreateRemoteDir { path: from.clone() },
+                "mkdir_remote",
+                false,
+            ),
+            (
+                Action::RenameLocal {
+                    from: from.clone(),
+                    to: to.clone(),
+                },
+                "move_local",
+                true,
+            ),
+            (
+                Action::MoveRemote {
+                    from: from.clone(),
+                    to: to.clone(),
+                },
+                "move_remote",
+                true,
+            ),
+            (
+                Action::Conflict {
+                    path: from.clone(),
+                    local_copy: to.clone(),
+                    remote_revision: None,
+                },
+                "conflict",
+                true,
+            ),
+        ];
+        for (action, operation, pair) in cases {
+            let error = action_item_error(&action);
+            assert_eq!(error.operation, operation);
+            assert_eq!(
+                error.paths,
+                if pair {
+                    vec![from.clone(), to.clone()]
+                } else {
+                    vec![from.clone()]
+                }
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn item_errors_preserve_exact_paths_without_diagnostic_parsing() {
+        let mut remote = FakeRemote::default();
+        let root = tempfile::tempdir().unwrap();
+        let journal = Journal::in_memory().await.unwrap();
+        let engine = SyncEngine::new("dev");
+        let path = "upload report -> final.txt";
+        tokio::fs::write(root.path().join(path), b"keep me")
+            .await
+            .unwrap();
+        remote.0.lock().await.fail_upload = true;
+        let report = engine
+            .run_once(&mut remote, root.path(), &journal, "t")
+            .await
+            .unwrap();
+        let json = serde_json::to_value(&report).unwrap();
+        assert_eq!(
+            json["item_errors"],
+            serde_json::json!([{
+                "paths": [path], "operation": "upload", "code": "remote"
+            }])
+        );
+        assert_eq!(report.errors.len(), 1); // Legacy diagnostics remain compatible.
+        assert!(journal.load().await.unwrap().is_empty());
+        remote.0.lock().await.fail_upload = false;
+        let retried = engine
+            .run_once(&mut remote, root.path(), &journal, "t")
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(retried).unwrap()["item_errors"],
+            serde_json::json!([])
+        );
+        assert_eq!(
+            tokio::fs::read(root.path().join(path)).await.unwrap(),
+            b"keep me"
+        );
+    }
+
+    #[tokio::test]
+    async fn case_collision_errors_identify_both_paths_without_messages() {
+        let mut remote = FakeRemote::default();
+        let root = tempfile::tempdir().unwrap();
+        let journal = Journal::in_memory().await.unwrap();
+        tokio::fs::write(root.path().join("A.txt"), b"one")
+            .await
+            .unwrap();
+        tokio::fs::write(root.path().join("a.txt"), b"two")
+            .await
+            .unwrap();
+        let report = SyncEngine::new("dev")
+            .run_once(&mut remote, root.path(), &journal, "t")
+            .await
+            .unwrap();
+        assert_eq!(report.item_errors.len(), 1);
+        let error = &report.item_errors[0];
+        assert_eq!(error.operation, "scan");
+        assert_eq!(error.code, "case_collision");
+        let mut paths = error.paths.clone();
+        paths.sort();
+        assert_eq!(paths, vec!["A.txt", "a.txt"]);
+        assert_eq!(report.uploaded, 0);
     }
 
     #[tokio::test]

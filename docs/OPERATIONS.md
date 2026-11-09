@@ -7,7 +7,7 @@
 Images are published to GHCR with semantic version tags:
 
 ```
-ghcr.io/ravand1990/nntdrive-backend:0.5.0
+ghcr.io/ravand1990/nntdrive-backend:0.5.2
 ghcr.io/ravand1990/nntdrive-backend:latest
 ghcr.io/ravand1990/nntdrive-backend:edge
 ```
@@ -53,7 +53,7 @@ Tagging `vX.Y.Z` runs `.github/workflows/release.yml`:
    image-only Compose files attached.
 
 Before tagging, choose a new version; **0.4.2 below is an example, not a
-published release**. Do not reuse the existing v0.5.0 tag.
+published release**. Do not reuse the existing v0.5.2 tag.
 
 ```bash
 # 1. bump the workspace version in Cargo.toml and client version in
@@ -132,12 +132,41 @@ cp deploy/providers.example.json /tmp/providers.json
 # fill credentials, then set NNTDRIVE_NNTP_PROVIDERS="$(cat /tmp/providers.json)"
 ```
 
-Or add or edit a provider in the admin dashboard. Providers are stored (password
-encrypted) and applied on the next restart. The dashboard has a **Restart
-backend** button in Maintenance; it shuts the process down gracefully and waits
-for the container manager to start it again (Compose `restart: unless-stopped`,
-systemd `Restart=always`). Active transfers are interrupted during the restart.
-If you run the binary by hand, restart it yourself after changing providers.
+Or add, edit, disable or delete a provider in the admin dashboard. Passwords
+remain encrypted at rest. Successful CRUD responses mean the validated pool has
+been applied on the serving backend, without restarting. Each storage operation
+pins one pool snapshot, including posting and verification; active operations
+can finish using removed providers. New operations see the replacement pool.
+Validation does not connect to the provider or prove posting permission.
+
+The first successful admin provider mutation permanently selects DB management.
+Existing provider rows also select it on upgrade. Disabling or deleting the last
+provider leaves an empty pool, including after restart; environment credentials
+are not silently reactivated. Add a DB provider to restore service. Invalid DB
+configuration or undecryptable credentials fail closed, not back to environment.
+Keep `NNTDRIVE_SECRET_KEY` stable and backed up.
+
+Mutations use a transaction-scoped PostgreSQL advisory lock plus a process-local
+publication mutex; validation precedes commit and publication precedes response.
+An admitted mutation completes even if the caller disconnects. Deploy **one
+backend process**: replica-wide pool invalidation is not implemented. Direct SQL
+provider edits do not trigger reload; use the admin API. Connectivity failure is
+not a config-validation failure; use Test before bulk transfers. Maintenance now
+saves the refresh policy and displays durable per-batch results. Orphan metadata
+cleanup is explicit per account (grace 1..3650 days, default UI value 7), limited
+to 1000 chunks per run. First successful collection permanently requires upgraded
+reference-aware clients, including when zero chunks are removed. Every retained
+legacy revision must first be backfilled by an unlocked client; otherwise cleanup
+reports `blocked: incomplete_version_references` without deletion or policy
+change. All history/conflicts/tombstones remain protected; no NNTP article is
+retracted. See [API compatibility/backfill](API.md) for the SDK flow and race
+semantics. In the unlocked Flutter account menu choose **Prepare legacy references**,
+then Start batch and Continue / retry until the pass reports no more incomplete
+revisions. Each batch is limited to 200 revisions / 60 seconds, stops on error,
+and is safe to retry; it neither enables GC nor deletes content. GC still checks
+all references under its account lock. Test only on
+isolated fixtures; live-stack/browser acceptance for #15 remains pending.
+The Maintenance restart action remains available but is not needed for CRUD.
 Configured providers have a **Test** button that verifies DNS, TLS and
 authentication without posting (posting permission is only proven by a real
 upload).

@@ -1,5 +1,27 @@
 # Project status
 
+A bounded encrypted file/folder Copy SDK + guarded backend publication protocol
+is implemented (#51), with atomic namespace/source-subtree guards and GC-safe
+complete references. Flutter/FFI/UI supports explicit file and recursive folder
+Copy with an encrypted destination picker and secret-free ambiguity/refresh
+guidance. Folder trees publish all or nothing (256 nodes, depth 31, bounded
+metadata/references). Copy-time renaming and durable retry receipts remain
+unimplemented. Installed-client and two-device UI acceptance remain unverified.
+See [Copy design](COPY-DESIGN.md) for bounds, retry policy and v1 key/dedupe limits.
+The recursive Copy slice passed canonical `bash scripts/dev-check.sh all`: 123 Rust
+passes (real PostgreSQL, no skips), release FFI build, clean Flutter analysis and
+61 Flutter passes / 3 Windows-only skips. Weakening exact subtree equality to
+subset matching failed the added-descendant HTTP regression (201 instead of 409);
+it was restored before the complete run. These are isolated Linux-container results, not installed
+client or two-device UI acceptance.
+The quota-check follow-up reuses each Copy publication transaction's connection.
+Three real HTTP regressions with a one-connection backend pool failed against
+the original pool-based quota calls (bounded pool exhaustion), then passed after the fix:
+file/folder quota denial and shared-content downloads, plus concurrent file/folder
+publication. The follow-up canonical `all` run passed **126 Rust tests** (no skips),
+release FFI build, clean Flutter analysis and **61 Flutter tests / 3 Windows-only
+skips**; all **8 agent-policy tests** and `git diff --check` passed.
+
 Last updated: 2026-11-06. This file is the handoff record for the next agent.
 
 ## NNT-016 verification snapshot (2026-11-05)
@@ -21,8 +43,8 @@ Linux/Android/Windows builds and Android native smoke. Exact-head CI run
 passed. NNT-017 changed only Flutter code; the 93 Rust tests above remain the
 latest recorded Rust count, not a new post-merge run.
 
-The latest published release is **v0.5.0** (2026-11-06); Cargo and Flutter
-source versions are 0.5.0 (`0.5.0+7` for Flutter). The historical
+The latest published release is **v0.5.2** (2026-11-08); Cargo and Flutter
+source versions are 0.5.2 (`0.5.2+9` for Flutter). The historical
 live-provider, desktop and release evidence below was not repeated by this
 documentation run.
 
@@ -70,7 +92,7 @@ decrypt, verify) and through the Flutter FFI sync layer.
 | Real Eweka round-trip: post via `post.eweka.nl:563`, retrieve via `news.eweka.nl:563`, decrypt, verify hash | 4 KB live upload; both articles STAT-verified |
 | Live deployment: dev Compose stack with mock NNTP; register/upload/download through the API | `crates/client/examples/smoke.rs` (verified) |
 | Docker image build, Compose stack, healthcheck, admin page, CLI bootstrap, admin API | ✅ verified locally (image built, stack started, `/healthz` 200, admin stats returned) |
-| Versioned image release: tests → GHCR push (`0.5.0`, `0.5`, `latest`, `sha-*`) → GitHub release with Compose files, checksums and Linux/Android/Windows client builds | ✅ v0.5.0 published |
+| Versioned image release: tests → GHCR push (`0.5.2`, `0.5`, `latest`, `sha-*`) → GitHub release with Compose files, checksums and Linux/Android/Windows client builds | ✅ v0.5.2 published |
 | Flutter client analyze/tests, Linux/Android/Windows release builds | ✅ clean analyze, Dart FFI tests pass; Linux/Windows bundles run, Android APK (~77 MB, debug-signed) embeds all ABIs |
 
 Run it yourself:
@@ -124,6 +146,43 @@ credentials; posting must be enabled on the plan. The article `From` header must
 be a valid internet address and Rustls needs an explicitly installed crypto
 provider when both aws-lc-rs and ring are in the dependency graph.
 
+## Issue #51 partial file management
+
+File/folder rows now offer native-encrypted rename, portable component validation,
+fresh sibling collision checks and stale-entry rejection. Guarded rename now
+atomically compares the opaque sibling snapshot under an account namespace lock
+and emits a sync event; stale folders require refresh. Rename collision checks
+now use native NFC/lowercase/NFC comparison while preserving the sealed spelling;
+this is not full case folding or every filesystem's equality policy, and sync
+scanner comparison is unchanged. Rows now inspect disk-derived local presence,
+show explicit coverage/unknown/error/conflict-candidate labels,
+and offer desktop reveal after fresh ancestry/confinement revalidation. Syncing
+now marks only the exact active nonterminal transfer path; discovered preserved
+copies also mark their same-directory originals after disk validation, including
+missing original leaves without enabling reveal. Missing ancestors cannot infer
+a pair. Refresh rescans conflict candidates. Presence alone is not a content-equality
+claim. Idle regular files now gain a refresh-time equality tooltip only after a
+read-only exact-path journal/revision/size check and fresh confined-file hashing;
+unknown/failed checks and directories remain presence-only. This is not an atomic
+filesystem snapshot or a durability guarantee. The sync core
+now records matching remote revisions for identical independent additions/edits
+after fresh local hash/type/size and non-link checks, with no content transfer.
+Unknown remote revisions and failed revalidation leave the old baseline intact;
+browser equality is checked separately on refresh. Structured client-local
+per-item failures now identify exact involved paths without parsing raw diagnostics;
+only these paths show Error from the last completed attempt (not while running),
+with conflict precedence and safe local reveal preserved. Folder-wide exceptions
+and scan skips are not attributed to individual rows. This is not completion:
+The file browser now includes an encrypted destination picker and guarded moves
+for files and folders, preserving opaque node identity, sealed name, content
+history and subtree membership. Client-local canonical collisions and unreadable
+destination names cancel before writes; concurrent source/destination changes
+fail atomically under the account namespace lock. Bounded encrypted file/folder
+Copy is implemented as described above; installed Windows/Linux plus two-device
+acceptance remain outstanding. Legacy clients may
+still introduce duplicate names after a guarded
+rename. See [client details](CLIENTS.md#rename-in-the-file-browser-51-partial).
+
 ## Recent implementation milestones
 
 - Multi-folder sync integrated end-to-end: HTTP `Remote` adapter, per-folder
@@ -149,7 +208,7 @@ provider when both aws-lc-rs and ring are in the dependency graph.
   serialized automatic/manual checks and prompts, in-app update settings
   (repository + optional read-only token for private releases), SHA-256
   verification, detached in-place replacement and restart.
-- Tag-driven release pipeline: tests, GHCR image `0.5.0`/`0.5`/`latest`/`sha-*`,
+- Tag-driven release pipeline: tests, GHCR image `0.5.2`/`0.5`/`latest`/`sha-*`,
   and a GitHub release with the image-only Compose files, `SHA256SUMS.txt` and
   Linux, Android and Windows client builds. The image is amd64 only; arm64 needs
   native runners or a longer QEMU build. iOS requires macOS/Xcode and is not
@@ -222,9 +281,8 @@ provider when both aws-lc-rs and ring are in the dependency graph.
 7. **Virtual drives and native mobile integration**: FUSE/WinFsp mounts,
    Android DocumentsProvider + WorkManager, iOS File Provider + background
    transfers, photo/video backup.
-8. **Provider & admin operations**: live provider reload (edits still require a
-   restart), retention settings UI, stronger alerts and orphaned-chunk garbage
-   collection.
+8. **Provider & admin operations**: isolated live-stack/browser retention and GC
+   acceptance and stronger alerts.
 9. **Security review**: fuzz yEnc/NZB/article parsers, add proxy-level rate
    limiting guidance, password-reset policy, audit-log coverage and dependency
    review.
@@ -237,15 +295,29 @@ provider when both aws-lc-rs and ring are in the dependency graph.
 - SSE only supports `Authorization` headers (fine for Dart/Flutter HTTP clients,
   not for browser `EventSource`). The app does not yet consume SSE; it refreshes
   on demand and after sync.
-- Provider changes require a process restart (one click in the dashboard).
-  Providers can be edited in place, but the running NNTP pool picks them up only
-  after the restart.
+- Provider CRUD now applies a validated pool on the serving backend without a
+  restart. Active storage operations pin their old snapshot. Multi-backend
+  invalidation is not implemented; deploy one backend process. This is partial
+  #15 only: isolated live-stack/browser acceptance remains open.
+- Retention dashboard policy persists an article-age threshold in PostgreSQL;
+  subsequent worker batches read it without restart. Maintenance results persist
+  per batch with `done`, including unsuccessful refresh and unrecoverable counts.
+  Mock-provider tests exercise reposting, loss, admin-only access and state
+  recreation. Browser/live dev-stack acceptance is not yet performed. Results
+  are not whole-sweep totals; running-job crash recovery/leases remain absent.
 - `nntdrive_storage::store::platform_totals` casts aggregate sums to `bigint` because
   PostgreSQL returns `numeric`; keep casts when editing.
 - Full-text search is impossible server-side (names/content encrypted); the
   client must cache a decrypted index.
-- Cleanup of orphaned chunks (upload aborted before commit) is not implemented.
-  Add a job that deletes chunks unreferenced by any manifest after a grace period.
+- Orphan cleanup is explicit per account with a grace period (minimum one day)
+  and 1000-chunk batches. Complete references protect all retained versions;
+  legacy/incomplete accounts refuse collection. Rust SDK backfill decrypts each
+  historical manifest locally, including paginated/tombstoned versions. Successful
+  opt-in permanently blocks legacy commits, also at the DB trigger boundary.
+  Missing chunks fail commit atomically rather than publishing broken versions.
+  Explicit unlocked Flutter reference backfill ships in bounded, retry-safe
+  account-menu batches; isolated browser acceptance remains unperformed; see
+  API compatibility notes before enabling. This deletes only local metadata.
 - No AMK rotation command yet; device revocation instructs the client but does
   not perform client-side key rotation automatically.
 - The release image is `linux/amd64` only. Native arm runners or a successful

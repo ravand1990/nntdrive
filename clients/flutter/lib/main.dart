@@ -14,8 +14,16 @@ import 'api.dart';
 import 'desktop_host.dart';
 import 'desktop_instance.dart';
 import 'desktop_lifecycle.dart';
-import 'native.dart';
 import 'session_operations.dart';
+import 'local_availability.dart';
+import 'local_availability_widgets.dart';
+import 'file_rename.dart';
+import 'file_move.dart';
+import 'file_copy.dart';
+import 'move_dialog.dart';
+import 'rename_dialog.dart';
+import 'native.dart';
+import 'reference_backfill.dart';
 import 'sync_controller.dart';
 import 'sync_page.dart';
 import 'updater.dart';
@@ -919,22 +927,69 @@ class _FilesPageState extends State<FilesPage> {
   String _search = '';
   late final SyncController _sync;
   bool _wasSyncing = false;
+  bool _syncLoaded = false;
+  Map<String, LocalAvailability> _availability = {};
+  int _refreshGeneration = 0;
+
+  Future<Map<String, LocalAvailability>> _inspectAvailability(
+      List<String> parentIds) async {
+    try {
+      final bridge = NativeBridge.instance;
+      return await inspectBrowserAvailability(
+        parentIds: parentIds,
+        folders: List.of(_sync.folders),
+        list: (parent) => _api.listFiles(parentId: parent),
+        decrypt: (entry) => bridge.openName(
+            widget.session.handle, entry.id, entry.nameEnc),
+        comparisonKey: bridge.nameCollisionKey,
+        verifyFile: _sync.fileMatches,
+      );
+    } catch (_) {
+      return {};
+    }
+  }
+
+  Future<void> _revealLocal(RemoteFile file) =>
+      _fileOperation(() => _revealLocalNow(file));
+
+  Future<void> _revealLocalNow(RemoteFile file) async {
+    final parents = _path.map((entry) => entry.id).toList();
+    try {
+      await revealLocalAvailability(() async =>
+          (await _inspectAvailability(parents))[file.id] ??
+          LocalAvailability.unknown);
+    } catch (_) {
+      if (mounted) _showError('No safe local copy could be revealed. Refresh and check the sync folder.');
+    }
+    if (mounted) await _refresh();
+  }
 
   @override
   void initState() {
     super.initState();
     _sync = widget.sync;
+    _syncLoaded = _sync.loaded;
     _sync.addListener(_onSyncChanged);
     _refresh();
   }
 
   void _onSyncChanged() {
     if (!mounted) return;
-    setState(() {});
-    if (_wasSyncing && !_sync.syncing) {
+    // The controller belongs to the session and loads independently of this
+    // page. Reinspect availability once its configured roots have arrived.
+    final justLoaded = _sync.loaded && !_syncLoaded;
+    _syncLoaded = _sync.loaded;
+    final active = _sync.syncing || _sync.folders.any((folder) => folder.running);
+    setState(() {
+      if (active) {
+        _availability = _availability.map(
+            (id, state) => MapEntry(id, state.withoutEquality()));
+      }
+    });
+    if (justLoaded || (_wasSyncing && !active)) {
       _refresh();
     }
-    _wasSyncing = _sync.syncing;
+    _wasSyncing = active;
   }
 
   @override
@@ -950,14 +1005,19 @@ class _FilesPageState extends State<FilesPage> {
     if (mounted) _refresh();
   }
 
-  Future<void> _refresh() async {
+  Future<void> _refresh() => _fileOperation(_refreshNow);
+
+  Future<void> _refreshNow() async {
+    final generation = ++_refreshGeneration;
+    final parentIds = _path.map((entry) => entry.id).toList();
     setState(() {
       _loading = true;
+      _availability = {};
       _error = null;
     });
     try {
       final me = await _api.me();
-      final files = await _api.listFiles(parentId: _path.isEmpty ? null : _path.last.id);
+      final files = await _api.listFiles(parentId: parentIds.lastOrNull);
       final bridge = NativeBridge.instance;
       final names = <String, String>{};
       for (final f in files) {
@@ -967,8 +1027,11 @@ class _FilesPageState extends State<FilesPage> {
           names[f.id] = f.isDir ? 'Encrypted folder' : 'Encrypted file';
         }
       }
-      if (!mounted) return;
+      await _sync.scanConflicts();
+      final availability = await _inspectAvailability(parentIds);
+      if (!mounted || generation != _refreshGeneration) return;
       setState(() {
+        _availability = availability;
         _me = me;
         _files = files;
         _names
@@ -976,15 +1039,20 @@ class _FilesPageState extends State<FilesPage> {
           ..addAll(names);
       });
     } on ApiException catch (e) {
+      if (!mounted || generation != _refreshGeneration) return;
       if (e.status == 401) {
         widget.onSignOut();
         return;
       }
       if (mounted) setState(() => _error = e.toString());
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted && generation == _refreshGeneration) {
+        setState(() => _error = e.toString());
+      }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && generation == _refreshGeneration) {
+        setState(() => _loading = false);
+      }
     }
   }
 
@@ -1004,6 +1072,74 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   String _name(RemoteFile f) => _names[f.id] ?? (f.isDir ? 'Encrypted folder' : 'Encrypted file');
+
+  bool _renaming = false;
+
+  Future<void> _copy(RemoteFile file) async {
+    if (_renaming) return;
+    setState(() => _renaming = true);
+    try {
+      final destination = await showDialog<MoveDestination>(context: context,
+        builder: (_) => MoveDialog(api: _api, handle: widget.session.handle,
+          operations: widget.operations, source: file, copy: true));
+      if (destination == null || !mounted) return;
+      final attempted = await showDialog<bool>(context: context,
+        barrierDismissible: false,
+        builder: (_) => CopyFileDialog(isDir: file.isDir,
+          runCopy: () => widget.operations.run(widget.session.handle,
+            () => copyRemoteFile(api: _api, handle: widget.session.handle,
+              file: file, parentId: destination.parentId))));
+      if (attempted == true && mounted) await _refresh();
+    } catch (_) {
+      if (mounted) _showError('Copy was not confirmed. Refresh the destination before starting another copy.');
+    } finally {
+      if (mounted) setState(() => _renaming = false);
+    }
+  }
+
+  Future<void> _move(RemoteFile file) async {
+    if (_renaming) return;
+    setState(() => _renaming = true);
+    try {
+      final destination = await showDialog<MoveDestination>(context: context,
+        builder: (_) => MoveDialog(api: _api, handle: widget.session.handle,
+          operations: widget.operations, source: file));
+      if (destination == null || !mounted) return;
+      await widget.operations.run(widget.session.handle, () =>
+        moveRemoteEntry(api: _api, handle: widget.session.handle,
+          file: file, parentId: destination.parentId));
+      if (mounted) await _refresh();
+    } on RenameFailure catch (e) {
+      if (mounted) _showError(e.message);
+    } catch (_) {
+      if (mounted) _showError('Move failed. Refresh and try again. Choose a different destination if it is inside the source folder.');
+    } finally {
+      if (mounted) setState(() => _renaming = false);
+    }
+  }
+
+  Future<void> _rename(RemoteFile file) async {
+    if (_renaming) return;
+    setState(() => _renaming = true);
+    try {
+      final name = await showDialog<String>(
+        context: context,
+        builder: (_) => RenameDialog(initialName: _name(file), isDir: file.isDir),
+      );
+      if (name == null || !mounted) return;
+      await widget.operations.run(widget.session.handle, () =>
+        renameRemoteEntry(api: _api, handle: widget.session.handle,
+          file: file, name: name));
+      if (mounted) await _refresh();
+    } on RenameFailure catch (e) {
+      if (mounted) _showError(e.message);
+    } catch (_) {
+      // Do not expose backend/native diagnostics that could contain secrets.
+      if (mounted) _showError('Rename failed. Refresh and try again. Check for a name collision or an entry changed on another device.');
+    } finally {
+      if (mounted) setState(() => _renaming = false);
+    }
+  }
 
   Future<void> _createFolder() async {
     final controller = TextEditingController();
@@ -1033,7 +1169,7 @@ class _FilesPageState extends State<FilesPage> {
   Future<void> _fileOperation(Future<void> Function() action) async {
     try {
       await widget.operations.run(widget.session.handle, action);
-    } catch (e) { _showError(e); }
+    } catch (e) { if (mounted) _showError(e); }
   }
 
   Future<void> _createFolderNamed(String name) async {
@@ -1525,6 +1661,27 @@ class _FilesPageState extends State<FilesPage> {
               },
             ),
             ListTile(
+              leading: const Icon(Icons.history),
+              title: const Text('Prepare legacy references'),
+              subtitle: const Text(
+                  'Explicit account-scoped batches before admin cleanup'),
+              onTap: () {
+                Navigator.pop(context);
+                showDialog<void>(
+                  context: this.context,
+                  barrierDismissible: false,
+                  builder: (_) => ReferenceBackfillDialog(
+                    runBatch: () => widget.operations.run(widget.session.handle,
+                      () => NativeBridge.instance.backfillReferencesAsync(
+                        widget.session.handle,
+                        widget.session.server,
+                        widget.session.token,
+                      )),
+                  ),
+                );
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.settings_outlined),
               title: const Text('Update settings'),
               subtitle: const Text('Repository and access token'),
@@ -1683,13 +1840,37 @@ class _FilesPageState extends State<FilesPage> {
                         separatorBuilder: (_, __) => const Divider(height: 1),
                         itemBuilder: (context, i) {
                           final f = filtered[i];
+                          final local = _availability[f.id] ?? LocalAvailability.unknown;
                           return ListTile(
                             leading: Icon(f.isDir ? Icons.folder_outlined : Icons.insert_drive_file_outlined),
                             title: Text(_name(f)),
-                            subtitle: Text(f.isDir ? 'Folder' : _formatBytes(f.size)),
-                            trailing: f.favorite
-                                ? const Icon(Icons.star, size: 18)
-                                : (f.isDir ? const Icon(Icons.chevron_right) : null),
+                            subtitle: LocalAvailabilityLabel(
+                              state: local,
+                              details: f.isDir ? 'Folder' : _formatBytes(f.size),
+                            ),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (f.favorite) const Icon(Icons.star, size: 18),
+                                LocalRevealButton(
+                                  state: local,
+                                  onReveal: () => _revealLocal(f),
+                                ),
+                                IconButton(
+                                  tooltip: f.isDir ? 'Rename folder' : 'Rename file',
+                                  icon: const Icon(Icons.edit_outlined),
+                                  onPressed: _renaming ? null : () => _rename(f),
+                                ),
+                                IconButton(
+                                  tooltip: f.isDir ? 'Move folder' : 'Move file',
+                                  icon: const Icon(Icons.drive_file_move_outlined),
+                                  onPressed: _renaming ? null : () => _move(f),
+                                ),
+                                CopyFileButton(isDir: f.isDir, busy: _renaming,
+                                  onCopy: () => _copy(f)),
+                                if (f.isDir) const Icon(Icons.chevron_right),
+                              ],
+                            ),
                             onTap: () => _open(f),
                           );
                         },

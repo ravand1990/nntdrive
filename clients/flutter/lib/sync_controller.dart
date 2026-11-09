@@ -102,6 +102,8 @@ class SyncController extends ChangeNotifier {
   bool _disposed = false;
   final _operations = SessionOperations();
   bool _started = false;
+  bool _loaded = false;
+  bool get loaded => _loaded;
   final Set<String> _running = {};
 
   static const _prefsKey = 'syncFolders';
@@ -127,6 +129,8 @@ class SyncController extends ChangeNotifier {
     }
     notifyListeners();
     await scanConflicts();
+    _loaded = true;
+    notifyListeners();
   }
 
   Future<void> _save() async {
@@ -223,6 +227,29 @@ class SyncController extends ChangeNotifier {
       } catch (_) {}
     }
     await _save();
+  }
+
+  /// Read-only equality evidence for one freshly listed remote file.
+  Future<bool> fileMatches(SyncFolderConfig folder, String relative,
+      RemoteFile entry) {
+    if (_stopped) return Future.value(false);
+    return _operations.run(0, () => _fileMatches(folder, relative, entry));
+  }
+
+  Future<bool> _fileMatches(SyncFolderConfig folder, String relative,
+      RemoteFile entry) async {
+    if (folder.running || entry.isDir || entry.currentVersion == null) return false;
+    final support = await getApplicationSupportDirectory();
+    if (folder.running) return false;
+    final matches = await NativeBridge.instance.localFileMatches({
+      'handle': handle,
+      'journalPath': p.join(support.path, 'sync', '${folder.id}.sqlite'),
+      'localPath': p.normalize(p.absolute(folder.localPath)),
+      'relativePath': relative,
+      'revision': entry.currentVersion,
+      'size': entry.size,
+    });
+    return !folder.running && matches;
   }
 
   Future<void> setEnabled(SyncFolderConfig folder, bool enabled) {

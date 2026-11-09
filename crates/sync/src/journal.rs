@@ -39,6 +39,105 @@ impl Journal {
         Self::init(pool, operation_pool).await
     }
 
+    /// Fresh file equality against an existing journal; never creates or migrates it.
+    pub async fn file_matches(
+        journal: &std::path::Path,
+        root: &std::path::Path,
+        relative: &str,
+        revision: uuid::Uuid,
+        size: u64,
+    ) -> bool {
+        use sqlx::sqlite::SqliteConnectOptions;
+        // A missing/old/corrupt journal is unknown, not a reason to initialize it.
+        let options = SqliteConnectOptions::new()
+            .filename(journal)
+            .read_only(true);
+        let Ok(pool) = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+        else {
+            return false;
+        };
+        let row = sqlx::query(
+            "SELECT content_hash FROM baseline WHERE path = $1 AND is_dir = 0
+             AND deleted = 0 AND revision = $2 AND size = $3
+             AND NOT EXISTS (SELECT 1 FROM pending_move)",
+        )
+        .bind(relative)
+        .bind(revision.to_string())
+        .bind(i64::try_from(size).unwrap_or(-1))
+        .fetch_optional(&pool)
+        .await;
+        pool.close().await;
+        let Ok(Some(row)) = row else { return false };
+        let Ok(Some(expected)) = row.try_get::<Option<String>, _>("content_hash") else {
+            return false;
+        };
+        let root = root.to_path_buf();
+        let relative = relative.to_owned();
+        // Never reuse the scanner's size/mtime hash cache for a browser claim.
+        tokio::task::spawn_blocking(move || {
+            let inspect = || -> Option<(std::path::PathBuf, std::fs::Metadata)> {
+                if !root.is_absolute()
+                    || root
+                        .components()
+                        .any(|c| matches!(c, std::path::Component::ParentDir))
+                {
+                    return None;
+                }
+                for ancestor in root.ancestors() {
+                    let meta = std::fs::symlink_metadata(ancestor).ok()?;
+                    if !meta.is_dir() || meta.file_type().is_symlink() {
+                        return None;
+                    }
+                }
+                // Canonical root retains Windows' verbatim prefix for comparisons.
+                let root = std::fs::canonicalize(&root).ok()?;
+                let mut path = root.clone();
+                let parts: Vec<_> = relative.split('/').collect();
+                if parts.is_empty() {
+                    return None;
+                }
+                for (i, part) in parts.iter().enumerate() {
+                    if part.is_empty() || *part == "." || *part == ".." || part.contains('\\') {
+                        return None;
+                    }
+                    path.push(part);
+                    if !path.starts_with(&root) {
+                        return None;
+                    }
+                    let meta = std::fs::symlink_metadata(&path).ok()?;
+                    if meta.file_type().is_symlink()
+                        || (i + 1 < parts.len() && !meta.is_dir())
+                        || std::fs::canonicalize(&path).ok()? != path
+                    {
+                        return None;
+                    }
+                }
+                let meta = std::fs::symlink_metadata(&path).ok()?;
+                (meta.is_file() && meta.len() == size).then_some((path, meta))
+            };
+            let Some((path, before)) = inspect() else {
+                return false;
+            };
+            let Ok(hash) = crate::scanner::hash_file(&path) else {
+                return false;
+            };
+            let Some((_, after)) = inspect() else {
+                return false;
+            };
+            hash == expected
+                && before
+                    .modified()
+                    .ok()
+                    .zip(after.modified().ok())
+                    .is_some_and(|(a, b)| a == b)
+        })
+        .await
+        .unwrap_or(false)
+    }
+
     pub async fn in_memory() -> Result<Self, JournalError> {
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
@@ -409,6 +508,78 @@ mod tests {
         child.0.wait().unwrap();
         let _lease = journal.acquire_operation().await.unwrap();
         assert!(journal.load().await.unwrap().contains_key("preserved"));
+    }
+
+    #[tokio::test]
+    async fn browser_equality_requires_fresh_bytes_revision_and_safe_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("file"), b"same").unwrap();
+        let path = dir.path().join("journal.sqlite");
+        let revision = Uuid::new_v4();
+        assert!(!Journal::file_matches(&path, &root, "file", revision, 4).await);
+        assert!(!path.exists(), "inspection must not create a journal");
+        let corrupt = dir.path().join("corrupt.sqlite");
+        std::fs::write(&corrupt, b"not a database").unwrap();
+        assert!(!Journal::file_matches(&corrupt, &root, "file", revision, 4).await);
+        assert_eq!(std::fs::read(&corrupt).unwrap(), b"not a database");
+        let j = Journal::open(&path).await.unwrap();
+        let mut entry = BaselineEntry {
+            path: "file".into(),
+            is_dir: false,
+            size: 4,
+            content_hash: Some(crate::scanner::hash_file(&root.join("file")).unwrap()),
+            revision: Some(revision),
+            deleted: false,
+        };
+        j.upsert(&entry).await.unwrap();
+        assert!(Journal::file_matches(&path, &root, "file", revision, 4).await);
+        assert!(!Journal::file_matches(&path, &root, "file", Uuid::new_v4(), 4).await);
+        assert!(!Journal::file_matches(&path, &root, "file", revision, 5).await);
+        j.upsert(&BaselineEntry {
+            path: "../root/file".into(),
+            ..entry.clone()
+        })
+        .await
+        .unwrap();
+        assert!(!Journal::file_matches(&path, &root, "../root/file", revision, 4).await);
+        j.remove("../root/file").await.unwrap();
+        std::fs::write(root.join("file"), b"edit").unwrap();
+        assert!(!Journal::file_matches(&path, &root, "file", revision, 4).await);
+        std::fs::write(root.join("file"), b"same").unwrap();
+        for state in 0..4 {
+            entry.deleted = state == 0;
+            entry.is_dir = state == 1;
+            entry.content_hash = if state == 2 {
+                None
+            } else {
+                Some(crate::scanner::hash_file(&root.join("file")).unwrap())
+            };
+            entry.revision = if state == 3 { None } else { Some(revision) };
+            j.upsert(&entry).await.unwrap();
+            assert!(!Journal::file_matches(&path, &root, "file", revision, 4).await);
+        }
+        entry.revision = Some(revision);
+        j.upsert(&entry).await.unwrap();
+        j.begin_move("file", "other").await.unwrap();
+        assert!(!Journal::file_matches(&path, &root, "file", revision, 4).await);
+        j.cancel_move().await.unwrap();
+        #[cfg(unix)]
+        {
+            std::fs::rename(root.join("file"), dir.path().join("outside")).unwrap();
+            std::os::unix::fs::symlink(dir.path().join("outside"), root.join("file")).unwrap();
+            assert!(!Journal::file_matches(&path, &root, "file", revision, 4).await);
+            std::fs::remove_file(root.join("file")).unwrap();
+            std::fs::copy(dir.path().join("outside"), root.join("file")).unwrap();
+            assert!(Journal::file_matches(&path, &root, "file", revision, 4).await);
+            std::os::unix::fs::symlink(&root, dir.path().join("linked-root")).unwrap();
+            assert!(
+                !Journal::file_matches(&path, &dir.path().join("linked-root"), "file", revision, 4)
+                    .await
+            );
+        }
+        assert_eq!(j.load().await.unwrap().get("file"), Some(&entry));
     }
 
     #[tokio::test]

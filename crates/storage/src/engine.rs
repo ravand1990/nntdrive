@@ -187,7 +187,8 @@ pub fn prepare_chunk(
 #[derive(Clone)]
 pub struct Storage {
     store: Store,
-    nntp: Arc<NntpPool>,
+    nntp: Arc<std::sync::RwLock<Arc<NntpPool>>>,
+    pinned: Option<Arc<NntpPool>>,
     config: StorageConfig,
 }
 
@@ -196,7 +197,8 @@ impl Storage {
         config.validate().map_err(StorageError::Config)?;
         Ok(Self {
             store,
-            nntp,
+            nntp: Arc::new(std::sync::RwLock::new(nntp)),
+            pinned: None,
             config,
         })
     }
@@ -205,8 +207,21 @@ impl Storage {
         &self.store
     }
 
-    pub fn nntp(&self) -> &NntpPool {
-        &self.nntp
+    pub fn nntp(&self) -> Arc<NntpPool> {
+        self.pinned
+            .clone()
+            .unwrap_or_else(|| self.nntp.read().unwrap_or_else(|e| e.into_inner()).clone())
+    }
+
+    /// Existing operations retain their snapshot; only new operations see this pool.
+    pub fn replace_nntp(&self, pool: Arc<NntpPool>) {
+        *self.nntp.write().unwrap_or_else(|e| e.into_inner()) = pool;
+    }
+
+    fn snapshot(&self) -> Self {
+        let mut snapshot = self.clone();
+        snapshot.pinned = Some(self.nntp());
+        snapshot
     }
 
     pub fn config(&self) -> &StorageConfig {
@@ -224,17 +239,19 @@ impl Storage {
         revision_id: Uuid,
         reader: R,
     ) -> Result<UploadOutcome> {
-        let mut stream = ChunkStream::new(reader, self.config.chunks.clone());
+        let snapshot = self.snapshot();
+        let operation = &snapshot;
+        let mut stream = ChunkStream::new(reader, operation.config.chunks.clone());
         let mut entries = Vec::new();
         let mut stats = UploadStats::default();
         while let Some(chunk) = stream.next_chunk().await? {
             stats.bytes_received += chunk.len() as u64;
-            if let Some(existing) = self
+            if let Some(existing) = operation
                 .store
                 .find_chunk(ctx.account_id, &chunk.hash, chunk.len() as u64)
                 .await?
             {
-                let entry = self
+                let entry = operation
                     .store
                     .chunk_entry(ctx.account_id, &existing, chunk.index, chunk.offset)
                     .await?;
@@ -242,8 +259,10 @@ impl Storage {
                 entries.push(entry);
                 continue;
             }
-            let prepared = prepare_chunk(&ctx.master, &chunk, self.config.compression_level)?;
-            let (entry, chunk_stats) = self.publish_prepared(ctx.account_id, &prepared).await?;
+            let prepared = prepare_chunk(&ctx.master, &chunk, operation.config.compression_level)?;
+            let (entry, chunk_stats) = operation
+                .publish_prepared(ctx.account_id, &prepared)
+                .await?;
             stats.chunks_new += 1;
             stats.articles_posted += chunk_stats.articles_posted;
             stats.bytes_posted += chunk_stats.bytes_posted;
@@ -273,34 +292,36 @@ impl Storage {
         account_id: Uuid,
         prepared: &PreparedChunk,
     ) -> Result<(ChunkEntry, UploadStats)> {
+        let snapshot = self.snapshot();
+        let operation = &snapshot;
         prepared.validate()?;
-        if let Some(existing) = self
+        if let Some(existing) = operation
             .store
             .find_chunk(account_id, &prepared.plaintext_hash, prepared.plaintext_len)
             .await?
         {
-            let entry = self
+            let entry = operation
                 .store
                 .chunk_entry(account_id, &existing, prepared.index, prepared.offset)
                 .await?;
             return Ok((entry, UploadStats::default()));
         }
-        let stripes = erasure::encode(&prepared.ciphertext, &self.config)?;
+        let stripes = erasure::encode(&prepared.ciphertext, &operation.config)?;
         let mut new_stripes = Vec::new();
         let mut stats = UploadStats::default();
         for stripe in stripes {
             let stripe_id = Uuid::new_v4();
             let mut new_shards = Vec::new();
             for (shard_index, shard_data) in stripe.shards.iter().enumerate() {
-                let shard = self
+                let shard = operation
                     .post_article(prepared.id, stripe.index, shard_index as u32, shard_data)
                     .await?;
                 stats.articles_posted += 1;
                 stats.bytes_posted += shard.size as u64;
                 new_shards.push(shard);
             }
-            let verified = self.verify_stripe_posts(&new_shards).await?;
-            let required = (stripe.data_shards + self.config.durability_margin)
+            let verified = operation.verify_stripe_posts(&new_shards).await?;
+            let required = (stripe.data_shards + operation.config.durability_margin)
                 .min(stripe.data_shards + stripe.parity_shards);
             if verified < required {
                 return Err(StorageError::Durability(format!(
@@ -327,7 +348,8 @@ impl Storage {
                 shard_hashes: ns.shards.iter().map(|s| s.sha256.clone()).collect(),
             })
             .collect();
-        self.store
+        operation
+            .store
             .insert_chunk(
                 account_id,
                 prepared.id,
@@ -341,7 +363,7 @@ impl Storage {
 
         // A concurrent upload of the same plaintext may have won the dedupe
         // race; in that case the canonical row is the other chunk's.
-        let canonical = self
+        let canonical = operation
             .store
             .find_chunk(account_id, &prepared.plaintext_hash, prepared.plaintext_len)
             .await?
@@ -358,7 +380,8 @@ impl Storage {
                 stripes: stripe_entries,
             }
         } else {
-            self.store
+            operation
+                .store
                 .chunk_entry(account_id, &canonical, prepared.index, prepared.offset)
                 .await?
         };
@@ -372,8 +395,8 @@ impl Storage {
         shard_index: u32,
         shard: &[u8],
     ) -> Result<NewShard> {
-        let domain = self.nntp.message_id_domain();
-        let groups = self.nntp.posting_groups();
+        let domain = self.nntp().message_id_domain();
+        let groups = self.nntp().posting_groups();
         if groups.is_empty() {
             return Err(StorageError::Config(
                 "no posting group configured for NNTP provider".into(),
@@ -387,7 +410,7 @@ impl Storage {
             body,
             message_id.clone(),
         );
-        let provider = self.nntp.post(&article).await?;
+        let provider = self.nntp().post(&article).await?;
         Ok(NewShard {
             shard_index: shard_index as i32,
             message_id,
@@ -400,10 +423,10 @@ impl Storage {
     async fn verify_stripe_posts(&self, shards: &[NewShard]) -> Result<usize> {
         let mut verified = 0usize;
         for shard in shards {
-            match self.nntp.stat(&shard.message_id).await {
+            match self.nntp().stat(&shard.message_id).await {
                 Ok(Some(_)) => {
                     if self.config.verify_after_post {
-                        match self.nntp.fetch(&shard.message_id).await {
+                        match self.nntp().fetch(&shard.message_id).await {
                             Ok(data) if erasure::sha256_hex(&data) == shard.sha256 => verified += 1,
                             Ok(_) => tracing::error!(
                                 message_id = %shard.message_id,
@@ -436,7 +459,10 @@ impl Storage {
         outcome: &UploadOutcome,
         parent_revision: Option<Uuid>,
     ) -> Result<()> {
-        self.store
+        let snapshot = self.snapshot();
+        let operation = &snapshot;
+        operation
+            .store
             .insert_version(
                 ctx.account_id,
                 outcome.manifest.file_id,
@@ -456,8 +482,10 @@ impl Storage {
         revision_id: Uuid,
         reader: R,
     ) -> Result<UploadOutcome> {
-        let outcome = self.upload(ctx, file_id, revision_id, reader).await?;
-        self.commit(ctx, &outcome, None).await?;
+        let snapshot = self.snapshot();
+        let operation = &snapshot;
+        let outcome = operation.upload(ctx, file_id, revision_id, reader).await?;
+        operation.commit(ctx, &outcome, None).await?;
         Ok(outcome)
     }
 
@@ -467,7 +495,9 @@ impl Storage {
         file_id: Uuid,
         revision_id: Option<Uuid>,
     ) -> Result<(FileManifest, DateTime<Utc>, Uuid)> {
-        let version = self
+        let snapshot = self.snapshot();
+        let operation = &snapshot;
+        let version = operation
             .store
             .version(ctx.account_id, file_id, revision_id)
             .await?;
@@ -493,10 +523,12 @@ impl Storage {
         manifest: &FileManifest,
         writer: &mut W,
     ) -> Result<DownloadStats> {
+        let snapshot = self.snapshot();
+        let operation = &snapshot;
         let mut stats = DownloadStats::default();
         let mut whole = blake3::Hasher::new();
         for chunk in &manifest.chunks {
-            let plain = self.reconstruct_chunk(ctx, chunk, &mut stats).await?;
+            let plain = operation.reconstruct_chunk(ctx, chunk, &mut stats).await?;
             if plain.len() as u64 != chunk.plaintext_len {
                 return Err(StorageError::Integrity(format!(
                     "chunk {} length mismatch",
@@ -577,7 +609,7 @@ impl Storage {
                 .shard_hashes
                 .get(row.shard_index as usize)
                 .ok_or_else(|| StorageError::Integrity("manifest shard hash missing".into()))?;
-            match self.nntp.fetch(&row.message_id).await {
+            match self.nntp().fetch(&row.message_id).await {
                 Ok(data) => {
                     if erasure::sha256_hex(&data) != *expected {
                         tracing::warn!(
@@ -619,6 +651,8 @@ impl Storage {
 
     /// STATs every article of a file and reports per-stripe recoverability.
     pub async fn check_file(&self, ctx: &Context, manifest: &FileManifest) -> Result<FileHealth> {
+        let snapshot = self.snapshot();
+        let operation = &snapshot;
         let mut health = FileHealth {
             file_id: manifest.file_id,
             revision_id: manifest.revision_id,
@@ -631,10 +665,10 @@ impl Storage {
         };
         for chunk in &manifest.chunks {
             for stripe in &chunk.stripes {
-                let rows = self.store.load_shards(stripe.id).await?;
+                let rows = operation.store.load_shards(stripe.id).await?;
                 let mut available = 0usize;
                 for row in &rows {
-                    let status = match self.nntp.stat(&row.message_id).await {
+                    let status = match operation.nntp().stat(&row.message_id).await {
                         Ok(Some(_)) => {
                             available += 1;
                             "ok"
@@ -645,7 +679,7 @@ impl Storage {
                             "unknown"
                         }
                     };
-                    self.store.set_shard_status(row.id, status).await?;
+                    operation.store.set_shard_status(row.id, status).await?;
                 }
                 let total = stripe.data_shards + stripe.parity_shards;
                 let recoverable = available >= stripe.data_shards;
@@ -679,25 +713,27 @@ impl Storage {
         ctx: &Context,
         manifest: &FileManifest,
     ) -> Result<RepairReport> {
+        let snapshot = self.snapshot();
+        let operation = &snapshot;
         let mut report = RepairReport::default();
         for chunk in &manifest.chunks {
             for stripe in &chunk.stripes {
                 report.stripes_checked += 1;
-                let rows = self.store.load_shards(stripe.id).await?;
+                let rows = operation.store.load_shards(stripe.id).await?;
                 let mut shards: Vec<Option<Vec<u8>>> =
                     vec![None; stripe.data_shards + stripe.parity_shards];
                 for row in &rows {
                     let expected = &stripe.shard_hashes[row.shard_index as usize];
-                    match self.nntp.fetch(&row.message_id).await {
+                    match operation.nntp().fetch(&row.message_id).await {
                         Ok(data) if erasure::sha256_hex(&data) == *expected => {
                             shards[row.shard_index as usize] = Some(data);
-                            self.store.set_shard_status(row.id, "ok").await?;
+                            operation.store.set_shard_status(row.id, "ok").await?;
                         }
                         Ok(_) => {
-                            self.store.set_shard_status(row.id, "corrupt").await?;
+                            operation.store.set_shard_status(row.id, "corrupt").await?;
                         }
                         Err(NntpError::NotFound) => {
-                            self.store.set_shard_status(row.id, "missing").await?;
+                            operation.store.set_shard_status(row.id, "missing").await?;
                         }
                         Err(e) => {
                             tracing::warn!(shard = %row.id, error = %e, "repair fetch failed");
@@ -742,11 +778,11 @@ impl Storage {
                         .iter()
                         .find(|r| r.shard_index as usize == index)
                         .ok_or_else(|| StorageError::Integrity("missing shard row".into()))?;
-                    let new_shard = self
+                    let new_shard = operation
                         .post_article(chunk.id, stripe.index, index as u32, data)
                         .await?;
-                    let verified = self
-                        .nntp
+                    let verified = operation
+                        .nntp()
                         .fetch(&new_shard.message_id)
                         .await
                         .map(|d| erasure::sha256_hex(&d) == new_shard.sha256)
@@ -769,7 +805,7 @@ impl Storage {
                     });
                 }
                 if !replacements.is_empty() {
-                    self.store.replace_shards_bulk(&replacements).await?;
+                    operation.store.replace_shards_bulk(&replacements).await?;
                     report.stripes_repaired += 1;
                 }
                 let _ = ctx;
@@ -786,12 +822,14 @@ impl Storage {
         manifest: &FileManifest,
         max_age_days: u32,
     ) -> Result<RefreshReport> {
+        let snapshot = self.snapshot();
+        let operation = &snapshot;
         let cutoff = Utc::now() - Duration::days(max_age_days as i64);
         let mut report = RefreshReport::default();
         for chunk in &manifest.chunks {
             for stripe in &chunk.stripes {
                 report.stripes_checked += 1;
-                let rows = self.store.load_shards(stripe.id).await?;
+                let rows = operation.store.load_shards(stripe.id).await?;
                 if !rows.iter().any(|r| r.posted_at < cutoff) {
                     continue;
                 }
@@ -799,7 +837,7 @@ impl Storage {
                     vec![None; stripe.data_shards + stripe.parity_shards];
                 for row in &rows {
                     let expected = &stripe.shard_hashes[row.shard_index as usize];
-                    match self.nntp.fetch(&row.message_id).await {
+                    match operation.nntp().fetch(&row.message_id).await {
                         Ok(data) if erasure::sha256_hex(&data) == *expected => {
                             shards[row.shard_index as usize] = Some(data);
                         }
@@ -827,11 +865,11 @@ impl Storage {
                         .iter()
                         .find(|r| r.shard_index as usize == index)
                         .ok_or_else(|| StorageError::Integrity("missing shard row".into()))?;
-                    let new_shard = self
+                    let new_shard = operation
                         .post_article(chunk.id, stripe.index, index as u32, data)
                         .await?;
-                    let ok = self
-                        .nntp
+                    let ok = operation
+                        .nntp()
                         .fetch(&new_shard.message_id)
                         .await
                         .map(|d| erasure::sha256_hex(&d) == new_shard.sha256)
@@ -854,7 +892,7 @@ impl Storage {
                     });
                 }
                 // Metadata only moves after every new article verified.
-                self.store.replace_shards_bulk(&replacements).await?;
+                operation.store.replace_shards_bulk(&replacements).await?;
                 report.stripes_refreshed += 1;
                 let _ = ctx;
             }
@@ -865,9 +903,11 @@ impl Storage {
     /// Background-health variant: checks the current shard rows of one stripe
     /// and updates their status. Returns the number of available articles.
     pub async fn check_stripe_rows(&self, rows: &[ShardRow]) -> Result<usize> {
+        let snapshot = self.snapshot();
+        let operation = &snapshot;
         let mut available = 0;
         for row in rows {
-            let status = match self.nntp.stat(&row.message_id).await {
+            let status = match operation.nntp().stat(&row.message_id).await {
                 Ok(Some(_)) => {
                     available += 1;
                     "ok"
@@ -878,7 +918,7 @@ impl Storage {
                     "unknown"
                 }
             };
-            self.store.set_shard_status(row.id, status).await?;
+            operation.store.set_shard_status(row.id, status).await?;
         }
         Ok(available)
     }
@@ -891,6 +931,8 @@ impl Storage {
         stripe: &StripeRow,
         rows: &[ShardRow],
     ) -> Result<RepairReport> {
+        let snapshot = self.snapshot();
+        let operation = &snapshot;
         let mut report = RepairReport {
             stripes_checked: 1,
             ..Default::default()
@@ -902,16 +944,16 @@ impl Storage {
         let mut shards: Vec<Option<Vec<u8>>> = vec![None; total];
         for row in rows {
             let idx = row.shard_index as usize;
-            match self.nntp.fetch(&row.message_id).await {
+            match operation.nntp().fetch(&row.message_id).await {
                 Ok(data) if erasure::sha256_hex(&data) == row.sha256 => {
                     shards[idx] = Some(data);
-                    self.store.set_shard_status(row.id, "ok").await?;
+                    operation.store.set_shard_status(row.id, "ok").await?;
                 }
                 Ok(_) => {
-                    self.store.set_shard_status(row.id, "corrupt").await?;
+                    operation.store.set_shard_status(row.id, "corrupt").await?;
                 }
                 Err(NntpError::NotFound) => {
-                    self.store.set_shard_status(row.id, "missing").await?;
+                    operation.store.set_shard_status(row.id, "missing").await?;
                 }
                 Err(e) => {
                     tracing::warn!(shard = %row.id, error = %e, "repair fetch failed");
@@ -944,7 +986,7 @@ impl Storage {
             if present[index] {
                 continue;
             }
-            let new_shard = self
+            let new_shard = operation
                 .post_article(
                     stripe.chunk_id,
                     stripe.stripe_index as u32,
@@ -952,8 +994,8 @@ impl Storage {
                     data,
                 )
                 .await?;
-            let verified = self
-                .nntp
+            let verified = operation
+                .nntp()
                 .fetch(&new_shard.message_id)
                 .await
                 .map(|d| erasure::sha256_hex(&d) == new_shard.sha256)
@@ -975,7 +1017,7 @@ impl Storage {
             });
         }
         if !replacements.is_empty() {
-            self.store.replace_shards_bulk(&replacements).await?;
+            operation.store.replace_shards_bulk(&replacements).await?;
             report.stripes_repaired = 1;
         }
         Ok(report)
@@ -989,6 +1031,8 @@ impl Storage {
         rows: &[ShardRow],
         cutoff: DateTime<Utc>,
     ) -> Result<RefreshReport> {
+        let snapshot = self.snapshot();
+        let operation = &snapshot;
         let mut report = RefreshReport {
             stripes_checked: 1,
             ..Default::default()
@@ -999,7 +1043,7 @@ impl Storage {
         let total = stripe.data_shards as usize + stripe.parity_shards as usize;
         let mut shards: Vec<Option<Vec<u8>>> = vec![None; total];
         for row in rows {
-            match self.nntp.fetch(&row.message_id).await {
+            match operation.nntp().fetch(&row.message_id).await {
                 Ok(data) if erasure::sha256_hex(&data) == row.sha256 => {
                     shards[row.shard_index as usize] = Some(data);
                 }
@@ -1023,7 +1067,7 @@ impl Storage {
         )?;
         let mut replacements = Vec::new();
         for (index, data) in rec.shards.iter().enumerate() {
-            let new_shard = self
+            let new_shard = operation
                 .post_article(
                     stripe.chunk_id,
                     stripe.stripe_index as u32,
@@ -1031,8 +1075,8 @@ impl Storage {
                     data,
                 )
                 .await?;
-            let verified = self
-                .nntp
+            let verified = operation
+                .nntp()
                 .fetch(&new_shard.message_id)
                 .await
                 .map(|d| erasure::sha256_hex(&d) == new_shard.sha256)
@@ -1057,7 +1101,7 @@ impl Storage {
                 reason: "retention_refresh".into(),
             });
         }
-        self.store.replace_shards_bulk(&replacements).await?;
+        operation.store.replace_shards_bulk(&replacements).await?;
         report.stripes_refreshed = 1;
         Ok(report)
     }
