@@ -58,12 +58,13 @@ class Mock:
             if state['target'] == 'linux-client' and scenario != 'missing-evidence':
                 data['artifacts'].append(dict(id=92, name='nntdrive-linux-runtime-evidence', expired=False, size_in_bytes=123))
         elif '/attempts/1/jobs?' in path:
-            names = ['identity', 'analyze', 'build-linux', 'build-android', 'build-windows', 'android-native-smoke']
+            names = ['identity', 'analyze', 'build-linux', 'build-android', 'build-windows', 'android-native-smoke', 'windows-app-smoke']
             if state['target'] == 'linux-client': names.append('linux-runtime')
             jobs = [dict(name=n if n in ('identity', 'linux-runtime') or scenario == 'unprefixed' else 'clients / ' + n,
                          status='completed', conclusion='success') for n in names]
             if scenario == 'missing-job': jobs.pop(1)
             if scenario == 'missing-smoke': jobs = [j for j in jobs if not j['name'].endswith('android-native-smoke')]
+            if scenario == 'missing-windows-smoke': jobs = [j for j in jobs if not j['name'].endswith('windows-app-smoke')]
             if scenario == 'missing-runtime': jobs.pop()
             if scenario in ('skipped-job', 'cancelled-job', 'failure-job'): jobs[1]['conclusion'] = scenario.split('-')[0]
             if scenario == 'unfinished-job': jobs[1]['status'] = 'in_progress'
@@ -125,7 +126,7 @@ class Contracts(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
 
     def test_required_jobs(self):
-        for scenario in ['missing-job', 'skipped-job', 'cancelled-job', 'failure-job', 'unfinished-job', 'duplicate-job', 'missing-smoke', 'paginated-duplicate']:
+        for scenario in ['missing-job', 'skipped-job', 'cancelled-job', 'failure-job', 'unfinished-job', 'duplicate-job', 'missing-smoke', 'missing-windows-smoke', 'paginated-duplicate']:
             with self.subTest(scenario=scenario):
                 result = self.invoke(scenario, target='android-emulator')
                 self.assertNotEqual(result.returncode, 0, result.stdout)

@@ -160,7 +160,7 @@ def main():
                 resolve()
                 jobs = pages(f'/actions/runs/{run_id}/attempts/1/jobs', 'jobs')
                 required = {'identity', 'analyze', 'build-linux', 'build-android',
-                            'build-windows', 'android-native-smoke'}
+                            'build-windows', 'android-native-smoke', 'windows-app-smoke'}
                 if args.target == 'linux-client':
                     required.add('linux-runtime')
                 for name in sorted(required):

@@ -168,7 +168,7 @@ See [test environments](TEST-ENVIRONMENTS.md) for the six-target matrix and
 `bash scripts/test-env.sh TARGET`: local isolated checks, exact-head correlated
 manual Clients dispatch/wait and explicit Windows runtime provisioning refusal.
 Hosted builds are not installed-app/E2E evidence. This first increment preserves
-all existing eight acceptance jobs and adds a manual workflow plus launcher
+all existing nine acceptance jobs and adds a manual workflow plus launcher
 contracts. For `linux-client`, a required follow-on job downloads the actual
 release bundle and performs a network-isolated Xvfb live-process/visible-window
 smoke with always-uploaded logs, screenshot and version-provenance report.

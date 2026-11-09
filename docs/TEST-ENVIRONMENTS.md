@@ -34,7 +34,7 @@ Hosted targets currently invoke the **entire unchanged reusable Clients suite**;
 the selected target determines expected artifact/coverage, not job filtering.
 This deliberately keeps analysis and every native check blocking and reuses the
 APK's actual native library for Android runtime. It is more expensive than a
-future target-specific workflow. Existing eight CI/Clients acceptance checks
+future target-specific workflow. Existing nine CI/Clients acceptance checks
 are unchanged; the manual workflow neither replaces them nor publishes anything.
 No self-hosted workflow is created, and arbitrary PR code must never gain a
 privileged runner or production credentials. A future Windows runtime environment
@@ -75,7 +75,8 @@ needs explicit approval and ephemeral isolation, not a generic `self-hosted` lab
   inspect/cancel it explicitly. Do not mistake a deadline for remote cleanup.
 - Run-level success alone is insufficient. The launcher fully paginates attempt
   1 jobs and requires exactly one completed successful `identity`, `analyze`,
-  `build-linux`, `build-android`, `build-windows` and `android-native-smoke`.
+  `build-linux`, `build-android`, `build-windows`, `android-native-smoke` and
+  `windows-app-smoke`.
   Reusable job names may be bare or prefixed `clients / `; duplicates across
   either spelling fail. A build-only APK never substitutes for Android smoke.
   `linux-client` additionally requires successful `linux-runtime` and exactly
@@ -126,10 +127,11 @@ and mocked X11 tools to verify process/window gating, environment filtering,
 cleanup, safe extraction and failure reporting; they are not GUI evidence.
 Existing CI wrapper-contracts runs both suites.
 
-This increment is not completion evidence for #53. No hosted dispatch, live Linux
-bundle smoke or SDK build was performed locally; available disk was below
-toolchain admission and SDK installs/cache deletion were prohibited. The Linux
-runtime job is implemented but **unverified on the hosted runner**. Backend sync
-on Android and Windows runtime provisioning/acceptance remain incomplete. The
-manual workflow needs exact-head hosted validation after integration; a checked-in
-workflow definition or mocked API success is never runtime evidence.
+The local `linux-core` target passed the isolated Rust/PostgreSQL and Flutter
+suites in the existing task checkout. Hosted dispatch and live Linux bundle smoke
+remain **unverified on the hosted runner** until this manual workflow is registered
+and explicitly dispatched after integration. Android uses the existing native
+crypto/private-storage emulator smoke, not release-APK launch/backend-sync E2E.
+Windows runtime provisioning and clean-machine installed/update acceptance remain
+deferred; the existing hosted process/window smoke does not establish them.
+These gaps are follow-up work, not evidence supplied by mocked API responses.
