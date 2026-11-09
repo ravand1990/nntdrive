@@ -1,10 +1,39 @@
 # Changelog
 
+## Unreleased
+
+- Apply admin provider CRUD to the serving backend without restart, pinning one
+  provider snapshot per storage operation. Reject invalid configs/credentials
+  before commit; retain DB management when the final provider is removed.
+  Single-backend only; replica invalidation remains out of scope (partial #15).
+- Admin dashboard saves a durable article-age refresh policy and shows persisted
+  per-batch maintenance results, including refresh failures and unrecoverable
+  health/repair counts (#15 partial).
+- Add opt-in per-account orphan metadata cleanup with a 1..3650-day grace period,
+  complete immutable version/chunk references, authenticated-client legacy
+  backfill and a permanent reference-aware commit fence. All retained history
+  remains protected; incomplete accounts refuse cleanup. Admin jobs show deleted
+  or blocked batch results. Usenet articles are never retracted. Upgrade clients
+  before opting in. Flutter now offers explicit unlocked account reference-backfill
+  batches (200 revisions / 60 seconds), local manifest validation, results and safe
+  retry. Live-stack/browser acceptance remains open.
+
+
 All notable changes are documented here. Every release tag **must** have an
 entry with `### Features` and/or `### Bug fixes` (at least one bullet). The
 release workflow refuses to publish if the entry is missing.
 
-## [Unreleased]
+## [0.5.2] - 2026-11-08
+
+### Features
+
+- Release downloads now name each client asset with its version and platform: `nntdrive-<version>-linux-x64.tar.gz`, `nntdrive-<version>-windows-x64.zip` and `nntdrive-<version>-android.apk`. Checksums cover those names, and desktop downloads keep the unversioned names as aliases so older auto-updaters can still find them.
+
+## [0.5.1] - 2026-11-07
+
+### Features
+
+- Guided README installation and usage steps cover release downloads, server setup, offline recovery material, client connection, folder sync and conflicts (#52).
 
 ### Features
 

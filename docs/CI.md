@@ -19,6 +19,7 @@ workflow, not proof of repository branch protection.
 | `Clients / analyze` | Linux release Rust FFI build, Flutter analysis and full unit/native bridge suite with explicit native library path. Missing native path/file now fails rather than returning a false pass. |
 | `Clients / build-linux` | Native library plus Flutter release bundle and artifact. Not a GUI launch or installed-app update test. |
 | `Clients / build-windows` | Native MSVC DLL, full Flutter unit/native bridge suite on Windows, release build, bundled DLL existence check, ZIP artifact. Failures are no longer allowed. Not installer, process restart, clean-machine or signed-distribution verification. |
+| `Clients / windows-app-smoke` | Hosted Windows 2022 runner downloads the exact release ZIP, pumps the real `NntDriveApp` shell in a desktop integration test using that ZIP's DLL, and exercises account unlock, encrypted-name round-trip, wrong-password rejection and app-support file I/O. It then launches the packaged `nntdrive.exe` and checks its window. Not backend sync, updater replacement/restart, installer, clean-machine or two-device acceptance. |
 | `Clients / build-android` | Rust libraries for arm64-v8a, armeabi-v7a and x86_64, release APK; inspect all three packaged libraries for ELF headers before artifact upload. Debug signing remains. This is packaging coverage, NOT emulator/device runtime or E2E. |
 | `Clients / android-native-smoke` | KVM-required Ubuntu emulator (API 35, x86_64), reusing the release APK's actual Rust library: account/keyfile unlock, encrypted filename round-trip, wrong-password rejection, real path_provider platform channel and app-private file round-trip. Not backend sync, installed release APK launch, or full E2E. 25-minute job/5-minute boot limit, 2 cores/2 GiB RAM/2 GiB userdata. It reclaims only unused .NET on the disposable hosted runner; first boot failed because default userdata requested 7.4 GiB with only 6.1 GiB free, not because KVM was absent. |
 
@@ -38,8 +39,9 @@ slow software emulator. Successful runtime coverage must be confirmed by the
 `rust`, `wrapper-contracts` and the **non-publishing** Docker build now start
 independently. Linux, Windows and Android client builds no longer wait for
 Linux analysis. Analysis and both Linux/Windows native unit suites still run;
-all eight CI/Clients jobs remain required for acceptance. This trades a little
-extra work on failing commits for a shorter successful critical path. No path
+at the time of those measurements, all eight CI/Clients jobs remained required
+for acceptance. This trades a little extra work on failing commits for a shorter
+successful critical path. No path
 filters, optional tests, artifact substitutions or release bypasses were added.
 The Android smoke still waits for the actual release APK and extracts its
 x86_64 core before exercising KVM runtime assertions.
@@ -198,7 +200,8 @@ No release is intentionally triggered by this change.
 
 Recommended required checks: `wrapper-contracts`, `rust`, `docker`, `analyze`,
 `build-linux`, `build-windows`, `build-android`; add `android-native-smoke` after
-confirming the first hosted KVM run. Confirm exact check names in the
+confirming the first hosted KVM run and `windows-app-smoke` after confirming its
+first hosted Windows run. Confirm exact check names in the
 repository UI before configuring. Branch-protection inspection returned HTTP
 403 with the current token: enforcement is **not verified or configured here**.
 Manual container checks are not required checks. iOS builds are not currently

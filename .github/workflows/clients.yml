@@ -163,6 +163,66 @@ jobs:
           name: nntdrive-windows-x64
           path: clients/flutter/nntdrive-windows-x64.zip
 
+  # Exercise the app on hosted Windows using the actual release DLL and bundle.
+  windows-app-smoke:
+    runs-on: windows-2022
+    needs: build-windows
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: clients/flutter
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: "3.47.9"
+          cache: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: nntdrive-windows-x64
+          path: clients/flutter/windows-artifact
+      - name: Extract release bundle and reuse its native DLL
+        run: |
+          $bundle = Join-Path $env:RUNNER_TEMP "nntdrive-release"
+          Expand-Archive -Path "windows-artifact\nntdrive-windows-x64.zip" -DestinationPath $bundle -Force
+          $dll = Join-Path $bundle "nntdrive_ffi.dll"
+          if (!(Test-Path $dll)) { throw "Release bundle is missing nntdrive_ffi.dll" }
+          Copy-Item $dll "windows\runner\nntdrive_ffi.dll" -Force
+      - run: flutter pub get
+      - name: Run Windows app integration smoke against the release DLL
+        run: |
+          if ($env:NNTDRIVE_FFI_PATH) { throw "Smoke test must load the bundled DLL, not NNTDRIVE_FFI_PATH" }
+          flutter test integration_test/windows_app_smoke_test.dart -d windows --reporter expanded
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Launch the packaged release app
+        run: |
+          $bundle = Join-Path $env:RUNNER_TEMP "nntdrive-release"
+          $exe = Join-Path $bundle "nntdrive.exe"
+          if (!(Test-Path $exe)) { throw "Release bundle is missing nntdrive.exe" }
+          $process = Start-Process -FilePath $exe -WorkingDirectory $bundle -PassThru
+          try {
+            $deadline = [DateTime]::UtcNow.AddSeconds(20)
+            do {
+              $process.Refresh()
+              if ($process.HasExited) {
+                throw "Packaged app exited during startup with code $($process.ExitCode)"
+              }
+              if ($process.MainWindowHandle -ne [IntPtr]::Zero) { break }
+              Start-Sleep -Milliseconds 250
+            } while ([DateTime]::UtcNow -lt $deadline)
+            $process.Refresh()
+            if ($process.MainWindowHandle -eq [IntPtr]::Zero) {
+              throw "Packaged app did not create a Windows window"
+            }
+            if ($process.MainWindowTitle -ne "nntdrive") {
+              throw "Unexpected app window title: $($process.MainWindowTitle)"
+            }
+          } finally {
+            $process.Refresh()
+            if (!$process.HasExited) { Stop-Process -Id $process.Id -Force }
+          }
+
   # Runtime smoke, not backend/sync E2E. Reuse the actual packaged x86_64 core.
   android-native-smoke:
     runs-on: ubuntu-24.04

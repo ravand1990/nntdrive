@@ -27,11 +27,26 @@ class AgentPolicyTests(unittest.TestCase):
         text = self.read("AGENTS.md").lower()
         self.assertRegex(text, r"not\s+atomic locks")
         self.assertIn("separate", text)
-        self.assertIn("all applicable", text)
         self.assertIn("attempt the allowed merge", text)
+        self.assertIn("nice to have", text)
+        self.assertIn("must not block a feature", text)
+        self.assertIn("focused tests", text)
         self.assertIn("blocked-loop", text)
         self.assertNotIn("and the user approves", text)
         self.assertNotIn("use the **same github pat**", text)
+
+    def test_agent_comment_format(self):
+        text = self.read("AGENTS.md")
+        for required in (
+            "## #<issue> · <state> · <worker_id>",
+            "**What:**", "**Where:**", "**Checks:**", "**Next:**",
+            "No eligible work", "Claimed", "Ready for review",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, text)
+        other = self.read("docs/GITHUB-TASK-ISSUES.md")
+        self.assertIn("## Agent comment format", other)
+        self.assertIn("**Next:**", other)
 
     def test_worker_retries_and_continues(self):
         text = self.read("AGENTS.md").lower()

@@ -123,6 +123,20 @@ jobs:
           pattern: nntdrive-*
           path: dist
           merge-multiple: true
+      - name: Name release assets with version and platform
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          mv dist/nntdrive-linux-x64.tar.gz "dist/nntdrive-${VERSION}-linux-x64.tar.gz"
+          mv dist/nntdrive-windows-x64.zip "dist/nntdrive-${VERSION}-windows-x64.zip"
+          mv dist/nntdrive-android.apk "dist/nntdrive-${VERSION}-android.apk"
+          # Compatibility aliases: clients released before versioned asset names
+          # look for these exact filenames. Remove after those clients can no
+          # longer update (shortcut: keep until two releases use versioned names).
+          cp "dist/nntdrive-${VERSION}-linux-x64.tar.gz" dist/nntdrive-linux-x64.tar.gz
+          cp "dist/nntdrive-${VERSION}-windows-x64.zip" dist/nntdrive-windows-x64.zip
       - name: Generate update checksums
         run: cd dist && sha256sum * > SHA256SUMS.txt
       - name: Create GitHub release and attach deployment and client files
@@ -131,12 +145,13 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          IMAGE="ghcr.io/${GITHUB_REPOSITORY_OWNER}/nntdrive-backend:${TAG#v}"
+          VERSION="${TAG#v}"
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY_OWNER}/nntdrive-backend:${VERSION}"
           NOTES_FILE="$RUNNER_TEMP/release-notes.md"
           {
             echo "Container image: \`${IMAGE}\` (linux/amd64)"
             echo
-            echo "Client builds: Linux x64 (tar.gz), Android (APK) and Windows x64 (zip)."
+            echo "Client builds: \`nntdrive-${VERSION}-linux-x64.tar.gz\`, \`nntdrive-${VERSION}-android.apk\` and \`nntdrive-${VERSION}-windows-x64.zip\`."
             echo "Checking for updates in the Windows/Linux clients uses this release feed; iOS is not built yet."
             echo
             echo "## Changes"

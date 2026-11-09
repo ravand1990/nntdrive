@@ -35,7 +35,7 @@ openssl rand -base64 32
 ```
 
 Set `POSTGRES_PASSWORD` and `NNTDRIVE_SECRET_KEY` to those outputs and
-`NNTDRIVE_VERSION=0.5.0` in `.env`. The example also includes the image repository,
+`NNTDRIVE_VERSION=0.5.2` in `.env`. The example also includes the image repository,
 loopback HTTP binding/port, domain and logging fields. Keep the default
 `NNTDRIVE_HOST_BIND=127.0.0.1`; set `NNTDRIVE_DOMAIN` before enabling TLS.
 
