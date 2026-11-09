@@ -3,18 +3,21 @@
 //! re-download unchanged data.
 
 use crate::reconcile::BaselineEntry;
-use sqlx::sqlite::SqlitePoolOptions;
-use sqlx::{Row, SqlitePool};
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 use std::collections::HashMap;
 
 #[derive(Debug, thiserror::Error)]
 pub enum JournalError {
     #[error("journal database error: {0}")]
     Db(#[from] sqlx::Error),
+    #[error("another sync or conflict resolution owns this journal; retry when it finishes")]
+    Busy,
 }
 
 pub struct Journal {
     pool: SqlitePool,
+    operation_pool: SqlitePool,
 }
 
 impl Journal {
@@ -27,7 +30,13 @@ impl Journal {
             .max_connections(1)
             .connect(&url)
             .await?;
-        Self::init(pool).await
+        let mut lock_path = path.as_ref().as_os_str().to_os_string();
+        lock_path.push(".operation-lock.sqlite");
+        let operation_pool = Self::operation_pool(
+            SqliteConnectOptions::new().filename(std::path::PathBuf::from(lock_path)),
+        )
+        .await?;
+        Self::init(pool, operation_pool).await
     }
 
     /// Fresh file equality against an existing journal; never creates or migrates it.
@@ -134,10 +143,47 @@ impl Journal {
             .max_connections(1)
             .connect("sqlite::memory:")
             .await?;
-        Self::init(pool).await
+        let operation_pool =
+            Self::operation_pool(SqliteConnectOptions::new().in_memory(true)).await?;
+        Self::init(pool, operation_pool).await
     }
 
-    async fn init(pool: SqlitePool) -> Result<Self, JournalError> {
+    async fn operation_pool(options: SqliteConnectOptions) -> Result<SqlitePool, JournalError> {
+        Ok(SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                options
+                    .create_if_missing(true)
+                    .busy_timeout(std::time::Duration::from_millis(100)),
+            )
+            .await?)
+    }
+
+    /// Holds a SQLite OS-backed write reservation for the entire operation,
+    /// independently of baseline transactions. Drop/cancellation rolls it back;
+    /// process death releases the OS lock. Never remove the sidecar to unlock it.
+    /// All owners must use the same journal path on a local filesystem.
+    pub async fn acquire_operation(&self) -> Result<Transaction<'static, Sqlite>, JournalError> {
+        match tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            self.operation_pool.begin_with("BEGIN IMMEDIATE"),
+        )
+        .await
+        {
+            Ok(Ok(lease)) => Ok(lease),
+            Err(_) => Err(JournalError::Busy),
+            Ok(Err(sqlx::Error::Database(e)))
+                if e.code()
+                    .and_then(|code| code.parse::<u32>().ok())
+                    .is_some_and(|code| matches!(code & 0xff, 5 | 6)) =>
+            {
+                Err(JournalError::Busy)
+            }
+            Ok(Err(e)) => Err(e.into()),
+        }
+    }
+
+    async fn init(pool: SqlitePool, operation_pool: SqlitePool) -> Result<Self, JournalError> {
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS baseline (
                 path TEXT PRIMARY KEY,
@@ -156,7 +202,10 @@ impl Journal {
         sqlx::query("CREATE TABLE IF NOT EXISTS pending_move (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), source TEXT NOT NULL, destination TEXT NOT NULL)")
             .execute(&pool)
             .await?;
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            operation_pool,
+        })
     }
 
     pub async fn load(&self) -> Result<HashMap<String, BaselineEntry>, JournalError> {
@@ -325,6 +374,141 @@ impl Journal {
 mod tests {
     use super::*;
     use uuid::Uuid;
+
+    #[tokio::test]
+    async fn operation_excludes_other_instances_and_preserves_baseline() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("journal.sqlite");
+        let first = Journal::open(&path).await.unwrap();
+        let second = Journal::open(&path).await.unwrap();
+        let lease = first.acquire_operation().await.unwrap();
+        assert!(matches!(
+            first.acquire_operation().await,
+            Err(JournalError::Busy)
+        ));
+        assert!(matches!(
+            second.acquire_operation().await,
+            Err(JournalError::Busy)
+        ));
+        first
+            .upsert(&BaselineEntry {
+                path: "preserved".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        drop(lease);
+        let _next = second.acquire_operation().await.unwrap();
+        assert!(second.load().await.unwrap().contains_key("preserved"));
+        // An unrelated journal must not be blocked globally.
+        let other = Journal::open(dir.path().join("other.sqlite"))
+            .await
+            .unwrap();
+        let _independent = other.acquire_operation().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn operation_is_released_after_task_cancellation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("journal.sqlite");
+        let first = Journal::open(&path).await.unwrap();
+        let second = Journal::open(&path).await.unwrap();
+        let (ready, started) = tokio::sync::oneshot::channel();
+        let owner = tokio::spawn(async move {
+            let _lease = first.acquire_operation().await.unwrap();
+            ready.send(()).unwrap();
+            std::future::pending::<()>().await;
+        });
+        started.await.unwrap();
+        assert!(matches!(
+            second.acquire_operation().await,
+            Err(JournalError::Busy)
+        ));
+        owner.abort();
+        assert!(owner.await.unwrap_err().is_cancelled());
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                match second.acquire_operation().await {
+                    Ok(lease) => break lease,
+                    Err(JournalError::Busy) => {
+                        tokio::time::sleep(std::time::Duration::from_millis(10)).await
+                    }
+                    Err(e) => panic!("unexpected lease failure: {e}"),
+                }
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    // Invoked only by the process-death regression below, never the normal suite.
+    #[tokio::test]
+    #[ignore]
+    async fn operation_lock_subprocess_helper() {
+        let path = std::env::var_os("NNTDRIVE_TEST_OPERATION_JOURNAL").unwrap();
+        let journal = Journal::open(&path).await.unwrap();
+        let _lease = journal.acquire_operation().await.unwrap();
+        std::fs::write(
+            std::env::var_os("NNTDRIVE_TEST_OPERATION_READY").unwrap(),
+            b"ready",
+        )
+        .unwrap();
+        std::future::pending::<()>().await;
+    }
+
+    #[tokio::test]
+    async fn operation_excludes_another_process_and_recovers_after_kill() {
+        struct Child(std::process::Child);
+        impl Drop for Child {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("journal.sqlite");
+        let ready = dir.path().join("ready");
+        let journal = Journal::open(&path).await.unwrap();
+        journal
+            .upsert(&BaselineEntry {
+                path: "preserved".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        let mut child = Child(
+            std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "journal::tests::operation_lock_subprocess_helper",
+                ])
+                .env("NNTDRIVE_TEST_OPERATION_JOURNAL", &path)
+                .env("NNTDRIVE_TEST_OPERATION_READY", &ready)
+                .stdout(std::process::Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while !ready.exists() {
+                assert!(
+                    child.0.try_wait().unwrap().is_none(),
+                    "child exited before acquiring lock"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(matches!(
+            journal.acquire_operation().await,
+            Err(JournalError::Busy)
+        ));
+        child.0.kill().unwrap();
+        child.0.wait().unwrap();
+        let _lease = journal.acquire_operation().await.unwrap();
+        assert!(journal.load().await.unwrap().contains_key("preserved"));
+    }
 
     #[tokio::test]
     async fn browser_equality_requires_fresh_bytes_revision_and_safe_path() {

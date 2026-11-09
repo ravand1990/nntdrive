@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Windows/Linux same-process close-to-tray retains one unlocked sync session, with Open, sync state, Pause/Resume and Quit. Missing tray support falls back to quit; session ownership excludes duplicate clients using the same settings directory. Quit/sign-out drain active work, including Copy, rename/move and maintenance, before locking keys. This is partial #6 delivery, not autostart, cold-start unlock or a mobile worker; installed-platform acceptance remains pending.
+- Sync rounds and conflict resolution reject another updated process using the same journal, with automatic operation-lease release after cancellation or process death; baseline history is preserved. This per-journal lease is separate from the desktop session owner and does not itself provide background scheduling (#6).
+- The locked-vault screen explicitly shows that synchronization is paused until unlock. Background service delivery remains incomplete; see `docs/BACKGROUND-SYNC.md` for the cold-start security constraint and remaining platform work (#6).
+
 - Add bounded encrypted file Copy through the Rust SDK and dedicated guarded
   publication endpoint: fresh metadata identities, canonical collision preflight,
   atomic source/destination snapshots and GC-safe tenant references (#51 partial).
@@ -61,6 +65,7 @@ release workflow refuses to publish if the entry is missing.
 - Declarative six-target test environment launcher wraps isolated local checks or correlated exact-head manual GitHub Clients runs, with bounded waits and exact artifact links. Windows runtime fails closed pending approved host provisioning; Linux-client now requires an isolated release-bundle Xvfb process/window smoke with evidence upload (hosted execution not yet verified). Backend-sync/update E2E remains incomplete (#53). See `docs/TEST-ENVIRONMENTS.md`.
 
 ### Bug fixes
+
 
 - File-browser Conflict labels now retain a safely discovered same-directory conflict copy when its original is missing, without enabling Show in folder for the absent original. Missing ancestors, stale copies, directories and links cannot establish the pair; journal/revision equality remains unverified (#51 partial).
 - Identical independent file additions/edits now record the matching remote revision in the sync journal without transferring content, avoiding stale baselines and later false conflicts. Adoption rechecks local hash/type/size, rejects links and unverified remote revisions, and preserves the baseline on failure (#51 partial). Browser-wide journal/revision indicators and installed/two-device acceptance remain pending.

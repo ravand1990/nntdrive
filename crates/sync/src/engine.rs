@@ -98,6 +98,7 @@ impl SyncEngine {
         copy: &str,
         choice: &str,
     ) -> Result<SyncReport> {
+        let _operation = journal.acquire_operation().await?;
         let marker = copy.rfind(" (conflict ");
         let inferred = marker.and_then(|start| {
             copy[start..]
@@ -240,6 +241,7 @@ impl SyncEngine {
         journal: &Journal,
         now: &str,
     ) -> Result<SyncReport> {
+        let _operation = journal.acquire_operation().await?;
         // Finish or cancel an interrupted local rename before scanning. The
         // intent survives cancellation between filesystem and SQLite commits.
         if let Some((from, to)) = journal.pending_move().await? {
@@ -1009,6 +1011,40 @@ mod tests {
             .await
             .unwrap();
         assert!(report.errors.is_empty(), "{:?}", report.errors);
+    }
+
+    #[tokio::test]
+    async fn whole_operation_excludes_sync_and_conflict_resolution() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Journal::in_memory().await.unwrap();
+        let lease = journal.acquire_operation().await.unwrap();
+        let mut remote = FakeRemote::default();
+        let engine = SyncEngine::new("device");
+        let sync = engine
+            .run_once(&mut remote, dir.path(), &journal, "now")
+            .await;
+        assert!(
+            matches!(sync, Err(SyncError::Journal(crate::JournalError::Busy))),
+            "sync must reject the competing owner: {sync:?}"
+        );
+        let conflict = engine
+            .resolve_conflict(
+                &mut remote,
+                dir.path(),
+                &journal,
+                "a",
+                "a (conflict device now)",
+                "both",
+            )
+            .await;
+        assert!(
+            matches!(conflict, Err(SyncError::Journal(crate::JournalError::Busy))),
+            "conflict resolution must reject the competing owner: {conflict:?}"
+        );
+        assert_eq!(remote.0.lock().await.uploads, 0);
+        assert!(journal.load().await.unwrap().is_empty());
+        drop(lease);
+        run(&engine, &mut remote, dir.path(), &journal).await;
     }
 
     #[tokio::test]

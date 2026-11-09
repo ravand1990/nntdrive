@@ -14,6 +14,10 @@ bash scripts/dev-check.sh all         # fetch, fmt/check/clippy/tests, FFI, anal
 # Or affected suites:
 bash scripts/dev-check.sh rust
 bash scripts/dev-check.sh flutter
+# Custom commands use the same exclusive lock, internal network and cleanup;
+# fetch/flutter must have populated dependencies and the native library first.
+bash scripts/dev-check.sh flutter-exec flutter build linux --release --no-pub
+bash scripts/dev-check.sh flutter-exec dart format lib/desktop_lifecycle.dart
 ```
 
 CI remains authoritative and uses rolling Rust stable. These local images are a

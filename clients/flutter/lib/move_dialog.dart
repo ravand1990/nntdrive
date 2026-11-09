@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'api.dart';
 import 'native.dart';
+import 'session_operations.dart';
 
 class MoveDestination {
   const MoveDestination(this.parentId);
@@ -9,7 +10,9 @@ class MoveDestination {
 
 /// Navigates fresh remote folders; no local paths or plaintext go to the API.
 class MoveDialog extends StatefulWidget {
-  const MoveDialog({super.key, required this.api, required this.handle, required this.source, this.copy = false});
+  const MoveDialog({super.key, required this.api, required this.handle,
+    required this.source, this.copy = false, this.operations});
+  final SessionOperations? operations;
   final bool copy;
   final ApiClient api;
   final int handle;
@@ -36,12 +39,9 @@ class _MoveDialogState extends State<MoveDialog> {
     final generation = ++_generation;
     setState(() { _loading = true; _error = null; });
     try {
-      final entries = await widget.api.listFiles(parentId: _parent);
-      final folders = <({RemoteFile file, String name})>[];
-      for (final entry in entries) {
-        if (!entry.isDir || entry.id == widget.source.id) continue;
-        folders.add((file: entry, name: NativeBridge.instance.openName(widget.handle, entry.id, entry.nameEnc)));
-      }
+      // Own each listing/decryption workflow, never the idle dialog lifetime.
+      final folders = await (widget.operations?.run(widget.handle, _loadFolders)
+          ?? _loadFolders());
       if (!mounted || generation != _generation) return;
       setState(() => _folders = folders);
     } catch (_) {
@@ -50,6 +50,14 @@ class _MoveDialogState extends State<MoveDialog> {
     } finally {
       if (mounted && generation == _generation) setState(() => _loading = false);
     }
+  }
+
+  Future<List<({RemoteFile file, String name})>> _loadFolders() async {
+    final entries = await widget.api.listFiles(parentId: _parent);
+    return [for (final entry in entries)
+      if (entry.isDir && entry.id != widget.source.id)
+        (file: entry, name: NativeBridge.instance.openName(
+          widget.handle, entry.id, entry.nameEnc))];
   }
 
   @override

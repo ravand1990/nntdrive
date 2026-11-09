@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:nntdrive/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nntdrive/api.dart';
 import 'package:nntdrive/move_dialog.dart';
+import 'package:nntdrive/session_operations.dart';
 
 class FolderApi extends ApiClient {
   FolderApi() : super(baseUrl: 'http://unused');
@@ -17,7 +19,49 @@ class FolderApi extends ApiClient {
   }
 }
 
+class BlockingFolderApi extends ApiClient {
+  BlockingFolderApi() : super(baseUrl: 'http://unused');
+  final listing = Completer<List<RemoteFile>>();
+  int requests = 0;
+  @override
+  Future<List<RemoteFile>> listFiles({String? parentId}) {
+    requests++;
+    return listing.future;
+  }
+}
+
 void main() {
+  testWidgets('picker drains a pending listing, not an idle dialog, and rejects late loads', (tester) async {
+    final api = BlockingFolderApi();
+    final operations = SessionOperations();
+    const handle = 42;
+    await tester.pumpWidget(MaterialApp(home: Builder(builder: (context) => TextButton(onPressed: () {
+      showDialog<MoveDestination>(context: context, builder: (_) => MoveDialog(
+        api: api, handle: handle, operations: operations,
+        source: RemoteFile('source', null, 'opaque', true, 0, false, 1, null)));
+    }, child: const Text('Open')))));
+    await tester.tap(find.text('Open'));
+    await tester.pump();
+    expect(api.requests, 1);
+    var drained = false;
+    final drain = operations.drain(handle).then((_) => drained = true);
+    await tester.pump();
+    expect(drained, isFalse);
+    api.listing.complete([]);
+    await tester.pumpAndSettle();
+    await drain;
+    expect(drained, isTrue);
+    expect(find.byType(MoveDialog), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Open'));
+    await tester.pumpAndSettle();
+    expect(api.requests, 1);
+    expect(find.text('Cannot read destination folders. Refresh and try again.'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+  });
+
   testWidgets('move picker navigates encrypted folders and returns destination', (tester) async {
     final bridge = NativeBridge.instance;
     final keys = bridge.generateAccount('picker test password');

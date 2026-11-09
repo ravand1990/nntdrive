@@ -89,6 +89,25 @@ contain path, direction, logical bytes/total and commit/verification completion.
 `tool/sync_smoke.dart` verifies two-folder progress and all conflict choices
 against a real HTTP backend and mock NNTP fixture (see Development).
 
+## Desktop window lifecycle (partial #6)
+
+Windows/Linux close-to-tray keeps the **same unlocked process** syncing. Tray
+menus expose Open, generic sync status, Pause/Resume and Quit. Hiding is not
+locking the vault; use Sign out to lock and remove saved login settings, or Quit
+to drain active work and exit (saved password-wrapped login is retained).
+
+Linux needs `libayatana-appindicator3-1` at runtime and an active compatible
+AppIndicator/StatusNotifier tray host. Builds need
+`libayatana-appindicator3-dev`. Without a working tray host/icon, close quits
+instead of hiding. Losing the host restores a hidden window. Relaunch normally
+activates the existing window; an unavailable/busy settings lock never starts a
+second sync session. Installed Windows/Linux tray and shell-restart acceptance
+is still pending; a release build is not that evidence.
+
+No login autostart, cold-start automatic unlock or mobile background worker is
+registered. A cold process still requires the password. See
+[background sync](BACKGROUND-SYNC.md) for security boundaries and remaining work.
+
 ## Legacy reference preparation
 
 After unlocking, open the account menu → **Prepare legacy references** →
@@ -111,6 +130,7 @@ once with `nntdrive_string_free`; it retains no native callback/listener. Locked
 handles fail before HTTP. Old cores missing this additive export fail safely;
 ship Flutter and its native library together. Live browser acceptance is separate
 and remains unperformed.
+
 
 ## Build instructions
 

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -47,6 +48,64 @@ void main() {
       await server.close(force: true);
     }
   });
+  test('reference backfill drain waits for the complete HTTP worker', () async {
+    final bridge = NativeBridge.instance;
+    const password = 'drain backfill fixture password';
+    final keys = bridge.generateAccount(password);
+    final handle = bridge.unlock(jsonEncode(keys['keyfile']), password)['handle'] as int;
+    final entered = Completer<void>();
+    final release = Completer<void>();
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    var requests = 0;
+    server.listen((request) async {
+      requests++;
+      entered.complete();
+      await release.future;
+      request.response.headers.contentType = ContentType.json;
+      request.response.write('{"versions":[],"next":null}');
+      await request.response.close();
+    });
+    final url = 'http://127.0.0.1:${server.port}';
+    final worker = bridge.backfillReferencesAsync(handle, url, 'fixture-token');
+    try {
+      await entered.future.timeout(const Duration(seconds: 30));
+      var drained = false;
+      final drain = bridge.drainSession(handle).then((_) => drained = true);
+      await Future<void>.delayed(Duration.zero);
+      expect(drained, isFalse);
+      await expectLater(bridge.backfillReferencesAsync(handle, url, 'fixture-token'),
+          throwsStateError);
+      expect(requests, 1);
+      release.complete();
+      expect((await worker)['failed'], false);
+      await drain;
+      expect(drained, isTrue);
+    } finally {
+      if (!release.isCompleted) release.complete();
+      await worker;
+      await bridge.drainSession(handle);
+      bridge.lock(handle);
+      await server.close(force: true);
+    }
+  });
+
+  test('local equality worker completes before session drain returns', () async {
+    final bridge = NativeBridge.instance;
+    // Missing request fields fail inside the native worker, not on this isolate.
+    const handle = 900000002;
+    var finished = false;
+    final worker = bridge.localFileMatches({'handle': handle}).then<void>(
+      (_) { finished = true; },
+      onError: (Object error) {
+        expect(error, isA<NativeException>());
+        finished = true;
+      },
+    );
+    await bridge.drainSession(handle);
+    expect(finished, isTrue);
+    await worker;
+  });
+
   test('sync callback lifetime terminates even on native errors', () async {
     final events = <Map<String, dynamic>>[];
     await expectLater(
@@ -55,6 +114,82 @@ void main() {
     expect(events, isEmpty);
     // A second request proves the first listener was closed without poisoning ABI state.
     await expectLater(NativeBridge.instance.syncRequestAsync(0, {}),
+        throwsA(isA<NativeException>()));
+  });
+
+  test(
+      'drained native sessions reject all new async workers before network access',
+      () async {
+    final bridge = NativeBridge.instance;
+    const handle = 900000001;
+    await bridge.drainSession(handle);
+    await expectLater(bridge.backfillReferencesAsync(handle, '', ''),
+        throwsStateError);
+    await expectLater(bridge.copyFileAsync(handle, {}), throwsStateError);
+    await expectLater(bridge.localFileMatches({'handle': handle}),
+        throwsStateError);
+    await expectLater(bridge.syncRequestAsync(handle, {}), throwsStateError);
+    await expectLater(
+        bridge.syncRunAsync(
+            handle: handle,
+            baseUrl: '',
+            token: '',
+            remoteRootId: '',
+            localPath: '',
+            journalPath: '',
+            deviceName: ''),
+        throwsStateError);
+    await expectLater(
+        bridge.uploadAsync(
+            handle: handle,
+            baseUrl: '',
+            token: '',
+            fileId: '',
+            revisionId: '',
+            parentRevision: '',
+            path: ''),
+        throwsStateError);
+    await expectLater(
+        bridge.downloadAsync(
+            handle: handle,
+            baseUrl: '',
+            token: '',
+            fileId: '',
+            revisionId: '',
+            destination: ''),
+        throwsStateError);
+  });
+  test('native worker wrappers still cross isolates and report native failures',
+      () async {
+    final bridge = NativeBridge.instance;
+    await expectLater(
+        bridge.syncRunAsync(
+            handle: 0,
+            baseUrl: '',
+            token: '',
+            remoteRootId: '',
+            localPath: '',
+            journalPath: '',
+            deviceName: ''),
+        throwsA(isA<NativeException>()));
+    await expectLater(
+        bridge.uploadAsync(
+            handle: 0,
+            baseUrl: '',
+            token: '',
+            fileId: '',
+            revisionId: '',
+            parentRevision: '',
+            path: ''),
+        throwsA(isA<NativeException>()));
+    await expectLater(
+        bridge.downloadAsync(
+            handle: 0,
+            baseUrl: '',
+            token: '',
+            fileId: '',
+            revisionId: '',
+            destination: ''),
         throwsA(isA<NativeException>()));
   });
   test('native bridge creates keys and seals names', () async {

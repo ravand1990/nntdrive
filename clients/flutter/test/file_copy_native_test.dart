@@ -1,4 +1,5 @@
 // Real loopback HTTP + native crypto. Never initialize a widget binding here.
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
@@ -23,6 +24,8 @@ void main() {
     var status = 201;
     var reads = 0;
     var corrupt = false;
+    Completer<void>? copyEntered;
+    Completer<void>? releaseCopy;
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final subscription = server.listen((request) async {
       expect(request.headers.value('authorization'), 'Bearer fixture-token');
@@ -33,6 +36,10 @@ void main() {
         request.response.write('{}');
       } else if (request.uri.path.endsWith('/manifest')) {
         reads++;
+        if (copyEntered != null && !copyEntered.isCompleted) {
+          copyEntered.complete();
+          await releaseCopy!.future;
+        }
         final copied = request.uri.path != '/api/v1/files/$id/manifest';
         final servedRevision = copied ? writes.first['revision_id'] : revision;
         expect(request.uri.queryParameters['revision'], servedRevision);
@@ -127,11 +134,34 @@ void main() {
       await expectLater(copy(file: RemoteFile(sibling, null, source.nameEnc, false, 0, false, 1, revision)),
         throwsA(isA<NativeException>()));
       expect(reads, noHttp);
+      // Shutdown must wait while Copy's manifest HTTP request is suspended.
+      final drainingHandle = bridge.unlock(jsonEncode(keys['keyfile']), password)['handle'] as int;
+      status = 201;
+      copyEntered = Completer<void>();
+      releaseCopy = Completer<void>();
+      final copying = copy(using: drainingHandle);
+      try {
+        await copyEntered.future.timeout(const Duration(seconds: 30));
+        var drained = false;
+        final drain = bridge.drainSession(drainingHandle).then((_) => drained = true);
+        await Future<void>.delayed(Duration.zero);
+        expect(drained, isFalse);
+        await expectLater(copy(using: drainingHandle), throwsStateError);
+        releaseCopy.complete();
+        await copying;
+        await drain;
+        expect(drained, isTrue);
+      } finally {
+        if (!releaseCopy.isCompleted) releaseCopy.complete();
+        await copying;
+        await bridge.drainSession(drainingHandle);
+        bridge.lock(drainingHandle);
+      }
       bridge.lock(handle);
       final lockedReads = reads;
       await expectLater(copy(), throwsA(isA<NativeException>()));
       expect(reads, lockedReads);
-      expect(writes, hasLength(6));
+      expect(writes, hasLength(7));
     } finally {
       bridge.lock(handle);
       await server.close(force: true);
