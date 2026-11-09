@@ -1,5 +1,27 @@
 # Project status
 
+## Android folder access (#69, unreleased)
+
+Shared-folder sync now explains and explicitly requests Android all-files access
+for the current path-based Rust engine (legacy read/write grants on Android 6–10).
+SAF URI access is not presented as POSIX access. Permission is rechecked before
+sync; denial/revocation reports an error and offers retry on the same folder.
+The app-private alternative needs no broad permission and uses a separate data
+directory outside the live sync journals. A permission return cannot resurrect
+a removed sync relationship. Names/content still use the existing encrypted path.
+
+Scanner I/O failures abort before remote snapshot/reconciliation instead of
+looking like missing/deleted local entries, including unreadable nested paths and
+cached-hash files. Focused `nntdrive-sync` checks passed **38 tests** with one
+existing ignored subprocess helper; a temporary restoration of skipped directory
+errors failed the new regression as expected. **7 Flutter storage-access tests**
+and analysis passed in the pinned isolated wrapper. Native Android path-policy
+unit tests and a real private-folder/channel smoke are wired to hosted Android
+jobs; their definitions are not execution evidence. Actual Android settings
+grant/deny/revoke/restart and shared-folder encrypted transfer acceptance remains
+unrun, tracked separately in [#75](https://github.com/ravand1990/nntdrive/issues/75).
+See [access model and limits](CLIENTS.md#android-folder-access-69).
+
 ## Generate-once image deployment secrets (#62, unreleased)
 
 The image-only `nntdrive-compose.py` launcher supplies a persisted OS-random

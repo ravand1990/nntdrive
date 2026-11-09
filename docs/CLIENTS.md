@@ -508,6 +508,56 @@ The browser and sync share the same encrypted remote tree. Local synced files
 remain plaintext on disk; use BitLocker, LUKS or FileVault for local disk
 protection. Content and names sent to the backend/Usenet are encrypted locally.
 
+## Android folder access (#69)
+
+For shared storage, **Select base folder / Add another folder** opens Android's
+directory picker, then explains the access scope before asking you to enable
+**All files access** in this app's Android settings (Android 11+). Return to
+NNTDrive to finish adding/syncing the folder. On Android 6–10 the app requests
+read/write storage permission instead (legacy storage on Android 10). A granted
+OS permission survives a normal app restart; the client rechecks it before every
+sync, not a saved “granted” preference. Denial never initiates remote publication
+or native sync. Canceling leaves existing folder configuration and journals intact.
+
+This is deliberately broader than a SAF tree grant. The existing Rust sync engine
+uses ordinary filesystem paths, directory traversal, hashing, atomic rename and
+conflict-file recovery; it cannot operate on `content://` document streams. The
+current directory-picker plugin returns an on-device path, not a persisted SAF
+capability. A narrow SAF solution requires a new tree-I/O adapter throughout that
+engine; converting a URI to a path does not grant POSIX access. For the current
+sideloaded general folder-sync client we therefore explicitly request
+`MANAGE_EXTERNAL_STORAGE`, **not** pretend a tree grant suffices. No media/contact
+permissions are added. All-files access covers shared storage outside the chosen
+folder too: only configured roots are synchronized, but this is an application
+policy, not OS-enforced per-tree isolation. Public Play distribution would require
+separate permission-policy review; this does not authorize store publication.
+
+Alternatively, **Use app-private folder (no permission)** creates a sync directory
+inside app storage. This is not a user-visible Documents folder: uninstalling the
+app removes it. It does not need shared-storage access. Existing app-private or
+already-authorized paths never open settings automatically. Protected system paths,
+other apps' private data / `Android/data` and `Android/obb`, cloud document providers
+and picker-unsupported storage volumes remain unsupported; a broad grant does not
+bypass Android's restrictions.
+
+If access is revoked, **Sync now** or the next automatic round shows a folder
+error rather than successful empty synchronization. **Grant storage access and
+retry** explains the scope, reopens settings only on explicit confirmation and
+rescans the **same** configured folder after return. You may also restore access
+in Android Settings and use **Sync now**, without deleting/re-adding the folder.
+Folder checks fail closed on unlistable directories; the native scanner aborts
+the round on directory/metadata/file-read failures, including cached-hash reads,
+so missing access is not interpreted as file deletion. Intentional exclusions and
+skipped symlinks retain their existing behavior. Permissions can still disappear
+during a later operation; that operation reports an error, not guaranteed success.
+
+Names, paths and bytes remain local inputs to the existing encrypted sync engine;
+permission checks send nothing to the backend. No plaintext upload or crypto
+fallback is introduced. Focused channel/controller/widget and scanner regressions
+are distinct from Android installed-app acceptance: fresh install/restart, actual
+settings denial/revocation/regrant and shared-folder transfer on Android 11+ and a
+current version still require the follow-up runtime verification.
+
 ## Sync model on clients
 
 - One device-local SQLite journal (`nntdrive-sync`) holds the baseline.
@@ -537,8 +587,9 @@ protection. Content and names sent to the backend/Usenet are encrypted locally.
 
 - iOS cannot watch arbitrary directories; only its container and File Provider
   domains.
-- Android scoped storage prevents free filesystem access outside user-granted
-  trees (`ACTION_OPEN_DOCUMENT_TREE`).
+- Android shared-folder sync requires an explicit all-files grant for the current
+  path-based engine; SAF tree selection alone is insufficient. App-private sync
+  needs no shared-storage permission; protected paths remain unavailable.
 - Windows drive letters need WinFsp service privileges; symlinks need developer
   mode/elevation.
 - Linux FUSE mounts are per-user and may require `user_allow_other` for other

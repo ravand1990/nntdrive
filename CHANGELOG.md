@@ -8,6 +8,7 @@ release workflow refuses to publish if the entry is missing.
 
 ### Bug fixes
 
+- Android folder sync requests explicit storage access with denial/retry guidance and a permission-free app-private alternative; revoked/unreadable roots no longer look like successful empty scans (#69). Shared folders use Android's all-files grant, not per-tree SAF isolation; installed-device acceptance remains separate.
 - Fresh image-only installations can start with an absent/empty `.env` using `nntdrive-compose.py`: database and provider-encryption secrets are generated once, privately persisted, and reused. Missing/corrupt secrets with existing data fail closed; explicit credentials cannot silently rotate saved values (#62).
 - Live sync event streams recheck the original credential and account/device status with a two-second authorization lease, closing after logout, revocation, disable or expiry (#16 partial). Already admitted/buffered frames cannot be retracted.
 

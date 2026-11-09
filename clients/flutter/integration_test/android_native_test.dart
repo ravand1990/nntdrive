@@ -2,12 +2,43 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/services.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:nntdrive/native.dart';
+import 'package:nntdrive/storage_access.dart';
 import 'package:path_provider/path_provider.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+
+  testWidgets('Android real storage channel keeps private sync permission-free',
+      (tester) async {
+    const access = StorageAccess();
+    final path = await access.privateFolder();
+    expect(path, isNotNull);
+    final support = await getApplicationSupportDirectory();
+    final journalRoot =
+        await Directory('${support.path}/sync').create(recursive: true);
+    final dataRoot = await Directory(path!).resolveSymbolicLinks();
+    final journals = await journalRoot.resolveSymbolicLinks();
+    expect(dataRoot, isNot(journals));
+    expect(dataRoot.startsWith('$journals/'), isFalse);
+    expect(journals.startsWith('$dataRoot/'), isFalse);
+    expect(await access.permissionRequired(path), isFalse);
+    await access.check(path);
+    final file = File('$path/access-smoke');
+    try {
+      await file.writeAsString('private local fixture');
+      expect(await file.readAsString(), 'private local fixture');
+    } finally {
+      if (await file.exists()) await file.delete();
+    }
+    await expectLater(
+        access.permissionRequired('content://unsupported/tree/example'),
+        throwsA(isA<PlatformException>()));
+    // Fresh hosted emulator has no all-files grant. No check opens settings.
+    expect(await access.permissionRequired('/storage/emulated/0'), isTrue);
+  });
 
   testWidgets('Android packaged FFI crypto and app-private storage',
       (tester) async {

@@ -89,7 +89,7 @@ pub fn scan(
     previous: &HashMap<String, ScannedEntry>,
 ) -> std::io::Result<ScanResult> {
     let mut result = ScanResult::default();
-    if !root.is_dir() {
+    if !fs::metadata(root)?.is_dir() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::NotADirectory,
             "sync root is not a directory",
@@ -109,22 +109,11 @@ fn walk(
     out: &mut ScanResult,
     seen_case: &mut HashMap<String, String>,
 ) -> std::io::Result<()> {
-    let read = match fs::read_dir(dir) {
-        Ok(r) => r,
-        Err(e) => {
-            out.skipped
-                .push((relative(root, dir), format!("cannot read directory: {e}")));
-            return Ok(());
-        }
-    };
+    // An incomplete scan is not a local deletion. Abort the entire round on
+    // I/O failures; `skipped` is reserved for deliberate policy decisions.
+    let read = fs::read_dir(dir)?;
     for entry in read {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(e) => {
-                out.skipped.push((relative(root, dir), e.to_string()));
-                continue;
-            }
-        };
+        let entry = entry?;
         let name = entry.file_name().to_string_lossy().to_string();
         if is_ignored_name(&name, opts) {
             continue;
@@ -134,13 +123,7 @@ fn walk(
         if opts.is_excluded(&rel) {
             continue;
         }
-        let meta = match fs::symlink_metadata(&path) {
-            Ok(m) => m,
-            Err(e) => {
-                out.skipped.push((rel, e.to_string()));
-                continue;
-            }
-        };
+        let meta = fs::symlink_metadata(&path)?;
         if meta.file_type().is_symlink() {
             if !opts.follow_symlinks {
                 out.skipped
@@ -148,13 +131,7 @@ fn walk(
                 continue;
             }
             // Follow but never escape the root.
-            let canonical = match fs::canonicalize(&path) {
-                Ok(c) => c,
-                Err(e) => {
-                    out.skipped.push((rel, e.to_string()));
-                    continue;
-                }
-            };
+            let canonical = fs::canonicalize(&path)?;
             if !canonical.starts_with(root) {
                 out.skipped
                     .push((rel, "symlink escapes the sync root".into()));
@@ -191,16 +168,12 @@ fn walk(
                         && prev.mtime_ms == mtime_ms
                         && prev.content_hash.is_some() =>
                 {
+                    // Permissions can change without size/mtime changing.
+                    // A cached hash must not bypass the current read grant.
+                    let _file = fs::File::open(&path)?;
                     prev.content_hash.clone()
                 }
-                _ => match hash_file(&path) {
-                    Ok(h) => Some(h),
-                    Err(e) => {
-                        out.skipped
-                            .push((rel.clone(), format!("locked or unreadable: {e}")));
-                        None
-                    }
-                },
+                _ => Some(hash_file(&path)?),
             };
             out.entries.push(ScannedEntry {
                 path: rel,
@@ -290,6 +263,112 @@ pub fn validate_relative_path(path: &str) -> Result<PathBuf, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Exercise read_dir failure without chmod: this remains deterministic even
+    // for root and models a directory replaced between metadata and traversal.
+    #[test]
+    fn walk_rejects_failed_root_and_nested_directory_listings() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("not-a-directory");
+        fs::write(&file, b"not a directory").unwrap();
+        for root in [file.as_path(), dir.path()] {
+            let mut result = ScanResult::default();
+            let error = walk(
+                root,
+                &file,
+                &ScanOptions::default(),
+                &HashMap::new(),
+                &mut result,
+                &mut HashMap::new(),
+            )
+            .expect_err("an incomplete directory listing must abort the scan");
+            assert_eq!(error.kind(), std::io::ErrorKind::NotADirectory);
+            assert!(result.skipped.is_empty(), "I/O errors are not policy skips");
+        }
+    }
+
+    // chmod alone cannot revoke root's access. Re-exec only this test with
+    // dropped privileges so real permission errors are tested in root-run CI too.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn permission_revocation_aborts_scan() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        use std::os::unix::process::CommandExt;
+
+        const CHILD: &str = "NNTDRIVE_SCANNER_PERMISSION_TEST_CHILD";
+        let capabilities = fs::read_to_string("/proc/self/status").unwrap();
+        let effective = capabilities
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix("CapEff:")
+                    .map(|value| u64::from_str_radix(value.trim(), 16).unwrap())
+            })
+            .unwrap();
+        // The approved check containers drop all capabilities: uid 0 there
+        // cannot bypass chmod, and cannot call setuid either.
+        if fs::metadata("/proc/self").unwrap().uid() == 0 && effective & 0b110 != 0 {
+            assert!(std::env::var_os(CHILD).is_none(), "privilege drop failed");
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "scanner::tests::permission_revocation_aborts_scan",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .uid(65534)
+                .gid(65534)
+                .status()
+                .expect("run scanner permission regression without root privileges");
+            assert!(
+                status.success(),
+                "unprivileged permission regression failed"
+            );
+            return;
+        }
+
+        for blocked in ["", "nested", "nested/file.txt"] {
+            let dir = tempfile::tempdir().unwrap();
+            let root = dir.path();
+            fs::create_dir(root.join("nested")).unwrap();
+            fs::write(root.join("nested/file.txt"), b"preserve remote copy").unwrap();
+            let initial = scan(root, &ScanOptions::default(), &HashMap::new()).unwrap();
+            let previous = initial
+                .entries
+                .into_iter()
+                .map(|e| (e.path.clone(), e))
+                .collect();
+            let denied = root.join(blocked);
+            let permissions = fs::metadata(&denied).unwrap().permissions();
+            fs::set_permissions(&denied, fs::Permissions::from_mode(0o0)).unwrap();
+            // Check both uncached hashing and unchanged size/mtime hash reuse.
+            let uncached = scan(root, &ScanOptions::default(), &HashMap::new());
+            let cached = scan(root, &ScanOptions::default(), &previous);
+            fs::set_permissions(&denied, permissions).unwrap();
+            for result in [uncached, cached] {
+                assert_eq!(
+                    result
+                        .expect_err("unreadability must abort before reconciliation")
+                        .kind(),
+                    std::io::ErrorKind::PermissionDenied,
+                    "revoked access to {blocked:?}"
+                );
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinks_remain_intentional_skips() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("file.txt"), b"keep").unwrap();
+        std::os::unix::fs::symlink("file.txt", dir.path().join("link")).unwrap();
+        let result = scan(dir.path(), &ScanOptions::default(), &HashMap::new()).unwrap();
+        assert_eq!(result.entries.len(), 1);
+        assert_eq!(result.entries[0].path, "file.txt");
+        assert_eq!(result.skipped.len(), 1);
+        assert_eq!(result.skipped[0].0, "link");
+        assert!(result.skipped[0].1.contains("symbolic link skipped"));
+    }
 
     #[test]
     fn scanner_ignores_temp_files_and_nested_dirs() {
