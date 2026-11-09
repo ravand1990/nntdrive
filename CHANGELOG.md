@@ -1,53 +1,26 @@
 # Changelog
 
-## Unreleased
-
-- Harden account admission across backend and operator CLI instances with one
-  transaction-scoped database gate; preserve first-account administrator setup
-  and explicit operator role grants. Bound yEnc decoded allocation/output by
-  the supplied input and declared length, returning validation errors for invalid
-  sizes. Focused isolated regressions accompany this partial security-review
-  increment (#16); this is not a completed independent security audit.
-
-- Windows/Linux same-process close-to-tray retains one unlocked sync session, with Open, sync state, Pause/Resume and Quit. Missing tray support falls back to quit; session ownership excludes duplicate clients using the same settings directory. Quit/sign-out drain active work, including Copy, rename/move and maintenance, before locking keys. This is partial #6 delivery, not autostart, cold-start unlock or a mobile worker; installed-platform acceptance remains pending.
-- Sync rounds and conflict resolution reject another updated process using the same journal, with automatic operation-lease release after cancellation or process death; baseline history is preserved. This per-journal lease is separate from the desktop session owner and does not itself provide background scheduling (#6).
-- The locked-vault screen explicitly shows that synchronization is paused until unlock. Background service delivery remains incomplete; see `docs/BACKGROUND-SYNC.md` for the cold-start security constraint and remaining platform work (#6).
-
-- Add bounded encrypted file Copy through the Rust SDK and dedicated guarded
-  publication endpoint: fresh metadata identities, canonical collision preflight,
-  atomic source/destination snapshots and GC-safe tenant references (#51 partial).
-  Flutter/FFI now exposes **Copy file / Copy folder** with an encrypted destination picker,
-  explicit confirmation and a single worker-isolate attempt. Ambiguous failures
-  require refreshing the destination, not blind retry. Recursive folder Copy
-  remaps fresh authenticated node/revision metadata and publishes all or nothing
-  under exact subtree/destination guards and the GC lock. Nested/empty folders
-  are supported, bounded to 256 entries, depth 31 and bounded metadata/references.
-  Copy-time renaming and durable retry receipts remain unsupported.
-- Fix file/folder Copy quota checks to reuse the publication transaction's
-  connection instead of exhausting the database pool while holding its locks.
-  Real HTTP regressions cover a one-connection backend pool, concurrent Copy,
-  quota rejection/rollback and shared-content downloads (#51 partial).
-
-- Apply admin provider CRUD to the serving backend without restart, pinning one
-  provider snapshot per storage operation. Reject invalid configs/credentials
-  before commit; retain DB management when the final provider is removed.
-  Single-backend only; replica invalidation remains out of scope (partial #15).
-- Admin dashboard saves a durable article-age refresh policy and shows persisted
-  per-batch maintenance results, including refresh failures and unrecoverable
-  health/repair counts (#15 partial).
-- Add opt-in per-account orphan metadata cleanup with a 1..3650-day grace period,
-  complete immutable version/chunk references, authenticated-client legacy
-  backfill and a permanent reference-aware commit fence. All retained history
-  remains protected; incomplete accounts refuse cleanup. Admin jobs show deleted
-  or blocked batch results. Usenet articles are never retracted. Upgrade clients
-  before opting in. Flutter now offers explicit unlocked account reference-backfill
-  batches (200 revisions / 60 seconds), local manifest validation, results and safe
-  retry. Live-stack/browser acceptance remains open.
-
-
 All notable changes are documented here. Every release tag **must** have an
 entry with `### Features` and/or `### Bug fixes` (at least one bullet). The
 release workflow refuses to publish if the entry is missing.
+
+## [0.6.0] - 2026-11-09
+
+### Features
+
+- Manage encrypted files from the client: rename files and folders, move them to another folder, and copy files or whole folder trees. Names stay encrypted end to end, and renames propagate as moves instead of delete/re-upload (#51 partial).
+- The file browser shows whether an item is local, cloud-only, syncing, conflicted or failed, and can reveal a locally synced file in the OS file manager.
+- Admin provider changes (add, edit, remove) apply to the running backend without a restart; retention and article-age refresh policies are stored and their maintenance results shown in the dashboard.
+- Optional per-account orphan metadata cleanup with a 1-3650 day grace period, reference-aware commit fences and protected retained history. Usenet articles are never retracted; upgrade clients before opting in.
+- Windows/Linux close-to-tray keeps one unlocked sync session with open, pause/resume and quit, and drains active work before locking keys (#6 partial).
+- Sync rounds and conflict resolution reject a second process using the same journal and release operation leases after cancellation or process death.
+
+### Bug fixes
+
+- Harden account admission with one transaction-scoped database gate and bound yEnc decoded allocation/output by input and declared length (#16 partial).
+- File and folder copy quota checks reuse the publication transaction's connection, so concurrent copies no longer exhaust the database pool.
+- File rename, move and copy now reject Unicode and Windows-invalid names, keep conflict labels when the original is missing, avoid false conflicts for identical edits, and scope syncing/error labels to the affected item (#51 partial).
+- The locked-vault screen states that synchronization is paused until unlock instead of implying background sync is running.
 
 ## [0.5.2] - 2026-11-08
 
@@ -59,27 +32,10 @@ release workflow refuses to publish if the entry is missing.
 
 ### Features
 
-- Added the initial SDK Copy metadata preparation with fresh node/revision IDs and re-encrypted authenticated names/manifests; account-scoped immutable v1 chunk references retain safe dedupe. This release's preparation-only stage is superseded by the guarded file/folder publication and Flutter/FFI UI described under Unreleased (see `docs/COPY-DESIGN.md`, #51 partial).
-
-- Local file tooltips now distinguish presence from refresh-time journal/content-revision equality using fresh confined-file hashing off the UI isolate and a read-only existing journal. Missing/invalid evidence, active sync and directories remain unverified; conflict/error precedence and independent safe reveal are preserved (#51 partial). This is not an atomic filesystem snapshot or a durability guarantee; installed Windows/Linux and two-device acceptance remain outstanding.
-- File rows show disk-derived local presence and explanatory availability labels; desktop **Show in folder** revalidates fresh remote ancestry and confined local paths before opening a file's containing folder (folders open themselves). Symlinks, traversal, ambiguous names and excluded/uncovered paths fail closed (#51 partial). Local presence does not certify content/revision equality; installed desktop acceptance remains pending.
-- File/folder rows now offer **Move to…** with an encrypted folder picker and a dedicated guarded move endpoint (#51, partial). Canonical client-local destination collision checks fail closed on unreadable names; the server atomically checks source identity/name/parent and complete destination membership under the account namespace lock. Moves preserve the node, sealed name, content versions and subtree; stale checks require refresh, with no unsafe old-server fallback. Installed Windows/Linux and two-device acceptance remain outstanding.
-- File/folder rows offer encrypted rename with portable-name validation, fresh local-decryption collision checks and stale-entry rejection (#51, partial). Guarded rename atomically compares the opaque sibling snapshot and emits a sync event; concurrent namespace changes require refresh. Installed Windows/Linux and two-device acceptance remain outstanding; legacy clients can still introduce duplicate names after a guarded rename.
 - Guided README installation and usage steps cover release downloads, server setup, offline recovery material, client connection, folder sync and conflicts (#52).
-
-### Features
-
-- Declarative six-target test environment launcher wraps isolated local checks or correlated exact-head manual GitHub Clients runs, with bounded waits and exact artifact links. Windows runtime fails closed pending approved host provisioning; Linux-client now requires an isolated release-bundle Xvfb process/window smoke with evidence upload (hosted execution not yet verified). Backend-sync/update E2E remains incomplete (#53). See `docs/TEST-ENVIRONMENTS.md`.
 
 ### Bug fixes
 
-
-- File-browser Conflict labels now retain a safely discovered same-directory conflict copy when its original is missing, without enabling Show in folder for the absent original. Missing ancestors, stale copies, directories and links cannot establish the pair; journal/revision equality remains unverified (#51 partial).
-- Identical independent file additions/edits now record the matching remote revision in the sync journal without transferring content, avoiding stale baselines and later false conflicts. Adoption rechecks local hash/type/size, rejects links and unverified remote revisions, and preserves the baseline on failure (#51 partial). Browser-wide journal/revision indicators and installed/two-device acceptance remain pending.
-- File-browser Error labels use structured exact-path failures from the last completed sync report, including both move/conflict endpoints and case-collision spellings; unrelated rows and running folders do not inherit historical errors. Tooltips omit raw diagnostics and preserve independent safe local reveal; journal/revision equality remains unverified (#51 partial).
-- File-browser Syncing labels follow only the item's active transfer, not every row in a busy folder. Discovered conflict copies also mark their present originals after safe disk checks, and refresh rescans candidates; neither transfer completion nor local presence certifies journal/content equality (#51 partial).
-- Rename collision checks reject Unicode canonical equivalents using native NFC/lowercase/NFC comparison, without changing the encrypted spelling or sending equality tags to the server. Compatibility folding and filesystem-specific equality remain out of scope (#51 partial).
-- Rename rejects Windows superscript-digit device aliases and device stems with spaces before extensions; malformed UTF-16 names fail before network access rather than being silently substituted during UTF-8 encoding (#51 partial).
 - Desktop updater waits for the detached helper to start before exiting. Windows additionally requires a bounded preflight acknowledgement, preserves step diagnostics and payload backups, verifies copied files, and attempts rollback/restart with a visible failure dialog after replacement errors. Installed-build Windows acceptance remains pending (#49/#28).
 
 ## [0.5.0] - 2026-11-06

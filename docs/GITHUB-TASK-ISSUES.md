@@ -159,7 +159,7 @@ Every agent comment on an issue or PR uses the same five fields, defined in
 
 **Done:** Rewrote the README as a step-by-step install and usage guide.
 **Left:** Nothing; waiting for review.
-**Working:** Links resolve, commands match v0.5.2, checksums verified.
+**Working:** Links resolve, commands match v0.6.0, checksums verified.
 **Not working:** A clean-machine walkthrough was not run.
 **Blockers & next:** None. Merge at the current head.
 ```
