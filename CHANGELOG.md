@@ -35,6 +35,10 @@ release workflow refuses to publish if the entry is missing.
 
 - Guided README installation and usage steps cover release downloads, server setup, offline recovery material, client connection, folder sync and conflicts (#52).
 
+### Features
+
+- Declarative six-target test environment launcher wraps isolated local checks or correlated exact-head manual GitHub Clients runs, with bounded waits and exact artifact links. Windows runtime fails closed pending approved host provisioning; Linux-client now requires an isolated release-bundle Xvfb process/window smoke with evidence upload (hosted execution not yet verified). Backend-sync/update E2E remains incomplete (#53). See `docs/TEST-ENVIRONMENTS.md`.
+
 ### Bug fixes
 
 - Desktop updater waits for the detached helper to start before exiting. Windows additionally requires a bounded preflight acknowledgement, preserves step diagnostics and payload backups, verifies copied files, and attempts rollback/restart with a visible failure dialog after replacement errors. Installed-build Windows acceptance remains pending (#49/#28).
