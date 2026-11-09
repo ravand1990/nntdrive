@@ -12,6 +12,9 @@ use std::path::Path;
 use std::sync::Arc;
 use uuid::Uuid;
 
+#[path = "e2e/copy_tree.rs"]
+mod copy_tree_tests;
+
 struct Stack {
     _db: TestDb,
     _nntp: MockNntpServer,

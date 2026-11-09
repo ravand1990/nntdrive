@@ -4,7 +4,6 @@ import 'native.dart';
 
 Future<Map<String, dynamic>> copyRemoteFile({required ApiClient api,
     required int handle, required RemoteFile file, required String? parentId}) async {
-  if (file.isDir) throw NativeException('Folder Copy is not supported.');
   return NativeBridge.instance.copyFileAsync(handle, {
     'baseUrl': api.baseUrl, 'token': api.token,
     'source': {'id': file.id, 'parent_id': file.parentId,
@@ -23,15 +22,16 @@ class CopyFileButton extends StatelessWidget {
   final VoidCallback onCopy;
   @override
   Widget build(BuildContext context) => IconButton(
-    tooltip: isDir ? 'Folder Copy is not supported' : 'Copy file',
+    tooltip: isDir ? 'Copy folder' : 'Copy file',
     icon: const Icon(Icons.copy_outlined),
-    onPressed: busy || isDir ? null : onCopy,
+    onPressed: busy ? null : onCopy,
   );
 }
 
 /// A single explicit attempt. No retry affordance after an ambiguous outcome.
 class CopyFileDialog extends StatefulWidget {
-  const CopyFileDialog({super.key, required this.runCopy});
+  const CopyFileDialog({super.key, required this.runCopy, this.isDir = false});
+  final bool isDir;
   final Future<Map<String, dynamic>> Function() runCopy;
   @override
   State<CopyFileDialog> createState() => _CopyFileDialogState();
@@ -57,10 +57,12 @@ class _CopyFileDialogState extends State<CopyFileDialog> {
   Widget build(BuildContext context) => PopScope(
     canPop: !_running,
     child: AlertDialog(
-      title: const Text('Copy file'),
+      title: Text(widget.isDir ? 'Copy folder' : 'Copy file'),
       content: Text(_running ? 'Copying encrypted metadata…' : !_attempted
-        ? 'Create a separate file with the same name. Existing names are never overwritten. Folder Copy is not supported.'
-        : _success ? 'Copy confirmed. Refresh the destination to see the new file.'
+        ? widget.isDir
+          ? 'Create a separate folder and its current subtree, all or nothing. Maximum 256 entries, 31 nested levels, 8 MiB encrypted metadata and 16384 chunk references. Existing names are never overwritten.'
+          : 'Create a separate file with the same name. Existing names are never overwritten.'
+        : _success ? 'Copy confirmed. Refresh the destination to see the new entry.'
         : 'Copy was not confirmed. Check for a name collision or changed entry. Refresh the destination before starting another copy: a lost response may already have committed. Do not blindly retry.'),
       actions: [
         if (!_attempted) FilledButton(onPressed: _copy, child: const Text('Copy')),

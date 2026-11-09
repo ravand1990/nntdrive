@@ -5,10 +5,13 @@
 - Add bounded encrypted file Copy through the Rust SDK and dedicated guarded
   publication endpoint: fresh metadata identities, canonical collision preflight,
   atomic source/destination snapshots and GC-safe tenant references (#51 partial).
-  Flutter/FFI now exposes **Copy file** with an encrypted destination picker,
+  Flutter/FFI now exposes **Copy file / Copy folder** with an encrypted destination picker,
   explicit confirmation and a single worker-isolate attempt. Ambiguous failures
-  require refreshing the destination, not blind retry. Folder Copy, copy-time
-  renaming and durable retry receipts remain unsupported.
+  require refreshing the destination, not blind retry. Recursive folder Copy
+  remaps fresh authenticated node/revision metadata and publishes all or nothing
+  under exact subtree/destination guards and the GC lock. Nested/empty folders
+  are supported, bounded to 256 entries, depth 31 and bounded metadata/references.
+  Copy-time renaming and durable retry receipts remain unsupported.
 
 - Apply admin provider CRUD to the serving backend without restart, pinning one
   provider snapshot per storage operation. Reject invalid configs/credentials

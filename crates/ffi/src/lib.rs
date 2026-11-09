@@ -589,7 +589,7 @@ pub unsafe extern "C" fn nntdrive_backfill_references(
     })
 }
 
-/// Copies one current file using the guarded SDK protocol. No retries or fallback.
+/// Copies a current file or bounded folder subtree using guarded SDK protocols.
 ///
 /// # Safety
 /// `request` is NUL-terminated UTF-8 JSON. Free the owned result exactly once.
@@ -611,14 +611,19 @@ pub unsafe extern "C" fn nntdrive_copy_file(handle: u64, request: *const c_char)
             return Err("invalid copy request".into());
         }
         let config: Request = serde_json::from_str(&request).map_err(|_| "invalid copy request")?;
-        if config.source.is_dir {
-            return Err("Folder Copy is not supported.".into());
-        }
         let mut api = ApiClient::new(config.base_url).map_err(|_| "invalid backend URL")?;
         api.set_token(config.token);
-        let (id, revision_id) = runtime()
-            .block_on(api.copy_file_checked(&master, &config.source, config.parent_id))
-            .map_err(|_| "Copy was not confirmed. The name may collide or the source or destination changed. Refresh the destination before starting another copy; a lost response may already have committed.")?;
+        let result = if config.source.is_dir {
+            runtime()
+                .block_on(api.copy_folder_checked(&master, &config.source, config.parent_id))
+                .map(|id| (id, None))
+        } else {
+            runtime()
+                .block_on(api.copy_file_checked(&master, &config.source, config.parent_id))
+                .map(|(id, revision)| (id, Some(revision)))
+        };
+        let (id, revision_id) = result
+            .map_err(|_| "Copy was not confirmed. The name may collide or the source or destination changed, or the folder exceeds the supported bounds. Refresh the destination before starting another copy; a lost response may already have committed.")?;
         Ok(json!({"id": id, "revision_id": revision_id}))
     })
 }
@@ -682,10 +687,10 @@ mod tests {
             "source": {"id": Uuid::new_v4(), "parent_id": null, "name_enc": "opaque",
                 "is_dir": true, "size": 0, "favorite": false, "revision": 1, "current_version": null},
             "parent_id": null});
-        assert_eq!(
-            invoke(handle, &request.to_string())["error"],
-            "Folder Copy is not supported."
-        );
+        assert!(invoke(handle, &request.to_string())["error"]
+            .as_str()
+            .unwrap()
+            .contains("Refresh"));
         nntdrive_lock(handle);
     }
 

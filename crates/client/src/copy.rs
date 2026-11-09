@@ -61,7 +61,7 @@ pub fn prepare_file_copy(
     })
 }
 
-fn portable_component(name: &str) -> bool {
+pub(super) fn portable_component(name: &str) -> bool {
     if name.is_empty()
         || name == "."
         || name == ".."

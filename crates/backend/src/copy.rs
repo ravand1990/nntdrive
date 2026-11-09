@@ -30,7 +30,7 @@ pub struct CopyFile {
     pub size: i64,
     pub chunk_ids: Vec<Uuid>,
 }
-fn decode(value: &str, max: usize) -> ApiResult<Vec<u8>> {
+pub(super) fn decode(value: &str, max: usize) -> ApiResult<Vec<u8>> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(value)
         .map_err(|_| ApiError::BadRequest("invalid ciphertext".into()))?;

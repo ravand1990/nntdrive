@@ -127,8 +127,6 @@ void main() {
       await expectLater(copy(file: RemoteFile(sibling, null, source.nameEnc, false, 0, false, 1, revision)),
         throwsA(isA<NativeException>()));
       expect(reads, noHttp);
-      await expectLater(copy(file: RemoteFile(id, null, source.nameEnc, true, 0, false, 1, revision)),
-        throwsA(isA<NativeException>()));
       bridge.lock(handle);
       final lockedReads = reads;
       await expectLater(copy(), throwsA(isA<NativeException>()));

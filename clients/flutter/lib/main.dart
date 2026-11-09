@@ -894,7 +894,7 @@ class _FilesPageState extends State<FilesPage> {
   bool _renaming = false;
 
   Future<void> _copy(RemoteFile file) async {
-    if (_renaming || file.isDir) return;
+    if (_renaming) return;
     setState(() => _renaming = true);
     try {
       final destination = await showDialog<MoveDestination>(context: context,
@@ -902,7 +902,7 @@ class _FilesPageState extends State<FilesPage> {
       if (destination == null || !mounted) return;
       final attempted = await showDialog<bool>(context: context,
         barrierDismissible: false,
-        builder: (_) => CopyFileDialog(runCopy: () => copyRemoteFile(api: _api,
+        builder: (_) => CopyFileDialog(isDir: file.isDir, runCopy: () => copyRemoteFile(api: _api,
           handle: widget.session.handle, file: file, parentId: destination.parentId)));
       if (attempted == true && mounted) await _refresh();
     } catch (_) {

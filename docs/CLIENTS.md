@@ -341,8 +341,8 @@ rules: for example `ß`/`ss`, `ς`/`σ` and `①`/`1` remain distinct. The compa
 value stays local and never becomes a server-visible equality tag. This requires
 the matching bundled native library; a missing comparison symbol fails closed,
 with no lowercase-only fallback. Sync scanner collision policy is unchanged.
-Folder Copy and installed Windows/Linux plus two-device UI acceptance remain
-outstanding; existing sync tests are not a substitute.
+Installed Windows/Linux plus two-device UI acceptance remain outstanding;
+existing sync tests are not a substitute.
 
 ### Move in the file browser (#51 partial)
 
@@ -369,11 +369,15 @@ propagation acceptance remain unperformed.
 
 ### Copy in the file browser (#51 partial)
 
-Use **Copy file**, choose another destination folder (Root is a valid choice),
+Use **Copy file / Copy folder**, choose another destination folder (Root is a valid choice),
 then explicitly confirm **Copy**. The same name is retained; the current folder
 is disabled. Collisions never overwrite an entry: cancel, rename the source or
-choose a different folder. **Folder Copy is not supported** is disabled for
-folders; recursive atomic tree publication remains unfinished.
+choose a different folder. Folder Copy publishes the entire current subtree
+atomically, including nested and empty folders. It excludes deleted entries and
+old versions, leaves source history intact, and rejects destinations within the
+source. It is bounded to 256 entries including the root, depth 31, 8 MiB candidate
+metadata and 16384 references, with additional per-node/body/destination limits.
+An oversized or unreadable tree fails without publishing a subset.
 
 The matching `nntdrive_copy_file` native export runs the guarded SDK operation in
 a top-level worker-isolate helper with one owned result, freed exactly once.

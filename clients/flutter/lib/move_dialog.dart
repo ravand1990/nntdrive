@@ -54,7 +54,7 @@ class _MoveDialogState extends State<MoveDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: Text(widget.copy ? 'Copy file to…' : 'Move to…'),
+    title: Text(widget.copy ? (widget.source.isDir ? 'Copy folder to…' : 'Copy file to…') : 'Move to…'),
     content: SizedBox(width: 420, height: 320, child: Column(children: [
       Row(children: [
         IconButton(tooltip: 'Up', onPressed: _loading || _path.isEmpty ? null : () { _path.removeLast(); _load(); }, icon: const Icon(Icons.arrow_upward)),

@@ -4,13 +4,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nntdrive/file_copy.dart';
 
 void main() {
-  testWidgets('row Copy disables folders and busy files with explanatory tooltip', (tester) async {
+  testWidgets('row Copy enables folders and disables busy entries', (tester) async {
     var calls = 0;
     Future<void> show(bool isDir, bool busy) => tester.pumpWidget(MaterialApp(
       home: Scaffold(body: CopyFileButton(isDir: isDir, busy: busy, onCopy: () => calls++))));
     await show(true, false);
-    expect(find.byTooltip('Folder Copy is not supported'), findsOneWidget);
-    expect(tester.widget<IconButton>(find.byType(IconButton)).onPressed, isNull);
+    expect(find.byTooltip('Copy folder'), findsOneWidget);
+    await tester.tap(find.byTooltip('Copy folder'));
+    expect(calls, 1);
+    calls = 0;
     await show(false, true);
     expect(tester.widget<IconButton>(find.byType(IconButton)).onPressed, isNull);
     await show(false, false);
@@ -26,7 +28,7 @@ void main() {
       return operation.future;
     })));
     expect(calls, 0);
-    expect(find.textContaining('Folder Copy is not supported'), findsOneWidget);
+    expect(find.textContaining('Existing names are never overwritten'), findsOneWidget);
     await tester.tap(find.text('Copy'));
     await tester.pump();
     expect(calls, 1);
@@ -37,6 +39,22 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('Copy confirmed.'), findsOneWidget);
     expect(find.text('Refresh'), findsOneWidget);
+    expect(calls, 1);
+  });
+
+  testWidgets('folder Copy explains atomic bounds before explicit confirmation', (tester) async {
+    var calls = 0;
+    await tester.pumpWidget(MaterialApp(home: CopyFileDialog(isDir: true, runCopy: () async {
+      calls++;
+      return {'id': 'new-folder', 'revision_id': null};
+    })));
+    expect(find.text('Copy folder'), findsOneWidget);
+    expect(find.textContaining('all or nothing'), findsOneWidget);
+    expect(find.textContaining('Maximum 256 entries'), findsOneWidget);
+    expect(calls, 0);
+    await tester.tap(find.text('Copy'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Copy confirmed'), findsOneWidget);
     expect(calls, 1);
   });
 

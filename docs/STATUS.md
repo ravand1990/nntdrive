@@ -1,18 +1,18 @@
 # Project status
 
-A bounded encrypted file Copy SDK + guarded backend publication protocol is
-implemented (#51), with atomic namespace/source guards and GC-safe complete
-references. Flutter/FFI/UI now supports an explicit single-file Copy attempt with
-an encrypted destination picker and secret-free ambiguity/refresh guidance.
-Recursive folder Copy, copy-time renaming and durable retry receipts remain
-unimplemented; folders expose a disabled unsupported action. Installed-client
-and two-device UI acceptance remain unverified.
+A bounded encrypted file/folder Copy SDK + guarded backend publication protocol
+is implemented (#51), with atomic namespace/source-subtree guards and GC-safe
+complete references. Flutter/FFI/UI supports explicit file and recursive folder
+Copy with an encrypted destination picker and secret-free ambiguity/refresh
+guidance. Folder trees publish all or nothing (256 nodes, depth 31, bounded
+metadata/references). Copy-time renaming and durable retry receipts remain
+unimplemented. Installed-client and two-device UI acceptance remain unverified.
 See [Copy design](COPY-DESIGN.md) for bounds, retry policy and v1 key/dedupe limits.
-The Copy FFI/UI slice passed canonical `bash scripts/dev-check.sh all`: 120 Rust
+The recursive Copy slice passed canonical `bash scripts/dev-check.sh all`: 123 Rust
 passes (real PostgreSQL, no skips), release FFI build, clean Flutter analysis and
-59 Flutter passes / 3 Windows-only skips. Removing the SDK source-name collision
-check failed the new real-native HTTP regression; it was restored before the
-final complete run. These are isolated Linux-container results, not installed
+61 Flutter passes / 3 Windows-only skips. Weakening exact subtree equality to
+subset matching failed the added-descendant HTTP regression (201 instead of 409);
+it was restored before the complete run. These are isolated Linux-container results, not installed
 client or two-device UI acceptance.
 
 Last updated: 2026-11-06. This file is the handoff record for the next agent.
