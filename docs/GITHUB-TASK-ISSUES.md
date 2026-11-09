@@ -151,15 +151,17 @@ blockers. Link dependency issues, not a duplicate task list.
 
 ## Agent comment format
 
-Every agent comment on an issue or PR uses the same four fields, defined in
+Every agent comment on an issue or PR uses the same five fields, defined in
 `AGENTS.md` §7. Copy this skeleton:
 
 ```text
 ## #42 · Ready for review · hermes-nntdrive-scheduled
-- **What:** README slimmed and walkthroughs moved to existing guides.
-- **Where:** `task/issue-42-slim-readme` · PR #48 · `07be8f4`
-- **Checks:** CI #42220508647 pass · Clients #42220508161 pass
-- **Next:** merge at the expected head, then reconcile.
+
+**Done:** Rewrote the README as a step-by-step install and usage guide.
+**Left:** Nothing; waiting for review.
+**Working:** Links resolve, commands match v0.5.2, checksums verified.
+**Not working:** A clean-machine walkthrough was not run.
+**Blockers & next:** None. Merge at the current head.
 ```
 
 States are fixed: `Claimed`, `In progress`, `Blocked`, `Ready for review`,
@@ -168,16 +170,20 @@ States are fixed: `Claimed`, `In progress`, `Blocked`, `Ready for review`,
 Blocked example:
 
 ```text
-## #49 · Blocked · hermes-nntdrive-scheduled
-- **What:** Windows self-update still exits without installing; needs the real Windows runner.
-- **Where:** `task/issue-49-windows-update` · — · `abc1234`
-- **Checks:** CI #42212639911 pass · Windows runtime not run: no runner
-- **Next:** coordinator provides the runner, then run `test-env.sh windows-runtime`.
+## #49 · Ready for review · hermes-nntdrive-cron
+
+**Done:** Updater now waits for the helper to start and shows an error if replacement fails.
+**Left:** Installed-app test on a real Windows machine.
+**Working:** Unit tests and the Windows replacement fixture pass; CI is green.
+**Not working:** Not proven on an installed build; the original report was not reproduced.
+**Blockers & next:** Needs an approved Windows host (#28). Until then treat the fix as unverified.
 ```
 
-Rules: no extra sections, no pasted logs, no narrative, no emoji; under ~10
-lines; `—` for an absent value; past tense for done, present for blocked. Link
-anything longer.
+Rules: five labels in fixed order, no extra sections or emoji, under ~10 lines,
+plain language, and never present untested behaviour as working. A short
+`**Tech:**` line at the end may carry a PR link, commit, CI run or exact error
+when needed. Past tense for done, present for the rest. Historical comments are
+not retrofitted.
 
 ## User-authorized automatic merge gate (NNTDrive only)
 

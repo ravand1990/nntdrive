@@ -274,32 +274,34 @@ reviews or GitHub protections to make an issue pass.
 
 ## 7. Blocking, handoff and discovered work
 
-Every agent issue comment uses **one fixed format**, so a human can scan it:
+Every agent issue comment uses **one fixed format**, written so a human can
+tell the state in one pass:
 
 ```text
 ## #<issue> · <state> · <worker_id>
-- **What:** one or two sentences: what changed, or what is blocking.
-- **Where:** `branch` · PR #<number> · `<commit>`
-- **Checks:** what ran and the result, with a run link; or `none: <reason>`
-- **Next:** one sentence; `none.` when finished.
+
+**Done:** what actually changed, in plain words.
+**Left:** what remains, or "Nothing."
+**Working:** what was verified and works, with a short evidence hint.
+**Not working:** known failures, gaps, or untested parts.
+**Blockers & next:** who or what blocks, and the single next action, or "None."
 ```
 
 - `<state>` is exactly one of `Claimed`, `In progress`, `Blocked`,
   `Ready for review`, `Done`. A run with no work uses
   `## No eligible work · <worker_id>` instead.
-- Use `—` for an absent branch, PR or commit; never omit a field.
-- Keep the whole comment under ~10 lines. Do not paste logs, stack traces, file
-  lists, repeated context or a narrative of what you read; link to it.
-- No extra headings, sections, bullet types or emoji. Same four labels, same
-  order, every time.
-- Past tense for completed work, present tense for a blocker.
-- Be exact where it matters: the real blocker, the real check result, the real
-  next action. Brevity never excuses a vague handoff.
+- Same five labels in the same order, every time. No extra sections, bullet
+  types or emoji.
+- Keep the whole comment under ~10 lines. Plain language: say "the app closes
+  without updating", not "detached helper handoff race".
+- Never present untested behaviour as working. Write "not tested on Windows",
+  not "works on Windows".
+- An optional `**Tech:**` line may end the comment with a PR link, commit, CI
+  run or exact error, only when a reader needs it.
+- Past tense for `Done`, present tense for the rest.
+- Be exact where it matters: the real blocker, the real gap, the real next
+  action. Brevity never excuses a vague handoff.
 - Historical comments are not retrofitted.
-
-This format carries the full handoff: worker, issue, branch, PR, commit, checks,
-remaining work, blocker and next action. If a fact does not fit, link to where it
-is recorded.
 
 Use `Blocked` only for real unmet prerequisites, inaccessible required checks,
 missing authorized environments or outstanding human decisions. An unavailable

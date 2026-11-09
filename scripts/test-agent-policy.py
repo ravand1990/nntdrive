@@ -48,14 +48,15 @@ class AgentPolicyTests(unittest.TestCase):
         text = self.read("AGENTS.md")
         for required in (
             "## #<issue> · <state> · <worker_id>",
-            "**What:**", "**Where:**", "**Checks:**", "**Next:**",
+            "**Done:**", "**Left:**", "**Working:**", "**Not working:**",
+            "**Blockers & next:**", "**Tech:**",
             "No eligible work", "Claimed", "Ready for review",
         ):
             with self.subTest(required=required):
                 self.assertIn(required, text)
         other = self.read("docs/GITHUB-TASK-ISSUES.md")
         self.assertIn("## Agent comment format", other)
-        self.assertIn("**Next:**", other)
+        self.assertIn("**Blockers & next:**", other)
 
     def test_worker_retries_and_continues(self):
         text = self.read("AGENTS.md").lower()
