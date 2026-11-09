@@ -20,6 +20,29 @@ pub enum StoreError {
 
 pub type Result<T> = std::result::Result<T, StoreError>;
 
+/// Serialize account admission across API/CLI instances, including an empty table.
+/// Returns None when only bootstrap is allowed and an account already exists.
+/// The caller must insert and commit using this same transaction. Keep expensive
+/// key derivation outside it. Use the default READ COMMITTED isolation so the
+/// count observes the previous lock holder's commit after acquiring the lock.
+/// Explicit administrator grants are for trusted operator commands only.
+pub async fn account_creation_is_admin(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    allow_existing: bool,
+    explicit_admin: bool,
+) -> std::result::Result<Option<bool>, sqlx::Error> {
+    sqlx::query("LOCK TABLE accounts IN SHARE ROW EXCLUSIVE MODE")
+        .execute(&mut **tx)
+        .await?;
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM accounts")
+        .fetch_one(&mut **tx)
+        .await?;
+    if count > 0 && !allow_existing {
+        return Ok(None);
+    }
+    Ok(Some(explicit_admin || count == 0))
+}
+
 #[derive(Debug, Clone)]
 pub struct ChunkRow {
     pub id: Uuid,
@@ -455,16 +478,54 @@ impl Store {
         device_id: Option<Uuid>,
         parent_revision: Option<Uuid>,
     ) -> Result<()> {
+        let chunk_ids: Vec<Uuid> = manifest.chunks.iter().map(|c| c.id).collect();
+        self.insert_version_with_references(
+            account_id,
+            file_id,
+            manifest,
+            sealed_manifest,
+            device_id,
+            parent_revision,
+            Some(&chunk_ids),
+        )
+        .await
+    }
+
+    /// `None` is a legacy opaque manifest, NOT an empty reference set.
+    /// The caller must derive `Some` from the complete decrypted manifest.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn insert_version_with_references(
+        &self,
+        account_id: Uuid,
+        file_id: Uuid,
+        manifest: &FileManifest,
+        sealed_manifest: &[u8],
+        device_id: Option<Uuid>,
+        parent_revision: Option<Uuid>,
+        chunk_ids: Option<&[Uuid]>,
+    ) -> Result<()> {
         let mut tx = self.pool.begin().await?;
         sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
             .bind(account_id.to_string())
             .execute(&mut *tx)
             .await?;
-        sqlx::query(
-            "INSERT INTO file_versions (id, account_id, file_id, revision_id, parent_revision, device_id, size, manifest, created_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+        let required: bool =
+            sqlx::query_scalar("SELECT reference_commits_required FROM accounts WHERE id = $1")
+                .bind(account_id)
+                .fetch_one(&mut *tx)
+                .await?;
+        if required && chunk_ids.is_none() {
+            return Err(StoreError::Invalid(
+                "complete chunk references required; upgrade client".into(),
+            ));
+        }
+        let version_id = Uuid::new_v4();
+        let inserted = sqlx::query(
+            "INSERT INTO file_versions (id, account_id, file_id, revision_id, parent_revision, device_id, size, manifest, created_at, references_complete)
+             SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+             FROM files WHERE account_id = $2 AND id = $3",
         )
-        .bind(Uuid::new_v4())
+        .bind(version_id)
         .bind(account_id)
         .bind(file_id)
         .bind(manifest.revision_id)
@@ -473,8 +534,16 @@ impl Store {
         .bind(manifest.size as i64)
         .bind(sealed_manifest)
         .bind(manifest.created_at)
+        .bind(chunk_ids.is_some())
         .execute(&mut *tx)
-        .await?;
+        .await?
+        .rows_affected();
+        if inserted != 1 {
+            return Err(StoreError::NotFound);
+        }
+        if let Some(ids) = chunk_ids {
+            Self::write_references(&mut tx, account_id, version_id, ids).await?;
+        }
         sqlx::query(
             "UPDATE files SET current_version = $3, size = $4, revision = revision + 1, updated_at = now()
              WHERE account_id = $1 AND id = $2",
@@ -505,6 +574,128 @@ impl Store {
         .await?;
         tx.commit().await?;
         Ok(())
+    }
+
+    /// Insert validated tenant references in a caller-owned GC-locked transaction.
+    pub async fn write_references(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        account_id: Uuid,
+        version_id: Uuid,
+        chunk_ids: &[Uuid],
+    ) -> Result<()> {
+        let size: i64 =
+            sqlx::query_scalar("SELECT size FROM file_versions WHERE account_id = $1 AND id = $2")
+                .bind(account_id)
+                .bind(version_id)
+                .fetch_one(&mut **tx)
+                .await?;
+        if (size == 0) != chunk_ids.is_empty() {
+            return Err(StoreError::Invalid(
+                "chunk references do not match empty/nonempty version".into(),
+            ));
+        }
+        // FK NO ACTION is a second line of defence against concurrent deletion.
+        // Composite FKs forbid cross-account references even for direct callers.
+        let mut ids = chunk_ids.to_vec();
+        ids.sort_unstable();
+        ids.dedup();
+        let found: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM chunks WHERE account_id = $1 AND id = ANY($2)",
+        )
+        .bind(account_id)
+        .bind(&ids)
+        .fetch_one(&mut **tx)
+        .await?;
+        if found != ids.len() as i64 {
+            return Err(StoreError::Invalid(
+                "missing account chunk reference".into(),
+            ));
+        }
+        sqlx::query("INSERT INTO version_chunks(account_id, version_id, chunk_id) SELECT $1, $2, unnest($3::uuid[])")
+            .bind(account_id).bind(version_id).bind(ids).execute(&mut **tx).await?;
+        Ok(())
+    }
+
+    /// One-time authenticated-client backfill. Never replace a complete set:
+    /// historical, conflict and tombstoned versions all remain protected.
+    pub async fn backfill_references(
+        &self,
+        account_id: Uuid,
+        file_id: Uuid,
+        revision_id: Uuid,
+        chunk_ids: &[Uuid],
+    ) -> Result<()> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+            .bind(account_id.to_string())
+            .execute(&mut *tx)
+            .await?;
+        let row = sqlx::query("SELECT id, references_complete FROM file_versions WHERE account_id = $1 AND file_id = $2 AND revision_id = $3")
+            .bind(account_id).bind(file_id).bind(revision_id).fetch_optional(&mut *tx).await?.ok_or(StoreError::NotFound)?;
+        let id: Uuid = row.get("id");
+        if row.get::<bool, _>("references_complete") {
+            let existing: Vec<Uuid> = sqlx::query_scalar("SELECT chunk_id FROM version_chunks WHERE account_id = $1 AND version_id = $2 ORDER BY chunk_id")
+                .bind(account_id).bind(id).fetch_all(&mut *tx).await?;
+            let mut supplied = chunk_ids.to_vec();
+            supplied.sort_unstable();
+            supplied.dedup();
+            if existing != supplied {
+                return Err(StoreError::Invalid("references already complete".into()));
+            }
+        } else {
+            Self::write_references(&mut tx, account_id, id, chunk_ids).await?;
+            sqlx::query("UPDATE file_versions SET references_complete = TRUE WHERE account_id = $1 AND id = $2")
+                .bind(account_id).bind(id).execute(&mut *tx).await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Explicit per-account opt-in, metadata only; never contacts NNTP.
+    /// Serializes with commits/backfills across backend processes. After first
+    /// successful collection legacy opaque commits are permanently refused.
+    /// A reuse/upload racing collection either commits first and is protected,
+    /// or fails reference validation without publishing an invalid version.
+    pub async fn collect_orphan_chunks(
+        &self,
+        account_id: Uuid,
+        grace_days: u32,
+        limit: i64,
+    ) -> Result<u64> {
+        if !(1..=3650).contains(&grace_days) || !(1..=1000).contains(&limit) {
+            return Err(StoreError::Invalid(
+                "invalid GC grace or batch limit".into(),
+            ));
+        }
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+            .bind(account_id.to_string())
+            .execute(&mut *tx)
+            .await?;
+        let incomplete: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM file_versions WHERE account_id = $1 AND NOT references_complete)")
+            .bind(account_id).fetch_one(&mut *tx).await?;
+        if incomplete {
+            return Err(StoreError::Invalid(
+                "GC blocked: incomplete version references".into(),
+            ));
+        }
+        let updated =
+            sqlx::query("UPDATE accounts SET reference_commits_required = TRUE WHERE id = $1")
+                .bind(account_id)
+                .execute(&mut *tx)
+                .await?
+                .rows_affected();
+        if updated != 1 {
+            return Err(StoreError::NotFound);
+        }
+        let deleted = sqlx::query("DELETE FROM chunks WHERE account_id = $1 AND id IN (
+            SELECT c.id FROM chunks c WHERE c.account_id = $1
+            AND c.created_at < transaction_timestamp() - make_interval(days => $2)
+            AND NOT EXISTS(SELECT 1 FROM version_chunks r WHERE r.account_id = $1 AND r.chunk_id = c.id)
+            ORDER BY c.created_at, c.id LIMIT $3)")
+            .bind(account_id).bind(grace_days as i32).bind(limit).execute(&mut *tx).await?.rows_affected();
+        tx.commit().await?;
+        Ok(deleted)
     }
 
     /// Latest committed version, or a specific revision.

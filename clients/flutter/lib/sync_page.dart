@@ -36,21 +36,70 @@ class _SyncPageState extends State<SyncPage> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _addFolder() async {
+  Future<bool> _confirmStorageAccess() async {
+    return await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Allow shared-storage sync?'),
+            content: const Text(
+                'This sync engine needs Android All files access to read and write '
+                'ordinary shared-storage folders. This permission covers shared '
+                'storage, not only the selected folder. NNTDrive only syncs the '
+                'folders you configure. You can instead use an app-private folder '
+                'without this permission. Protected folders and cloud document '
+                'providers are not supported. Enable access on the next screen, '
+                'then return here. Older Android versions show a permission prompt.'),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Cancel')),
+              FilledButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('Continue')),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
+  Future<void> _grantAccess(SyncFolderConfig folder) async {
+    if (!await _confirmStorageAccess() || !mounted) return;
+    try {
+      final ok = await c.grantStorageAccess(folder);
+      _toast(ok
+          ? 'Folder synchronized.'
+          : 'Access or sync was not confirmed. Check the folder error and retry.');
+    } catch (_) {
+      _toast(
+          'Could not open storage access. Check Android app settings and retry.');
+    }
+  }
+
+  Future<void> _addFolder({bool appPrivate = false}) async {
     setState(() => _adding = true);
     try {
-      final path =
-          await getDirectoryPath(confirmButtonText: 'Sync this folder');
+      final path = appPrivate
+          ? await c.storageAccess.privateFolder()
+          : await getDirectoryPath(confirmButtonText: 'Sync this folder');
       if (path == null) return;
+      if (await c.storageAccess.permissionRequired(path)) {
+        if (!mounted || !await _confirmStorageAccess()) return;
+        if (!await c.storageAccess.request()) {
+          _toast(
+              'Storage access was not granted. Try again or use app-private storage.');
+          return;
+        }
+      }
       final ok = await c.addFolder(path);
       if (!mounted) return;
       if (!ok) {
         _toast(c.lastStatus ?? 'Could not add the folder.');
       } else {
-        _toast('Folder added and synchronized.');
+        _toast(c.lastStatus ?? 'Folder added. Check its sync status below.');
       }
-    } catch (e) {
-      _toast('Folder picker failed: $e');
+    } catch (_) {
+      _toast(
+          'Could not open this folder. Use an on-device folder or app-private storage.');
     } finally {
       if (mounted) setState(() => _adding = false);
     }
@@ -370,6 +419,13 @@ class _SyncPageState extends State<SyncPage> {
                         : const Icon(Icons.create_new_folder_outlined),
                     label: const Text('Select base folder'),
                   ),
+                  if (c.storageAccess.isAndroid)
+                    TextButton(
+                      onPressed:
+                          _adding ? null : () => _addFolder(appPrivate: true),
+                      child:
+                          const Text('Use app-private folder (no permission)'),
+                    ),
                 ],
               ),
             )
@@ -468,6 +524,12 @@ class _SyncPageState extends State<SyncPage> {
               SyncTransferProgress(event: folder.progress!),
             if (folder.running && folder.progress == null)
               const LinearProgressIndicator(),
+            if (folder.storageAccessRequired)
+              TextButton.icon(
+                onPressed: folder.running ? null : () => _grantAccess(folder),
+                icon: const Icon(Icons.folder_open),
+                label: const Text('Grant storage access and retry'),
+              ),
             if (folder.hasErrors) ...[
               const SizedBox(height: 6),
               Text(

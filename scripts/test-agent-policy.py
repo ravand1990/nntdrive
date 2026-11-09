@@ -27,11 +27,36 @@ class AgentPolicyTests(unittest.TestCase):
         text = self.read("AGENTS.md").lower()
         self.assertRegex(text, r"not\s+atomic locks")
         self.assertIn("separate", text)
-        self.assertIn("all applicable", text)
         self.assertIn("attempt the allowed merge", text)
+        self.assertIn("nice to have", text)
+        self.assertIn("must not block a feature", text)
+        self.assertIn("focused tests", text)
         self.assertIn("blocked-loop", text)
         self.assertNotIn("and the user approves", text)
         self.assertNotIn("use the **same github pat**", text)
+
+    def test_end_of_run_backlog_promotion(self):
+        text = self.read("AGENTS.md").lower()
+        self.assertIn("end-of-run backlog review", text)
+        self.assertIn("promote to `ready`", text)
+        self.assertIn("created in the current", text)
+        other = self.read("docs/GITHUB-TASK-ISSUES.md").lower()
+        self.assertIn("end of a run", other)
+        self.assertIn("promote", other)
+
+    def test_agent_comment_format(self):
+        text = self.read("AGENTS.md")
+        for required in (
+            "## #<issue> · <state> · <worker_id>",
+            "**Done:**", "**Left:**", "**Working:**", "**Not working:**",
+            "**Blockers & next:**", "**Tech:**",
+            "No eligible work", "Claimed", "Ready for review",
+        ):
+            with self.subTest(required=required):
+                self.assertIn(required, text)
+        other = self.read("docs/GITHUB-TASK-ISSUES.md")
+        self.assertIn("## Agent comment format", other)
+        self.assertIn("**Blockers & next:**", other)
 
     def test_worker_retries_and_continues(self):
         text = self.read("AGENTS.md").lower()

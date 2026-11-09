@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -10,7 +11,19 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import 'api.dart';
+import 'desktop_host.dart';
+import 'desktop_instance.dart';
+import 'desktop_lifecycle.dart';
+import 'session_operations.dart';
+import 'local_availability.dart';
+import 'local_availability_widgets.dart';
+import 'file_rename.dart';
+import 'file_move.dart';
+import 'file_copy.dart';
+import 'move_dialog.dart';
+import 'rename_dialog.dart';
 import 'native.dart';
+import 'reference_backfill.dart';
 import 'sync_controller.dart';
 import 'sync_page.dart';
 import 'updater.dart';
@@ -21,8 +34,26 @@ const _uuid = Uuid();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  DesktopInstance? instance;
+  if (Platform.isWindows || Platform.isLinux) {
+    try {
+      instance = await DesktopInstance.acquire(await getApplicationSupportDirectory());
+    } catch (_) {
+      // Do not read settings, unlock, or open journals without ownership.
+      runApp(MaterialApp(home: Scaffold(body: Center(child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('NNTDrive is already running, or session ownership is unavailable.\n'
+              'Open the existing window or tray icon. No new sync session was started.',
+              textAlign: TextAlign.center),
+          TextButton(onPressed: () => exit(1), child: const Text('Close')),
+        ],
+      )))));
+      return;
+    }
+  }
   final prefs = await SharedPreferences.getInstance();
-  runApp(NntDriveApp(prefs: prefs));
+  runApp(NntDriveApp(prefs: prefs, instance: instance));
 }
 
 class Session {
@@ -41,8 +72,9 @@ class Session {
 }
 
 class NntDriveApp extends StatefulWidget {
-  const NntDriveApp({super.key, required this.prefs});
+  const NntDriveApp({super.key, required this.prefs, this.instance});
   final SharedPreferences prefs;
+  final DesktopInstance? instance;
 
   @override
   State<NntDriveApp> createState() => _NntDriveAppState();
@@ -56,6 +88,15 @@ class _NntDriveAppState extends State<NntDriveApp> {
   String? _accountId;
   String? _email;
   Session? _session;
+  SyncController? _sync;
+  DesktopLifecycle? _desktop;
+  String? _desktopError;
+  String? _trayState;
+  String? _shutdownError;
+  bool _ending = false;
+  Future<void>? _endFuture;
+  Future<void>? _authFuture;
+  final _fileOperations = SessionOperations();
   final _navigatorKey = GlobalKey<NavigatorState>();
   late final UpdateChecks _updates = UpdateChecks(
     check: () async => Updater(await Updater.loadConfig()).check(),
@@ -70,6 +111,9 @@ class _NntDriveAppState extends State<NntDriveApp> {
   @override
   void dispose() {
     _updates.dispose();
+    _desktop?.dispose();
+    _sync?.removeListener(_updateTray);
+    _sync?.dispose();
     super.dispose();
   }
 
@@ -84,12 +128,51 @@ class _NntDriveAppState extends State<NntDriveApp> {
     _email = widget.prefs.getString('email');
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && Updater.supported) _updates.start();
+      if (widget.instance != null) unawaited(_startDesktop());
     });
   }
 
   void _setTheme(ThemeMode mode) {
     setState(() => _themeMode = mode);
     widget.prefs.setInt('theme', mode.index);
+  }
+
+  Future<void> _startDesktop() async {
+    _desktop = DesktopLifecycle(
+      host: PluginDesktopHost(),
+      drain: () => _endSession(signOut: false),
+      quit: () async {
+        await widget.instance!.release();
+        exit(0);
+      },
+      togglePause: () async {
+        final sync = _sync;
+        if (!_ending && sync != null) await sync.setPaused(!sync.paused);
+      },
+      onError: (message) {
+        if (mounted) setState(() => _desktopError = message);
+      },
+    );
+    await _desktop!.start();
+    _updateTray();
+    if (mounted) setState(() {});
+  }
+
+  void _updateTray() {
+    if (_desktop?.ready != true) return;
+    final sync = _sync;
+    final status = _ending ? 'Finishing active operations…'
+        : sync == null ? 'Sync paused: vault locked'
+        : sync.paused ? 'Sync paused by user'
+        : sync.syncing || sync.folders.any((f) => f.running) ? 'Sync running'
+        : sync.folders.any((f) => f.hasErrors) ? 'Sync needs attention — open NNTDrive'
+        : sync.conflictCount > 0 ? 'Sync conflicts — open NNTDrive'
+        : sync.folders.isEmpty ? 'No sync folders selected' : 'Sync scheduled';
+    final state = '$status|${sync != null && !_ending}|${sync?.paused ?? true}';
+    if (_trayState == state) return; // Byte-progress events do not rebuild menus.
+    _trayState = state;
+    unawaited(_desktop?.update(status,
+        canPause: sync != null && !_ending, paused: sync?.paused ?? true));
   }
 
   Future<void> _completeAuth({
@@ -99,48 +182,118 @@ class _NntDriveAppState extends State<NntDriveApp> {
     required String accountId,
     required String email,
     required String password,
+  }) {
+    if (_ending || (_desktop?.closing ?? false)) {
+      return Future.error(StateError('Session is closing'));
+    }
+    return _authFuture = _doCompleteAuth(server: server, token: token,
+        keyfileJson: keyfileJson, accountId: accountId, email: email, password: password);
+  }
+
+  Future<void> _doCompleteAuth({
+    required String server,
+    required String token,
+    required String keyfileJson,
+    required String accountId,
+    required String email,
+    required String password,
   }) async {
     final unlocked = await NativeBridge.instance.unlockAsync(keyfileJson, password);
-    await widget.prefs.setString('server', server);
-    await widget.prefs.setString('token', token);
-    await widget.prefs.setString('keyfile', keyfileJson);
-    await widget.prefs.setString('accountId', accountId);
-    await widget.prefs.setString('email', email);
-    if (!mounted) return;
-    setState(() {
-      _server = server;
-      _token = token;
-      _keyfile = keyfileJson;
-      _accountId = accountId;
-      _email = email;
-      _session = Session(
+    var adopted = false;
+    try {
+      if (!mounted || _ending) return;
+      await widget.prefs.setString('server', server);
+      await widget.prefs.setString('token', token);
+      await widget.prefs.setString('keyfile', keyfileJson);
+      await widget.prefs.setString('accountId', accountId);
+      await widget.prefs.setString('email', email);
+      if (!mounted || _ending) return;
+      final sync = SyncController(
         server: server,
         token: token,
         handle: unlocked['handle'] as int,
-        accountId: accountId,
-        email: email,
+        api: ApiClient(baseUrl: server, token: token),
       );
-    });
+      _sync = sync;
+      sync.addListener(_updateTray);
+      unawaited(sync.load().then((_) => sync.start()));
+      setState(() {
+        _server = server;
+        _token = token;
+        _keyfile = keyfileJson;
+        _accountId = accountId;
+        _email = email;
+        _session = Session(
+          server: server,
+          token: token,
+          handle: unlocked['handle'] as int,
+          accountId: accountId,
+          email: email,
+        );
+      });
+      adopted = true;
+      _updateTray();
+    } finally {
+      if (!adopted) NativeBridge.instance.lock(unlocked['handle'] as int);
+    }
   }
 
-  void _signOut() {
+  void _signOut() => unawaited(_endSession(signOut: true).catchError((Object _) {
+    // The failed drain stays locked down; the overlay exposes explicit retry.
+  }));
+
+  Future<void> _endSession({required bool signOut}) =>
+      _endFuture ??= _finishSession(signOut: signOut).catchError((Object error, StackTrace stack) {
+        _endFuture = null;
+        if (mounted) {
+          setState(() => _shutdownError =
+              'Shutdown could not finish. No new work is allowed. Retry Quit or Sign out.');
+        }
+        Error.throwWithStackTrace(error, stack);
+      });
+
+  Future<void> _finishSession({required bool signOut}) async {
+    if (mounted) {
+      setState(() {
+        _ending = true;
+        _shutdownError = null;
+      });
+    }
+    _updateTray();
+    try { await _authFuture; } catch (_) { /* Failed unlock has no session. */ }
     final session = _session;
-    final handle = session?.handle;
+    final sync = _sync;
+    await Future.wait([
+      if (sync != null) sync.stopAndDrain(),
+      if (session != null) _fileOperations.drain(session.handle),
+    ]);
     if (session != null) {
-      ApiClient(baseUrl: session.server, token: session.token).logout().catchError((_) {});
+      await NativeBridge.instance.drainSession(session.handle);
+      NativeBridge.instance.lock(session.handle);
     }
-    if (handle != null) {
-      NativeBridge.instance.lock(handle);
+    sync?.removeListener(_updateTray);
+    if (!signOut) return; // Quit preserves password-wrapped login settings.
+    if (session != null) {
+      unawaited(ApiClient(baseUrl: session.server, token: session.token)
+          .logout().then<void>((_) {}, onError: (Object _) {}));
     }
-    widget.prefs.remove('token');
-    widget.prefs.remove('keyfile');
-    widget.prefs.remove('accountId');
+    await widget.prefs.remove('token');
+    await widget.prefs.remove('keyfile');
+    await widget.prefs.remove('accountId');
+    if (!mounted) return;
+    _navigatorKey.currentState?.popUntil((route) => route.isFirst);
     setState(() {
       _session = null;
+      _sync = null;
       _token = null;
       _keyfile = null;
       _accountId = null;
+      _ending = false;
     });
+    // FilesPage removes its listener when it is unmounted on this frame.
+    WidgetsBinding.instance.addPostFrameCallback((_) => sync?.dispose());
+    _endFuture = null;
+    _updateTray();
   }
 
   ThemeData _theme(Brightness brightness) => ThemeData(
@@ -155,6 +308,8 @@ class _NntDriveAppState extends State<NntDriveApp> {
     if (_session != null) {
       home = FilesPage(
         session: _session!,
+        sync: _sync!,
+        operations: _fileOperations,
         updates: _updates,
         themeMode: _themeMode,
         onTheme: _setTheme,
@@ -188,6 +343,35 @@ class _NntDriveAppState extends State<NntDriveApp> {
       darkTheme: _theme(Brightness.dark),
       themeMode: _themeMode,
       home: home,
+      builder: (context, child) => Column(children: [
+        Expanded(child: Stack(children: [
+          FocusScope(canRequestFocus: !_ending,
+              child: AbsorbPointer(absorbing: _ending, child: child!)),
+          if (_ending) Positioned.fill(child: Material(
+            color: const Color(0xDDFFFFFF), child: Center(child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_shutdownError == null) const CircularProgressIndicator(),
+                const SizedBox(height: 16),
+                Text(_shutdownError ?? 'Finishing active operations before locking the vault…'),
+                if (_shutdownError != null) TextButton(onPressed: _signOut,
+                    child: const Text('Retry Sign out')),
+              ],
+            )),
+          )),
+        ])),
+        if (widget.instance != null) Material(child: SafeArea(top: false,
+          child: Padding(padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(children: [
+              Expanded(child: Text(_desktopError ?? (_desktop?.ready == true
+                  ? 'Close keeps NNTDrive in the tray. Hiding does not lock the vault.'
+                  : 'Starting desktop session…'))),
+              TextButton(onPressed: _desktop == null ? null : () => _desktop!.requestQuit(),
+                  child: const Text('Quit NNTDrive')),
+            ]),
+          ),
+        )),
+      ]),
     );
   }
 }
@@ -668,6 +852,11 @@ class _UnlockPageState extends State<UnlockPage> {
                     style: Theme.of(context).textTheme.headlineSmall),
                 const SizedBox(height: 6),
                 Text(widget.email, textAlign: TextAlign.center),
+                const SizedBox(height: 12),
+                const Text(
+                  'Sync paused: vault locked. Unlock to allow synchronization.',
+                  textAlign: TextAlign.center,
+                ),
                 const SizedBox(height: 20),
                 TextField(
                   controller: _password,
@@ -708,11 +897,15 @@ class FilesPage extends StatefulWidget {
     super.key,
     required this.updates,
     required this.session,
+    required this.sync,
+    required this.operations,
     required this.themeMode,
     required this.onTheme,
     required this.onSignOut,
   });
   final Session session;
+  final SyncController sync;
+  final SessionOperations operations;
   final UpdateChecks updates;
   final ThemeMode themeMode;
   final ValueChanged<ThemeMode> onTheme;
@@ -734,39 +927,74 @@ class _FilesPageState extends State<FilesPage> {
   String _search = '';
   late final SyncController _sync;
   bool _wasSyncing = false;
+  bool _syncLoaded = false;
+  Map<String, LocalAvailability> _availability = {};
+  int _refreshGeneration = 0;
+
+  Future<Map<String, LocalAvailability>> _inspectAvailability(
+      List<String> parentIds) async {
+    try {
+      final bridge = NativeBridge.instance;
+      return await inspectBrowserAvailability(
+        parentIds: parentIds,
+        folders: List.of(_sync.folders),
+        list: (parent) => _api.listFiles(parentId: parent),
+        decrypt: (entry) => bridge.openName(
+            widget.session.handle, entry.id, entry.nameEnc),
+        comparisonKey: bridge.nameCollisionKey,
+        verifyFile: _sync.fileMatches,
+      );
+    } catch (_) {
+      return {};
+    }
+  }
+
+  Future<void> _revealLocal(RemoteFile file) =>
+      _fileOperation(() => _revealLocalNow(file));
+
+  Future<void> _revealLocalNow(RemoteFile file) async {
+    final parents = _path.map((entry) => entry.id).toList();
+    try {
+      await revealLocalAvailability(() async =>
+          (await _inspectAvailability(parents))[file.id] ??
+          LocalAvailability.unknown);
+    } catch (_) {
+      if (mounted) _showError('No safe local copy could be revealed. Refresh and check the sync folder.');
+    }
+    if (mounted) await _refresh();
+  }
 
   @override
   void initState() {
     super.initState();
-    _sync = SyncController(
-      server: widget.session.server,
-      token: widget.session.token,
-      handle: widget.session.handle,
-      api: _api,
-    );
+    _sync = widget.sync;
+    _syncLoaded = _sync.loaded;
     _sync.addListener(_onSyncChanged);
-    _loadSync();
     _refresh();
-  }
-
-  Future<void> _loadSync() async {
-    await _sync.load();
-    _sync.start();
   }
 
   void _onSyncChanged() {
     if (!mounted) return;
-    setState(() {});
-    if (_wasSyncing && !_sync.syncing) {
+    // The controller belongs to the session and loads independently of this
+    // page. Reinspect availability once its configured roots have arrived.
+    final justLoaded = _sync.loaded && !_syncLoaded;
+    _syncLoaded = _sync.loaded;
+    final active = _sync.syncing || _sync.folders.any((folder) => folder.running);
+    setState(() {
+      if (active) {
+        _availability = _availability.map(
+            (id, state) => MapEntry(id, state.withoutEquality()));
+      }
+    });
+    if (justLoaded || (_wasSyncing && !active)) {
       _refresh();
     }
-    _wasSyncing = _sync.syncing;
+    _wasSyncing = active;
   }
 
   @override
   void dispose() {
     _sync.removeListener(_onSyncChanged);
-    _sync.dispose();
     super.dispose();
   }
 
@@ -777,14 +1005,19 @@ class _FilesPageState extends State<FilesPage> {
     if (mounted) _refresh();
   }
 
-  Future<void> _refresh() async {
+  Future<void> _refresh() => _fileOperation(_refreshNow);
+
+  Future<void> _refreshNow() async {
+    final generation = ++_refreshGeneration;
+    final parentIds = _path.map((entry) => entry.id).toList();
     setState(() {
       _loading = true;
+      _availability = {};
       _error = null;
     });
     try {
       final me = await _api.me();
-      final files = await _api.listFiles(parentId: _path.isEmpty ? null : _path.last.id);
+      final files = await _api.listFiles(parentId: parentIds.lastOrNull);
       final bridge = NativeBridge.instance;
       final names = <String, String>{};
       for (final f in files) {
@@ -794,8 +1027,11 @@ class _FilesPageState extends State<FilesPage> {
           names[f.id] = f.isDir ? 'Encrypted folder' : 'Encrypted file';
         }
       }
-      if (!mounted) return;
+      await _sync.scanConflicts();
+      final availability = await _inspectAvailability(parentIds);
+      if (!mounted || generation != _refreshGeneration) return;
       setState(() {
+        _availability = availability;
         _me = me;
         _files = files;
         _names
@@ -803,15 +1039,20 @@ class _FilesPageState extends State<FilesPage> {
           ..addAll(names);
       });
     } on ApiException catch (e) {
+      if (!mounted || generation != _refreshGeneration) return;
       if (e.status == 401) {
         widget.onSignOut();
         return;
       }
       if (mounted) setState(() => _error = e.toString());
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted && generation == _refreshGeneration) {
+        setState(() => _error = e.toString());
+      }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && generation == _refreshGeneration) {
+        setState(() => _loading = false);
+      }
     }
   }
 
@@ -831,6 +1072,74 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   String _name(RemoteFile f) => _names[f.id] ?? (f.isDir ? 'Encrypted folder' : 'Encrypted file');
+
+  bool _renaming = false;
+
+  Future<void> _copy(RemoteFile file) async {
+    if (_renaming) return;
+    setState(() => _renaming = true);
+    try {
+      final destination = await showDialog<MoveDestination>(context: context,
+        builder: (_) => MoveDialog(api: _api, handle: widget.session.handle,
+          operations: widget.operations, source: file, copy: true));
+      if (destination == null || !mounted) return;
+      final attempted = await showDialog<bool>(context: context,
+        barrierDismissible: false,
+        builder: (_) => CopyFileDialog(isDir: file.isDir,
+          runCopy: () => widget.operations.run(widget.session.handle,
+            () => copyRemoteFile(api: _api, handle: widget.session.handle,
+              file: file, parentId: destination.parentId))));
+      if (attempted == true && mounted) await _refresh();
+    } catch (_) {
+      if (mounted) _showError('Copy was not confirmed. Refresh the destination before starting another copy.');
+    } finally {
+      if (mounted) setState(() => _renaming = false);
+    }
+  }
+
+  Future<void> _move(RemoteFile file) async {
+    if (_renaming) return;
+    setState(() => _renaming = true);
+    try {
+      final destination = await showDialog<MoveDestination>(context: context,
+        builder: (_) => MoveDialog(api: _api, handle: widget.session.handle,
+          operations: widget.operations, source: file));
+      if (destination == null || !mounted) return;
+      await widget.operations.run(widget.session.handle, () =>
+        moveRemoteEntry(api: _api, handle: widget.session.handle,
+          file: file, parentId: destination.parentId));
+      if (mounted) await _refresh();
+    } on RenameFailure catch (e) {
+      if (mounted) _showError(e.message);
+    } catch (_) {
+      if (mounted) _showError('Move failed. Refresh and try again. Choose a different destination if it is inside the source folder.');
+    } finally {
+      if (mounted) setState(() => _renaming = false);
+    }
+  }
+
+  Future<void> _rename(RemoteFile file) async {
+    if (_renaming) return;
+    setState(() => _renaming = true);
+    try {
+      final name = await showDialog<String>(
+        context: context,
+        builder: (_) => RenameDialog(initialName: _name(file), isDir: file.isDir),
+      );
+      if (name == null || !mounted) return;
+      await widget.operations.run(widget.session.handle, () =>
+        renameRemoteEntry(api: _api, handle: widget.session.handle,
+          file: file, name: name));
+      if (mounted) await _refresh();
+    } on RenameFailure catch (e) {
+      if (mounted) _showError(e.message);
+    } catch (_) {
+      // Do not expose backend/native diagnostics that could contain secrets.
+      if (mounted) _showError('Rename failed. Refresh and try again. Check for a name collision or an entry changed on another device.');
+    } finally {
+      if (mounted) setState(() => _renaming = false);
+    }
+  }
 
   Future<void> _createFolder() async {
     final controller = TextEditingController();
@@ -854,6 +1163,16 @@ class _FilesPageState extends State<FilesPage> {
       ),
     );
     if (name == null || name.isEmpty) return;
+    await _fileOperation(() => _createFolderNamed(name));
+  }
+
+  Future<void> _fileOperation(Future<void> Function() action) async {
+    try {
+      await widget.operations.run(widget.session.handle, action);
+    } catch (e) { if (mounted) _showError(e); }
+  }
+
+  Future<void> _createFolderNamed(String name) async {
     final id = _uuid.v4();
     try {
       final sealed = NativeBridge.instance.sealName(widget.session.handle, id, name);
@@ -873,7 +1192,10 @@ class _FilesPageState extends State<FilesPage> {
     const group = XTypeGroup(label: 'All files');
     final picked = await openFile(acceptedTypeGroups: const [group]);
     if (picked == null) return;
-    final path = picked.path;
+    await _fileOperation(() => _uploadPicked(picked.path));
+  }
+
+  Future<void> _uploadPicked(String path) async {
     final name = p.basename(path);
     final fileId = _uuid.v4();
     final revisionId = _uuid.v4();
@@ -914,6 +1236,10 @@ class _FilesPageState extends State<FilesPage> {
     const group = XTypeGroup(label: 'All files');
     final picked = await openFile(acceptedTypeGroups: const [group]);
     if (picked == null) return;
+    await _fileOperation(() => _uploadRevisionPicked(file, picked.path));
+  }
+
+  Future<void> _uploadRevisionPicked(RemoteFile file, String path) async {
     final revisionId = _uuid.v4();
     _showProgress('Uploading a new version of ${_name(file)}');
     try {
@@ -924,7 +1250,7 @@ class _FilesPageState extends State<FilesPage> {
         fileId: file.id,
         revisionId: revisionId,
         parentRevision: file.currentVersion ?? '',
-        path: picked.path,
+        path: path,
       );
       if (mounted) Navigator.of(context, rootNavigator: true).pop();
       await _refresh();
@@ -949,7 +1275,11 @@ class _FilesPageState extends State<FilesPage> {
       if (location == null) return;
       destination = location.path;
     }
-    _showProgress('Downloading and verifying $name');
+    await _fileOperation(() => _downloadTo(file, destination, revisionId));
+  }
+
+  Future<void> _downloadTo(RemoteFile file, String destination, String? revisionId) async {
+    _showProgress('Downloading and verifying ${_name(file)}');
     try {
       final result = await NativeBridge.instance.downloadAsync(
         handle: widget.session.handle,
@@ -1331,6 +1661,27 @@ class _FilesPageState extends State<FilesPage> {
               },
             ),
             ListTile(
+              leading: const Icon(Icons.history),
+              title: const Text('Prepare legacy references'),
+              subtitle: const Text(
+                  'Explicit account-scoped batches before admin cleanup'),
+              onTap: () {
+                Navigator.pop(context);
+                showDialog<void>(
+                  context: this.context,
+                  barrierDismissible: false,
+                  builder: (_) => ReferenceBackfillDialog(
+                    runBatch: () => widget.operations.run(widget.session.handle,
+                      () => NativeBridge.instance.backfillReferencesAsync(
+                        widget.session.handle,
+                        widget.session.server,
+                        widget.session.token,
+                      )),
+                  ),
+                );
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.settings_outlined),
               title: const Text('Update settings'),
               subtitle: const Text('Repository and access token'),
@@ -1489,13 +1840,37 @@ class _FilesPageState extends State<FilesPage> {
                         separatorBuilder: (_, __) => const Divider(height: 1),
                         itemBuilder: (context, i) {
                           final f = filtered[i];
+                          final local = _availability[f.id] ?? LocalAvailability.unknown;
                           return ListTile(
                             leading: Icon(f.isDir ? Icons.folder_outlined : Icons.insert_drive_file_outlined),
                             title: Text(_name(f)),
-                            subtitle: Text(f.isDir ? 'Folder' : _formatBytes(f.size)),
-                            trailing: f.favorite
-                                ? const Icon(Icons.star, size: 18)
-                                : (f.isDir ? const Icon(Icons.chevron_right) : null),
+                            subtitle: LocalAvailabilityLabel(
+                              state: local,
+                              details: f.isDir ? 'Folder' : _formatBytes(f.size),
+                            ),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (f.favorite) const Icon(Icons.star, size: 18),
+                                LocalRevealButton(
+                                  state: local,
+                                  onReveal: () => _revealLocal(f),
+                                ),
+                                IconButton(
+                                  tooltip: f.isDir ? 'Rename folder' : 'Rename file',
+                                  icon: const Icon(Icons.edit_outlined),
+                                  onPressed: _renaming ? null : () => _rename(f),
+                                ),
+                                IconButton(
+                                  tooltip: f.isDir ? 'Move folder' : 'Move file',
+                                  icon: const Icon(Icons.drive_file_move_outlined),
+                                  onPressed: _renaming ? null : () => _move(f),
+                                ),
+                                CopyFileButton(isDir: f.isDir, busy: _renaming,
+                                  onCopy: () => _copy(f)),
+                                if (f.isDir) const Icon(Icons.chevron_right),
+                              ],
+                            ),
                             onTap: () => _open(f),
                           );
                         },

@@ -136,7 +136,14 @@ pub fn decode(input: &[u8]) -> Result<YencData, YencError> {
     }
     let declared_size = declared_size.ok_or(YencError::BadHeader("missing size"))?;
 
-    let mut data = Vec::with_capacity(declared_size);
+    // Decoding cannot produce more bytes than the remaining encoded input.
+    // Validate before reserving: the header is untrusted, not an allocation hint.
+    if declared_size > input.len().saturating_sub(pos) {
+        return Err(YencError::BadHeader("size exceeds encoded input"));
+    }
+    let mut data = Vec::new();
+    data.try_reserve_exact(declared_size)
+        .map_err(|_| YencError::BadHeader("decoded size allocation failed"))?;
     let mut crc = None;
     let mut ended = false;
     while pos < input.len() {
@@ -170,6 +177,12 @@ pub fn decode(input: &[u8]) -> Result<YencData, YencError> {
         }
         let mut i = 0;
         while i < line.len() {
+            if data.len() == declared_size {
+                return Err(YencError::SizeMismatch {
+                    expected: declared_size,
+                    actual: data.len() + 1,
+                });
+            }
             let b = line[i];
             if b == b'=' {
                 let next = *line.get(i + 1).ok_or(YencError::TruncatedEscape)?;
@@ -212,6 +225,49 @@ pub fn decode(input: &[u8]) -> Result<YencData, YencError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejects_impossible_declared_sizes_without_panicking() {
+        // usize::MAX gives a deterministic capacity overflow on the old path,
+        // not an uncontrolled out-of-memory allocation in the test process.
+        for size in [usize::MAX, usize::MAX / 2] {
+            let input =
+                format!("=ybegin line=128 size={size} name=x\r\n=yend size=0 crc32=00000000\r\n");
+            assert!(matches!(
+                decode(input.as_bytes()),
+                Err(YencError::BadHeader(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn stops_decoding_at_the_declared_size() {
+        let input = b"=ybegin size=0 name=x\r\nabc\r\n=yend size=0 crc32=00000000\r\n";
+        assert!(matches!(
+            decode(input),
+            Err(YencError::SizeMismatch {
+                expected: 0,
+                actual: 1
+            })
+        ));
+    }
+
+    #[test]
+    fn bounded_parser_corpus_and_empty_roundtrip() {
+        assert!(decode(&encode("empty", b"")).unwrap().data.is_empty());
+        let mut seed = 0x91e1_0da5_u32;
+        for len in 0..4096 {
+            let bytes: Vec<_> = (0..len % 257)
+                .map(|_| {
+                    seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                    (seed >> 24) as u8
+                })
+                .collect();
+            assert_eq!(decode(&encode("opaque", &bytes)).unwrap().data, bytes);
+            // Malformed arbitrary input must return an error, not panic.
+            let _ = decode(&bytes);
+        }
+    }
 
     #[test]
     fn roundtrip_all_byte_values() {

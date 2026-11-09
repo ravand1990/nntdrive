@@ -78,6 +78,7 @@ pub async fn create_file(
         ));
     }
     let mut tx = state.pool.begin().await?;
+    lock_namespace(&mut tx, auth.account_id).await?;
     if let Some(parent) = body.parent_id {
         let exists: Option<bool> = sqlx::query_scalar(
             "SELECT is_dir FROM files WHERE account_id = $1 AND id = $2 AND deleted = FALSE",
@@ -132,7 +133,87 @@ pub async fn move_file(
     Path(id): Path<Uuid>,
     Json(body): Json<MoveFile>,
 ) -> ApiResult<impl IntoResponse> {
-    ensure_file(&state, auth.account_id, id).await?;
+    move_impl(state, auth, id, body.parent_id, None).await
+}
+
+#[derive(Deserialize)]
+pub struct CheckedMove {
+    pub parent_id: Option<Uuid>,
+    pub source_parent_id: Option<Uuid>,
+    pub source_name_enc: String,
+    pub siblings: Vec<NameSnapshot>,
+}
+
+pub async fn move_file_checked(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+    Json(body): Json<CheckedMove>,
+) -> ApiResult<impl IntoResponse> {
+    move_impl(state, auth, id, body.parent_id, Some(body)).await
+}
+
+async fn move_impl(
+    state: AppState,
+    auth: Auth,
+    id: Uuid,
+    parent_id: Option<Uuid>,
+    guard: Option<CheckedMove>,
+) -> ApiResult<Json<Value>> {
+    let body = MoveFile { parent_id };
+    let mut tx = state.pool.begin().await?;
+    lock_namespace(&mut tx, auth.account_id).await?;
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM files WHERE account_id = $1 AND id = $2 AND deleted = FALSE)",
+    )
+    .bind(auth.account_id)
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if !exists {
+        return Err(ApiError::NotFound);
+    }
+    if let Some(guard) = guard {
+        if guard.siblings.len() > 4096 {
+            return Err(ApiError::BadRequest(
+                "folder snapshot exceeds 4096 entries".into(),
+            ));
+        }
+        let source =
+            sqlx::query("SELECT parent_id, name_enc FROM files WHERE account_id = $1 AND id = $2")
+                .bind(auth.account_id)
+                .bind(id)
+                .fetch_one(&mut *tx)
+                .await?;
+        if source.get::<Option<Uuid>, _>("parent_id") != guard.source_parent_id
+            || source.get::<Vec<u8>, _>("name_enc") != unb64(&guard.source_name_enc)?
+        {
+            return Err(ApiError::Conflict(
+                "source changed; refresh and retry".into(),
+            ));
+        }
+        let mut expected = std::collections::BTreeMap::new();
+        for entry in guard.siblings {
+            let sealed = unb64(&entry.name_enc)?;
+            if sealed.is_empty()
+                || sealed.len() > 8192
+                || expected.insert(entry.id, sealed).is_some()
+            {
+                return Err(ApiError::BadRequest("invalid snapshot entry".into()));
+            }
+        }
+        let rows = sqlx::query("SELECT id, name_enc FROM files WHERE account_id = $1 AND deleted = FALSE AND parent_id IS NOT DISTINCT FROM $2 LIMIT 4097")
+            .bind(auth.account_id).bind(body.parent_id).fetch_all(&mut *tx).await?;
+        let actual: std::collections::BTreeMap<Uuid, Vec<u8>> = rows
+            .iter()
+            .map(|r| (r.get("id"), r.get("name_enc")))
+            .collect();
+        if actual != expected {
+            return Err(ApiError::Conflict(
+                "destination changed; refresh and retry".into(),
+            ));
+        }
+    }
     if let Some(parent) = body.parent_id {
         if parent == id {
             return Err(ApiError::BadRequest(
@@ -144,10 +225,12 @@ pub async fn move_file(
         )
         .bind(auth.account_id)
         .bind(parent)
-        .fetch_optional(&state.pool)
+        .fetch_optional(&mut *tx)
         .await?;
-        if is_dir != Some(true) {
-            return Err(ApiError::BadRequest("parent is not a folder".into()));
+        match is_dir {
+            Some(true) => {}
+            Some(false) => return Err(ApiError::BadRequest("parent is not a folder".into())),
+            None => return Err(ApiError::NotFound),
         }
         // Reject cycles using a recursive ancestor walk.
         let cycle: Option<i32> = sqlx::query_scalar(
@@ -163,13 +246,12 @@ pub async fn move_file(
         .bind(auth.account_id)
         .bind(parent)
         .bind(id)
-        .fetch_optional(&state.pool)
+        .fetch_optional(&mut *tx)
         .await?;
         if cycle.is_some() {
             return Err(ApiError::BadRequest("move would create a cycle".into()));
         }
     }
-    let mut tx = state.pool.begin().await?;
     sqlx::query(
         "UPDATE files SET parent_id = $3, updated_at = now(), revision = revision + 1
          WHERE account_id = $1 AND id = $2",
@@ -191,6 +273,122 @@ pub async fn move_file(
     .await?;
     tx.commit().await?;
     Ok(Json(json!({ "status": "moved" })))
+}
+
+// All namespace writers take the account row lock before reading or changing
+// names/membership. This also serializes older unconditional API writers.
+async fn lock_namespace(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    account_id: Uuid,
+) -> ApiResult<()> {
+    // Match version commits and GC: advisory lock first, then account row.
+    // append_event also takes this advisory lock; reversing the order can
+    // deadlock guarded Copy/GC against a namespace writer.
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+        .bind(account_id.to_string())
+        .execute(&mut **tx)
+        .await?;
+    sqlx::query("SELECT id FROM accounts WHERE id = $1 FOR UPDATE")
+        .bind(account_id)
+        .fetch_one(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+#[derive(Deserialize)]
+pub struct NameSnapshot {
+    pub id: Uuid,
+    pub name_enc: String,
+}
+
+#[derive(Deserialize)]
+pub struct RenameFile {
+    pub parent_id: Option<Uuid>,
+    pub name_enc: String,
+    pub siblings: Vec<NameSnapshot>,
+}
+
+/// Compare the complete opaque namespace checked by the client, then rename
+/// under the same account lock. No deterministic name tag or plaintext is added.
+/// A dedicated endpoint fails closed against servers predating this contract.
+pub async fn rename_file(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+    Json(body): Json<RenameFile>,
+) -> ApiResult<impl IntoResponse> {
+    let name = unb64(&body.name_enc)?;
+    if name.is_empty() || name.len() > 8192 {
+        return Err(ApiError::BadRequest("invalid name".into()));
+    }
+    if body.siblings.len() > 4096 {
+        return Err(ApiError::BadRequest(
+            "folder snapshot exceeds 4096 entries".into(),
+        ));
+    }
+    let mut expected = std::collections::BTreeMap::new();
+    for entry in &body.siblings {
+        let sealed = unb64(&entry.name_enc)?;
+        if sealed.is_empty() || sealed.len() > 8192 {
+            return Err(ApiError::BadRequest("invalid snapshot name".into()));
+        }
+        if expected.insert(entry.id, sealed).is_some() {
+            return Err(ApiError::BadRequest("duplicate snapshot entry".into()));
+        }
+    }
+    let mut tx = state.pool.begin().await?;
+    lock_namespace(&mut tx, auth.account_id).await?;
+    let parent: Option<Option<Uuid>> = sqlx::query_scalar(
+        "SELECT parent_id FROM files WHERE account_id = $1 AND id = $2 AND deleted = FALSE",
+    )
+    .bind(auth.account_id)
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let parent = parent.ok_or(ApiError::NotFound)?;
+    if parent != body.parent_id {
+        return Err(ApiError::Conflict(
+            "folder changed; refresh and retry".into(),
+        ));
+    }
+    let rows = sqlx::query(
+        "SELECT id, name_enc FROM files WHERE account_id = $1 AND deleted = FALSE
+         AND parent_id IS NOT DISTINCT FROM $2 LIMIT 4097",
+    )
+    .bind(auth.account_id)
+    .bind(parent)
+    .fetch_all(&mut *tx)
+    .await?;
+    let actual: std::collections::BTreeMap<Uuid, Vec<u8>> = rows
+        .iter()
+        .map(|row| (row.get("id"), row.get("name_enc")))
+        .collect();
+    if actual != expected {
+        return Err(ApiError::Conflict(
+            "folder changed; refresh and retry".into(),
+        ));
+    }
+    sqlx::query(
+        "UPDATE files SET name_enc = $3, revision = revision + 1, updated_at = now()
+                 WHERE account_id = $1 AND id = $2",
+    )
+    .bind(auth.account_id)
+    .bind(id)
+    .bind(name)
+    .execute(&mut *tx)
+    .await?;
+    append_event(
+        &mut tx,
+        auth.account_id,
+        auth.device_id,
+        id,
+        None,
+        "rename",
+        json!({}),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(Json(json!({ "status": "renamed" })))
 }
 
 #[derive(Deserialize)]
@@ -218,6 +416,17 @@ pub async fn patch_file(
         None => None,
     };
     let mut tx = state.pool.begin().await?;
+    lock_namespace(&mut tx, auth.account_id).await?;
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM files WHERE account_id = $1 AND id = $2 AND deleted = FALSE)",
+    )
+    .bind(auth.account_id)
+    .bind(id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if !exists {
+        return Err(ApiError::NotFound);
+    }
     if let Some(name) = &name_enc {
         sqlx::query(
             "UPDATE files SET name_enc = $3, updated_at = now(), revision = revision + 1
@@ -270,6 +479,8 @@ pub struct CommitVersion {
     pub base_revision: Option<Uuid>,
     pub size: i64,
     pub sealed_manifest: String,
+    /// Omitted by legacy clients; never interpret omission as an empty file.
+    pub chunk_ids: Option<Vec<Uuid>>,
 }
 
 pub async fn commit_version(
@@ -317,23 +528,75 @@ pub async fn commit_version(
         created_at: Utc::now(),
         chunks: Vec::new(),
     };
-    // `insert_version` in the store only consumes identity, size and timestamp
-    // from this value; the authoritative data is the sealed manifest.
+    // Opaque API manifests use only the identity/size/timestamp header here;
+    // references come from the explicit client declaration, never this dummy
+    // empty chunk list. Omission must stay incomplete for legacy compatibility.
     state
         .store
-        .insert_version(
+        .insert_version_with_references(
             auth.account_id,
             id,
             &manifest,
             &sealed,
             auth.device_id,
             body.parent_revision,
+            body.chunk_ids.as_deref(),
         )
-        .await?;
+        .await
+        .map_err(reference_error)?;
     Ok((
         StatusCode::CREATED,
         Json(json!({ "revision_id": body.revision_id })),
     ))
+}
+
+fn reference_error(error: nntdrive_storage::StoreError) -> ApiError {
+    match error {
+        nntdrive_storage::StoreError::NotFound => ApiError::NotFound,
+        nntdrive_storage::StoreError::Invalid(reason) => ApiError::BadRequest(reason),
+        other => ApiError::Store(other),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct BackfillPage {
+    pub after: Option<Uuid>,
+}
+
+/// Includes historical/conflict/tombstoned versions, not only the current tree.
+pub async fn incomplete_references(
+    State(state): State<AppState>,
+    auth: Auth,
+    Query(q): Query<BackfillPage>,
+) -> ApiResult<impl IntoResponse> {
+    let rows = sqlx::query("SELECT id, file_id, revision_id FROM file_versions WHERE account_id = $1 AND NOT references_complete AND ($2::uuid IS NULL OR id > $2) ORDER BY id LIMIT 200")
+        .bind(auth.account_id).bind(q.after).fetch_all(&state.pool).await?;
+    let versions: Vec<Value> = rows.iter().map(|r| json!({"id":r.get::<Uuid,_>("id"),"file_id":r.get::<Uuid,_>("file_id"),"revision_id":r.get::<Uuid,_>("revision_id")})).collect();
+    let next = if rows.len() == 200 {
+        rows.last().map(|r| r.get::<Uuid, _>("id"))
+    } else {
+        None
+    };
+    Ok(Json(json!({"versions":versions,"next":next})))
+}
+
+#[derive(Deserialize)]
+pub struct BackfillReferences {
+    pub chunk_ids: Vec<Uuid>,
+}
+
+pub async fn backfill_references(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path((file_id, revision_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<BackfillReferences>,
+) -> ApiResult<impl IntoResponse> {
+    state
+        .store
+        .backfill_references(auth.account_id, file_id, revision_id, &body.chunk_ids)
+        .await
+        .map_err(reference_error)?;
+    Ok(Json(json!({ "references_complete": true })))
 }
 
 pub async fn list_versions(
@@ -377,7 +640,11 @@ pub async fn get_manifest(
     Path(id): Path<Uuid>,
     Query(q): Query<RevisionQuery>,
 ) -> ApiResult<impl IntoResponse> {
-    ensure_file(&state, auth.account_id, id).await?;
+    // Exact revisions remain readable for authenticated backfill/restore even
+    // after logical namespace deletion; latest-tree reads still hide tombstones.
+    if q.revision.is_none() {
+        ensure_file(&state, auth.account_id, id).await?;
+    }
     let version = state.store.version(auth.account_id, id, q.revision).await?;
     let mut resp = (StatusCode::OK, version.manifest).into_response();
     resp.headers_mut().insert(
@@ -572,6 +839,10 @@ pub async fn list_events(
     Ok(Json(json!({ "events": events })))
 }
 
+// Poll and authorization lease are short even for idle or backpressured bodies.
+// See docs/SECURITY.md for in-flight frames and the database deadline.
+const SSE_AUTH_INTERVAL: Duration = Duration::from_secs(2);
+
 pub async fn stream_events(
     State(state): State<AppState>,
     auth: Auth,
@@ -581,28 +852,36 @@ pub async fn stream_events(
         let mut last = q.since;
         let mut idle = 0u32;
         loop {
-            match fetch_events(&state, auth.account_id, last, 200).await {
-                Ok(events) => {
-                    for e in events {
-                        if let Some(seq) = e.get("seq").and_then(|s| s.as_i64()) {
-                            last = last.max(seq);
-                        }
-                        yield Ok(Event::default().event("change").data(e.to_string()));
-                        idle = 0;
+            let mut checked_at = tokio::time::Instant::now();
+            let batch = tokio::time::timeout(SSE_AUTH_INTERVAL, async {
+                auth.revalidate(&state).await?;
+                fetch_events(&state, auth.account_id, last, 200).await
+            }).await;
+            // Invalid credentials, database errors and deadlines all fail closed.
+            // Do not send database diagnostics or credential details over SSE.
+            let Ok(Ok(events)) = batch else { return };
+            for e in events {
+                // A suspended body may resume long after this batch was fetched.
+                // Never drain an indefinitely stale authorization snapshot.
+                if checked_at.elapsed() >= SSE_AUTH_INTERVAL {
+                    checked_at = tokio::time::Instant::now();
+                    if !matches!(tokio::time::timeout(SSE_AUTH_INTERVAL, auth.revalidate(&state)).await, Ok(Ok(()))) {
+                        return;
                     }
                 }
-                Err(e) => {
-                    yield Ok(Event::default().event("error").data(
-                        json!({"error": e.to_string()}).to_string()
-                    ));
-                    return;
+                if let Some(seq) = e.get("seq").and_then(|s| s.as_i64()) {
+                    last = last.max(seq);
                 }
+                yield Ok(Event::default().event("change").data(e.to_string()));
+                idle = 0;
             }
             idle += 1;
             if idle % 15 == 0 {
                 yield Ok(Event::default().comment("keepalive"));
             }
-            tokio::time::sleep(Duration::from_secs(2)).await;
+            // Count processing time toward the poll bound rather than adding
+            // another full interval after a slow batch.
+            tokio::time::sleep_until(checked_at + SSE_AUTH_INTERVAL).await;
         }
     };
     Sse::new(stream).keep_alive(axum::response::sse::KeepAlive::default())

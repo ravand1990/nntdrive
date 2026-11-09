@@ -4,7 +4,46 @@ All notable changes are documented here. Every release tag **must** have an
 entry with `### Features` and/or `### Bug fixes` (at least one bullet). The
 release workflow refuses to publish if the entry is missing.
 
-## [Unreleased]
+## [0.7.0] - 2026-11-09
+
+### Features
+
+- Fresh image-only installations can start with an absent/empty `.env` using `nntdrive-compose.py`: database and provider-encryption secrets are generated once, privately persisted, and reused. Missing/corrupt secrets with existing data fail closed; explicit credentials cannot silently rotate saved values (#62).
+
+### Bug fixes
+
+- Android folder sync requests explicit storage access with denial/retry guidance and a permission-free app-private alternative; revoked/unreadable roots no longer look like successful empty scans (#69). Shared folders use Android's all-files grant, not per-tree SAF isolation; installed-device acceptance remains separate.
+- Live sync event streams recheck the original credential and account/device status with a two-second authorization lease, closing after logout, revocation, disable or expiry (#16 partial). Already admitted/buffered frames cannot be retracted.
+
+## [0.6.0] - 2026-11-09
+
+### Features
+
+- Manage encrypted files from the client: rename files and folders, move them to another folder, and copy files or whole folder trees. Names stay encrypted end to end, and renames propagate as moves instead of delete/re-upload (#51 partial).
+- The file browser shows whether an item is local, cloud-only, syncing, conflicted or failed, and can reveal a locally synced file in the OS file manager.
+- Admin provider changes (add, edit, remove) apply to the running backend without a restart; retention and article-age refresh policies are stored and their maintenance results shown in the dashboard.
+- Optional per-account orphan metadata cleanup with a 1-3650 day grace period, reference-aware commit fences and protected retained history. Usenet articles are never retracted; upgrade clients before opting in.
+- Windows/Linux close-to-tray keeps one unlocked sync session with open, pause/resume and quit, and drains active work before locking keys (#6 partial).
+- Sync rounds and conflict resolution reject a second process using the same journal and release operation leases after cancellation or process death.
+
+### Bug fixes
+
+- Harden account admission with one transaction-scoped database gate and bound yEnc decoded allocation/output by input and declared length (#16 partial).
+- File and folder copy quota checks reuse the publication transaction's connection, so concurrent copies no longer exhaust the database pool.
+- File rename, move and copy now reject Unicode and Windows-invalid names, keep conflict labels when the original is missing, avoid false conflicts for identical edits, and scope syncing/error labels to the affected item (#51 partial).
+- The locked-vault screen states that synchronization is paused until unlock instead of implying background sync is running.
+
+## [0.5.2] - 2026-11-08
+
+### Features
+
+- Release downloads now name each client asset with its version and platform: `nntdrive-<version>-linux-x64.tar.gz`, `nntdrive-<version>-windows-x64.zip` and `nntdrive-<version>-android.apk`. Checksums cover those names, and desktop downloads keep the unversioned names as aliases so older auto-updaters can still find them.
+
+## [0.5.1] - 2026-11-07
+
+### Features
+
+- Guided README installation and usage steps cover release downloads, server setup, offline recovery material, client connection, folder sync and conflicts (#52).
 
 ### Bug fixes
 

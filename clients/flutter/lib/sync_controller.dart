@@ -15,6 +15,20 @@ import 'package:uuid/uuid.dart';
 
 import 'api.dart';
 import 'native.dart';
+import 'session_operations.dart';
+import 'storage_access.dart';
+
+typedef SyncRunner = Future<Map<String, dynamic>> Function(
+    int handle,
+    Map<String, dynamic> request,
+    void Function(Map<String, dynamic>) onProgress);
+
+Future<Map<String, dynamic>> _runNativeSync(
+        int handle,
+        Map<String, dynamic> request,
+        void Function(Map<String, dynamic>) progress) =>
+    NativeBridge.instance
+        .syncRequestAsync(handle, request, onProgress: progress);
 
 class SyncFolderConfig {
   SyncFolderConfig({
@@ -45,6 +59,7 @@ class SyncFolderConfig {
   List<String> conflictFiles = [];
   Map<String, dynamic>? progress;
   bool running = false;
+  bool storageAccessRequired = false;
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -84,26 +99,38 @@ class SyncController extends ChangeNotifier {
     required this.token,
     required this.handle,
     required this.api,
+    this.storageAccess = const StorageAccess(),
+    this.syncRunner = _runNativeSync,
   });
 
   final String server;
   final String token;
   final int handle;
   final ApiClient api;
+  final StorageAccess storageAccess;
+  final SyncRunner syncRunner;
 
   final List<SyncFolderConfig> folders = [];
   bool paused = false;
   bool syncing = false;
   String? lastStatus;
   Timer? _timer;
+  Timer? _initialTimer;
+  bool _stopped = false;
+  bool _disposed = false;
+  final _operations = SessionOperations();
   bool _started = false;
+  bool _loaded = false;
+  bool get loaded => _loaded;
   final Set<String> _running = {};
 
   static const _prefsKey = 'syncFolders';
   static const _pausedKey = 'syncPaused';
   static const autoSyncInterval = Duration(minutes: 5);
 
-  Future<void> load() async {
+  Future<void> load() => _stopped ? Future.value() : _operations.run(0, _load);
+
+  Future<void> _load() async {
     final prefs = await SharedPreferences.getInstance();
     paused = prefs.getBool(_pausedKey) ?? false;
     final raw = prefs.getString(_prefsKey);
@@ -120,6 +147,8 @@ class SyncController extends ChangeNotifier {
     }
     notifyListeners();
     await scanConflicts();
+    _loaded = true;
+    notifyListeners();
   }
 
   Future<void> _save() async {
@@ -131,18 +160,23 @@ class SyncController extends ChangeNotifier {
   }
 
   void start() {
-    if (_started) return;
+    if (_started || _stopped) return;
     _started = true;
     _timer = Timer.periodic(autoSyncInterval, (_) {
       if (!paused) syncAll(silent: true);
     });
     // Give the app a moment to finish loading, then do an initial pass.
-    Timer(const Duration(seconds: 2), () {
+    _initialTimer = Timer(const Duration(seconds: 2), () {
       if (!paused) syncAll(silent: true);
     });
   }
 
-  Future<bool> addFolder(String localPath) async {
+  Future<bool> addFolder(String localPath) {
+    if (_stopped) return Future.value(false);
+    return _operations.run(0, () => _addFolder(localPath));
+  }
+
+  Future<bool> _addFolder(String localPath) async {
     final path = p.normalize(localPath);
     final overlaps = folders.any((f) =>
         p.equals(f.localPath, path) ||
@@ -154,8 +188,12 @@ class SyncController extends ChangeNotifier {
       notifyListeners();
       return false;
     }
-    if (!Directory(path).existsSync()) {
-      lastStatus = 'Folder does not exist: $path';
+    try {
+      await storageAccess.check(path);
+    } catch (e) {
+      lastStatus = e is StorageAccessException
+          ? e.toString()
+          : 'Could not check local storage access. Retry this folder.';
       notifyListeners();
       return false;
     }
@@ -183,11 +221,28 @@ class SyncController extends ChangeNotifier {
     );
     folders.add(config);
     await _save();
-    await syncFolder(config, silent: true);
+    final report = await syncFolder(config, silent: true);
+    if (report == null || config.hasErrors) {
+      lastStatus =
+          'Folder added, but sync needs attention. Check its error and retry.';
+    } else {
+      lastStatus = 'Folder added and synchronized.';
+    }
+    notifyListeners();
     return true;
   }
 
   Future<void> removeFolder(SyncFolderConfig folder,
+      {bool deleteJournal = true}) {
+    if (_stopped) return Future.value();
+    if (folder.running || syncing) {
+      return Future.error(StateError('Wait for sync to finish'));
+    }
+    return _operations.run(
+        0, () => _removeFolder(folder, deleteJournal: deleteJournal));
+  }
+
+  Future<void> _removeFolder(SyncFolderConfig folder,
       {bool deleteJournal = true}) async {
     folders.removeWhere((f) => f.id == folder.id);
     if (deleteJournal) {
@@ -203,13 +258,48 @@ class SyncController extends ChangeNotifier {
     await _save();
   }
 
-  Future<void> setEnabled(SyncFolderConfig folder, bool enabled) async {
+  /// Read-only equality evidence for one freshly listed remote file.
+  Future<bool> fileMatches(
+      SyncFolderConfig folder, String relative, RemoteFile entry) {
+    if (_stopped) return Future.value(false);
+    return _operations.run(0, () => _fileMatches(folder, relative, entry));
+  }
+
+  Future<bool> _fileMatches(
+      SyncFolderConfig folder, String relative, RemoteFile entry) async {
+    if (folder.running || entry.isDir || entry.currentVersion == null) {
+      return false;
+    }
+    final support = await getApplicationSupportDirectory();
+    if (folder.running) return false;
+    final matches = await NativeBridge.instance.localFileMatches({
+      'handle': handle,
+      'journalPath': p.join(support.path, 'sync', '${folder.id}.sqlite'),
+      'localPath': p.normalize(p.absolute(folder.localPath)),
+      'relativePath': relative,
+      'revision': entry.currentVersion,
+      'size': entry.size,
+    });
+    return !folder.running && matches;
+  }
+
+  Future<void> setEnabled(SyncFolderConfig folder, bool enabled) {
+    if (_stopped) return Future.value();
+    return _operations.run(0, () => _setEnabled(folder, enabled));
+  }
+
+  Future<void> _setEnabled(SyncFolderConfig folder, bool enabled) async {
     folder.enabled = enabled;
     await _save();
     if (enabled) await syncFolder(folder);
   }
 
-  Future<void> setExcluded(
+  Future<void> setExcluded(SyncFolderConfig folder, List<String> excluded) {
+    if (_stopped) return Future.value();
+    return _operations.run(0, () => _setExcluded(folder, excluded));
+  }
+
+  Future<void> _setExcluded(
       SyncFolderConfig folder, List<String> excluded) async {
     folder.excluded = excluded
         .map((e) =>
@@ -251,12 +341,19 @@ class SyncController extends ChangeNotifier {
   int get conflictCount =>
       folders.fold(0, (sum, folder) => sum + folder.conflictFiles.length);
 
-  Future<void> setPaused(bool value) async {
-    paused = value;
-    await _save();
+  Future<void> setPaused(bool value) {
+    if (_stopped) return Future.value();
+    return _operations.run(0, () async {
+      paused = value;
+      await _save();
+    });
   }
 
-  Future<void> syncAll({bool silent = false}) async {
+  Future<void> syncAll({bool silent = false}) => _stopped
+      ? Future.value()
+      : _operations.run(0, () => _syncAll(silent: silent));
+
+  Future<void> _syncAll({bool silent = false}) async {
     if (syncing || paused) return;
     if (folders.isEmpty) {
       if (!silent) {
@@ -291,12 +388,17 @@ class SyncController extends ChangeNotifier {
   }
 
   Future<Map<String, dynamic>?> syncFolder(SyncFolderConfig folder,
+          {bool silent = false}) =>
+      _stopped
+          ? Future.value(null)
+          : _operations.run(0, () => _syncFolder(folder, silent: silent));
+
+  Future<Map<String, dynamic>?> _syncFolder(SyncFolderConfig folder,
       {bool silent = false}) async {
-    if (paused || !folder.enabled || _running.contains(folder.id)) return null;
-    if (!Directory(folder.localPath).existsSync()) {
-      folder.lastError =
-          'Local folder is missing (external drive disconnected?)';
-      await _save();
+    if (paused ||
+        !folder.enabled ||
+        !folders.contains(folder) ||
+        _running.contains(folder.id)) {
       return null;
     }
     _running.add(folder.id);
@@ -308,11 +410,13 @@ class SyncController extends ChangeNotifier {
       notifyListeners();
     }
     try {
+      await storageAccess.check(folder.localPath);
+      folder.storageAccessRequired = false;
       final support = await getApplicationSupportDirectory();
       final syncDir = Directory(p.join(support.path, 'sync'));
       if (!syncDir.existsSync()) syncDir.createSync(recursive: true);
       final journal = p.join(syncDir.path, '${folder.id}.sqlite');
-      final report = await NativeBridge.instance.syncRequestAsync(handle, {
+      final report = await syncRunner(handle, {
         'baseUrl': server,
         'token': token,
         'remoteRootId': folder.remoteRootId,
@@ -320,7 +424,7 @@ class SyncController extends ChangeNotifier {
         'journalPath': journal,
         'deviceName': Platform.localHostname,
         'excluded': folder.excluded,
-      }, onProgress: (event) {
+      }, (event) {
         folder.progress = event;
         notifyListeners();
       });
@@ -336,8 +440,12 @@ class SyncController extends ChangeNotifier {
       }
       return report;
     } catch (e) {
-      folder.lastError = e.toString();
-      if (!silent) lastStatus = '${folder.name}: $e';
+      folder.storageAccessRequired =
+          e is StorageAccessException && e.permissionRequired;
+      folder.lastError = e is StorageAccessException
+          ? e.toString()
+          : 'Sync failed. Check storage access and server connectivity, then retry.';
+      if (!silent) lastStatus = '${folder.name}: ${folder.lastError}';
       return null;
     } finally {
       _running.remove(folder.id);
@@ -348,13 +456,44 @@ class SyncController extends ChangeNotifier {
     }
   }
 
+  /// An explicit UI attempt; no scheduler can broaden storage permissions.
+  Future<bool> grantStorageAccess(SyncFolderConfig folder) {
+    if (_stopped) return Future.value(false);
+    return _operations.run(0, () async {
+      final granted = await storageAccess.request();
+      if (!granted || _stopped || !folders.contains(folder)) return false;
+      final report = await syncFolder(folder);
+      return report != null && !folder.hasErrors;
+    });
+  }
+
+  /// Permanent session stop, not the persisted user pause preference.
+  Future<void> stopAndDrain() {
+    _stopped = true;
+    _timer?.cancel();
+    _initialTimer?.cancel();
+    return _operations.drain(0);
+  }
+
+  @override
+  void notifyListeners() {
+    if (!_disposed) super.notifyListeners();
+  }
+
   @override
   void dispose() {
-    _timer?.cancel();
+    stopAndDrain();
+    _disposed = true;
     super.dispose();
   }
 
   Future<void> resolveConflict(
+      SyncFolderConfig folder, String copy, String choice) {
+    if (_stopped) return Future.error(StateError('Session is closing'));
+    return _operations.run(0, () => _resolveConflict(folder, copy, choice));
+  }
+
+  Future<void> _resolveConflict(
       SyncFolderConfig folder, String copy, String choice) async {
     if (_running.contains(folder.id) || syncing) {
       throw StateError('Wait for sync to finish');
@@ -365,8 +504,9 @@ class SyncController extends ChangeNotifier {
     folder.running = true;
     notifyListeners();
     try {
+      await storageAccess.check(folder.localPath);
       final support = await getApplicationSupportDirectory();
-      await NativeBridge.instance.syncRequestAsync(handle, {
+      await syncRunner(handle, {
         'baseUrl': server,
         'token': token,
         'remoteRootId': folder.remoteRootId,
@@ -377,7 +517,7 @@ class SyncController extends ChangeNotifier {
         'original': original,
         'copy': copy,
         'choice': choice,
-      }, onProgress: (event) {
+      }, (event) {
         folder.progress = event;
         notifyListeners();
       });

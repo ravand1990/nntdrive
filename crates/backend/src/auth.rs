@@ -29,12 +29,51 @@ type DeviceListFullRow = (
     Option<DateTime<Utc>>,
 );
 
+#[derive(Clone)]
+struct TokenHash([u8; 32]);
+
+impl std::fmt::Debug for TokenHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("[REDACTED]")
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Auth {
     pub account_id: Uuid,
     pub device_id: Option<Uuid>,
     pub token_id: Uuid,
     pub is_admin: bool,
+    // Retain only a redacted digest, never the bearer credential, for live checks.
+    token_hash: TokenHash,
+}
+
+impl Auth {
+    /// Recheck the exact credential and tenant captured at request admission.
+    /// Query the shared database so invalidations on other replicas are visible.
+    pub(crate) async fn revalidate(&self, state: &AppState) -> ApiResult<()> {
+        let valid: bool = sqlx::query_scalar(
+            "SELECT EXISTS (
+                SELECT 1 FROM api_tokens t JOIN accounts a ON a.id = t.account_id
+                LEFT JOIN devices d ON d.id = t.device_id AND d.account_id = a.id
+                WHERE t.id = $1 AND t.account_id = $2 AND t.token_hash = $3
+                  AND t.device_id IS NOT DISTINCT FROM $4
+                  AND t.revoked_at IS NULL AND NOT a.disabled
+                  AND (t.expires_at IS NULL OR t.expires_at > now())
+                  AND (t.device_id IS NULL OR (d.id IS NOT NULL AND d.revoked_at IS NULL))
+            )",
+        )
+        .bind(self.token_id)
+        .bind(self.account_id)
+        .bind(self.token_hash.0.as_slice())
+        .bind(self.device_id)
+        .fetch_one(&state.pool)
+        .await?;
+        if !valid {
+            return Err(ApiError::Unauthorized);
+        }
+        Ok(())
+    }
 }
 
 impl FromRequestParts<AppState> for Auth {
@@ -75,6 +114,7 @@ impl FromRequestParts<AppState> for Auth {
             account_id: row.1,
             device_id: row.2,
             is_admin: row.3,
+            token_hash: TokenHash(hash),
         })
     }
 }
@@ -147,15 +187,14 @@ pub async fn register(
     let hash = nntdrive_crypto::hash_verifier(&body.verifier)
         .map_err(|_| ApiError::Internal(anyhow::anyhow!("verifier hashing failed")))?;
 
-    let account_count: i64 = sqlx::query_scalar("SELECT count(*) FROM accounts")
-        .fetch_one(&state.pool)
-        .await?;
-    if account_count > 0 && !state.config.allow_registration {
-        return Err(ApiError::Forbidden);
-    }
-    let is_admin = account_count == 0;
-
     let mut tx = state.pool.begin().await?;
+    let is_admin = nntdrive_storage::store::account_creation_is_admin(
+        &mut tx,
+        state.config.allow_registration,
+        false,
+    )
+    .await?
+    .ok_or(ApiError::Forbidden)?;
     let existing: Option<Uuid> =
         sqlx::query_scalar("SELECT id FROM accounts WHERE lower(email) = lower($1)")
             .bind(&body.email)
@@ -566,4 +605,23 @@ pub fn redacted_key(keyfile: &Value) -> Value {
 
 pub fn _unused_b64() -> String {
     b64(b"")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn live_auth_debug_redacts_credential_digest() {
+        let auth = Auth {
+            account_id: Uuid::nil(),
+            device_id: None,
+            token_id: Uuid::nil(),
+            is_admin: false,
+            token_hash: TokenHash([123; 32]),
+        };
+        let debug = format!("{auth:?}");
+        assert!(debug.contains("token_hash: [REDACTED]"));
+        assert!(!debug.contains("123"));
+    }
 }

@@ -19,6 +19,8 @@ use uuid::Uuid;
 
 const COMPRESSION_LEVEL: i32 = 3;
 
+pub mod copy;
+mod copy_tree;
 pub mod sync_remote;
 pub use sync_remote::HttpRemote;
 
@@ -294,6 +296,7 @@ impl ApiClient {
         Ok((entry, articles))
     }
 
+    /// Legacy compatibility entry point. Fails after this account opts in to GC.
     pub async fn commit(
         &self,
         file_id: Uuid,
@@ -301,6 +304,27 @@ impl ApiClient {
         parent_revision: Option<Uuid>,
         size: u64,
         sealed_manifest: &[u8],
+    ) -> Result<()> {
+        self.commit_with_references(
+            file_id,
+            revision_id,
+            parent_revision,
+            size,
+            sealed_manifest,
+            None,
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn commit_with_references(
+        &self,
+        file_id: Uuid,
+        revision_id: Uuid,
+        parent_revision: Option<Uuid>,
+        size: u64,
+        sealed_manifest: &[u8],
+        chunk_ids: Option<&[Uuid]>,
     ) -> Result<()> {
         let res = self
             .auth(
@@ -313,6 +337,7 @@ impl ApiClient {
                 "base_revision": parent_revision,
                 "size": size,
                 "sealed_manifest": b64(sealed_manifest),
+                "chunk_ids": chunk_ids,
             }))
             .send()
             .await?;
@@ -415,8 +440,16 @@ pub async fn upload_file_with_progress(
     let sealed = master
         .seal_manifest(file_id, revision_id, &manifest.to_bytes())?
         .to_bytes();
-    api.commit(file_id, revision_id, parent_revision, size, &sealed)
-        .await?;
+    let chunk_ids: Vec<Uuid> = manifest.chunks.iter().map(|c| c.id).collect();
+    api.commit_with_references(
+        file_id,
+        revision_id,
+        parent_revision,
+        size,
+        &sealed,
+        Some(&chunk_ids),
+    )
+    .await?;
     progress(size, size, true);
     Ok(UploadResult {
         revision_id,
@@ -438,6 +471,128 @@ pub async fn download_file(
     download_file_with_progress(api, master, file_id, revision, destination, &|_, _, _| {}).await
 }
 
+/// Backfill all currently incomplete revisions, including hidden tombstones.
+/// Rerun after failures or concurrent legacy uploads; GC checks completeness
+/// again under the commit lock, so an incomplete pass can never enable GC.
+pub async fn backfill_account_references(api: &ApiClient, master: &MasterKey) -> Result<u64> {
+    #[derive(serde::Deserialize)]
+    struct Revision {
+        file_id: Uuid,
+        revision_id: Uuid,
+    }
+    #[derive(serde::Deserialize)]
+    struct Page {
+        versions: Vec<Revision>,
+        next: Option<Uuid>,
+    }
+    let mut after: Option<Uuid> = None;
+    let mut count = 0;
+    loop {
+        let path = after.map_or_else(
+            || "/reference-backfill".to_string(),
+            |id| format!("/reference-backfill?after={id}"),
+        );
+        let response = api.auth(api.http.get(api.url(&path))).send().await?;
+        let page: Page = api.check(response).await?.json().await?;
+        for revision in page.versions {
+            backfill_version_references(api, master, revision.file_id, revision.revision_id)
+                .await?;
+            count += 1;
+        }
+        match page.next {
+            Some(next) if after.is_none_or(|previous| next > previous) => after = Some(next),
+            None => return Ok(count),
+            _ => {
+                return Err(ClientError::Protocol(
+                    "non-advancing backfill cursor".into(),
+                ))
+            }
+        }
+    }
+}
+
+/// One explicit client batch: at most 200 revisions and 60 seconds. Always
+/// restart from the first incomplete revision; successful writes are immutable
+/// and idempotent, so interruption/ambiguous HTTP outcomes are safe to retry.
+/// Errors deliberately omit server bodies, URLs and manifest details.
+pub async fn backfill_reference_batch(api: &ApiClient, master: &MasterKey) -> serde_json::Value {
+    #[derive(serde::Deserialize)]
+    struct Revision {
+        file_id: Uuid,
+        revision_id: Uuid,
+    }
+    #[derive(serde::Deserialize)]
+    struct Page {
+        versions: Vec<Revision>,
+        next: Option<Uuid>,
+    }
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+    let mut completed = 0u64;
+    let outcome = tokio::time::timeout_at(deadline, async {
+        let response = api
+            .auth(api.http.get(api.url("/reference-backfill")))
+            .send()
+            .await?;
+        let page: Page = api.check(response).await?.json().await?;
+        let more = page.next.is_some() || page.versions.len() > 200;
+        for revision in page.versions.into_iter().take(200) {
+            backfill_version_references(api, master, revision.file_id, revision.revision_id)
+                .await?;
+            completed += 1;
+        }
+        Ok::<_, ClientError>(more)
+    })
+    .await;
+    match outcome {
+        Ok(Ok(more)) => json!({"completed": completed, "more": more, "failed": false}),
+        _ => json!({"completed": completed, "more": true, "failed": true}),
+    }
+}
+
+/// Backfill one exact historical revision only after authenticated decryption
+/// and structural/identity validation. No names, hashes or keys leave the client.
+pub async fn backfill_version_references(
+    api: &ApiClient,
+    master: &MasterKey,
+    file_id: Uuid,
+    revision_id: Uuid,
+) -> Result<()> {
+    let manifest = load_verified_manifest(api, master, file_id, Some(revision_id)).await?;
+    let ids: Vec<Uuid> = manifest.chunks.iter().map(|c| c.id).collect();
+    let res = api
+        .auth(api.http.put(api.url(&format!(
+            "/files/{file_id}/versions/{revision_id}/references"
+        ))))
+        .json(&json!({ "chunk_ids": ids }))
+        .send()
+        .await?;
+    api.check(res).await?;
+    Ok(())
+}
+
+async fn load_verified_manifest(
+    api: &ApiClient,
+    master: &MasterKey,
+    file_id: Uuid,
+    revision: Option<Uuid>,
+) -> Result<FileManifest> {
+    let (sealed, revision_id) = api.manifest(file_id, revision).await?;
+    let envelope = Envelope::from_bytes(&sealed)?;
+    let plain = master.open_manifest(file_id, revision_id, &envelope)?;
+    let manifest = FileManifest::from_bytes(&plain)
+        .map_err(|e| ClientError::Protocol(format!("manifest invalid: {e}")))?;
+    manifest.validate().map_err(ClientError::Protocol)?;
+    if manifest.file_id != file_id
+        || manifest.revision_id != revision_id
+        || revision.is_some_and(|r| r != revision_id)
+    {
+        return Err(ClientError::Integrity(
+            "manifest identity does not match server metadata".into(),
+        ));
+    }
+    Ok(manifest)
+}
+
 /// Verified plaintext bytes written to the temporary destination. Completion
 /// follows whole-file verification and atomic materialization.
 pub async fn download_file_with_progress(
@@ -448,19 +603,8 @@ pub async fn download_file_with_progress(
     destination: &Path,
     progress: &(dyn Fn(u64, u64, bool) + Send + Sync),
 ) -> Result<DownloadResult> {
-    let (sealed, revision_id) = api.manifest(file_id, revision).await?;
-    let envelope = Envelope::from_bytes(&sealed)?;
-    let plain = master.open_manifest(file_id, revision_id, &envelope)?;
-    let manifest = FileManifest::from_bytes(&plain)
-        .map_err(|e| ClientError::Protocol(format!("manifest invalid: {e}")))?;
-    manifest
-        .validate()
-        .map_err(|e| ClientError::Protocol(format!("manifest invalid: {e}")))?;
-    if manifest.file_id != file_id || manifest.revision_id != revision_id {
-        return Err(ClientError::Integrity(
-            "manifest identity does not match server metadata".into(),
-        ));
-    }
+    let manifest = load_verified_manifest(api, master, file_id, revision).await?;
+    let revision_id = manifest.revision_id;
 
     let tmp = destination.with_extension(format!(
         "{}.nntdrive-part",

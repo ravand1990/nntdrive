@@ -107,6 +107,14 @@ pub enum Action {
         path: String,
         base_revision: Option<Uuid>,
     },
+    /// Identical independent edits need no transfer, but must advance the
+    /// journal to the remote revision after fresh local content validation.
+    AdoptRevision {
+        path: String,
+        revision: Uuid,
+        size: u64,
+        hash: String,
+    },
     /// Download a remote revision to `path`.
     Download {
         path: String,
@@ -493,31 +501,60 @@ pub fn reconcile(
                 });
             }
             (
-                Some(LocalChange::Added { hash, .. }),
+                Some(LocalChange::Added {
+                    hash,
+                    size,
+                    is_dir: false,
+                    ..
+                }),
                 Some(RemoteChange::Added {
-                    hash: rh, revision, ..
+                    hash: rh,
+                    revision,
+                    size: rs,
+                    is_dir: false,
+                    ..
                 }),
             )
             | (
-                Some(LocalChange::Added { hash, .. }),
+                Some(LocalChange::Added {
+                    hash,
+                    size,
+                    is_dir: false,
+                    ..
+                }),
                 Some(RemoteChange::Modified {
-                    hash: rh, revision, ..
+                    hash: rh,
+                    revision,
+                    size: rs,
+                    ..
                 }),
             )
             | (
-                Some(LocalChange::Modified { hash, .. }),
+                Some(LocalChange::Modified { hash, size, .. }),
                 Some(RemoteChange::Added {
-                    hash: rh, revision, ..
+                    hash: rh,
+                    revision,
+                    size: rs,
+                    is_dir: false,
+                    ..
                 }),
             )
             | (
-                Some(LocalChange::Modified { hash, .. }),
+                Some(LocalChange::Modified { hash, size, .. }),
                 Some(RemoteChange::Modified {
-                    hash: rh, revision, ..
+                    hash: rh,
+                    revision,
+                    size: rs,
+                    ..
                 }),
             ) => {
-                if hash.is_some() && hash == rh {
-                    // Same content on both sides: converge on the remote revision.
+                if let Some(hash) = hash.as_ref().filter(|_| hash == rh && size == rs) {
+                    actions.push(Action::AdoptRevision {
+                        path,
+                        revision: *revision,
+                        size: *size,
+                        hash: hash.clone(),
+                    });
                 } else {
                     actions.push(Action::Conflict {
                         local_copy: conflict_copy_name(&path, conflict_device, timestamp),
@@ -525,6 +562,24 @@ pub fn reconcile(
                         remote_revision: Some(*revision),
                     });
                 }
+            }
+            (
+                Some(LocalChange::Added { .. }),
+                Some(RemoteChange::Added { .. } | RemoteChange::Modified { .. }),
+            )
+            | (Some(LocalChange::Modified { .. }), Some(RemoteChange::Added { .. })) => {
+                // File/directory type disagreement cannot establish convergence.
+                actions.push(Action::Conflict {
+                    local_copy: conflict_copy_name(&path, conflict_device, timestamp),
+                    path,
+                    remote_revision: match r {
+                        Some(
+                            RemoteChange::Added { revision, .. }
+                            | RemoteChange::Modified { revision, .. },
+                        ) => Some(*revision),
+                        _ => None,
+                    },
+                });
             }
             (Some(LocalChange::Modified { .. }), Some(RemoteChange::Deleted { .. }))
             | (Some(LocalChange::Added { .. }), Some(RemoteChange::Deleted { .. })) => {
@@ -734,13 +789,102 @@ mod tests {
             size: 10,
             hash: Some("same".into()),
         }];
+        let revision = Uuid::new_v4();
         let remote = vec![RemoteChange::Modified {
             path: "a.txt".into(),
-            revision: Uuid::new_v4(),
+            revision,
             size: 10,
             hash: Some("same".into()),
         }];
-        assert!(reconcile(&base, &local, &remote, "d", "t").is_empty());
+        assert_eq!(
+            reconcile(&base, &local, &remote, "d", "t"),
+            vec![Action::AdoptRevision {
+                path: "a.txt".into(),
+                revision,
+                size: 10,
+                hash: "same".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn convergence_requires_known_equal_hashes_sizes_and_regular_files() {
+        for local_added in [false, true] {
+            for remote_added in [false, true] {
+                for (lh, rh, ls, rs) in [
+                    (Some("same"), Some("same"), 4, 4),
+                    (None, None, 4, 4),
+                    (Some("same"), None, 4, 4),
+                    (Some("same"), Some("other"), 4, 4),
+                    (Some("same"), Some("same"), 4, 5),
+                ] {
+                    let revision = Uuid::new_v4();
+                    let path = "f".to_string();
+                    let hash = lh.map(str::to_string);
+                    let local = if local_added {
+                        LocalChange::Added {
+                            path: path.clone(),
+                            is_dir: false,
+                            size: ls,
+                            hash,
+                        }
+                    } else {
+                        LocalChange::Modified {
+                            path: path.clone(),
+                            size: ls,
+                            hash,
+                        }
+                    };
+                    let hash = rh.map(str::to_string);
+                    let remote = if remote_added {
+                        RemoteChange::Added {
+                            path: path.clone(),
+                            revision,
+                            is_dir: false,
+                            size: rs,
+                            hash,
+                        }
+                    } else {
+                        RemoteChange::Modified {
+                            path: path.clone(),
+                            revision,
+                            size: rs,
+                            hash,
+                        }
+                    };
+                    let actions = reconcile(&HashMap::new(), &[local], &[remote], "dev", "T");
+                    assert_eq!(actions.len(), 1);
+                    if lh.is_some() && lh == rh && ls == rs {
+                        assert!(
+                            matches!(&actions[0], Action::AdoptRevision { revision: r, .. } if *r == revision)
+                        );
+                    } else {
+                        assert!(matches!(actions[0], Action::Conflict { .. }));
+                    }
+                }
+            }
+        }
+        for (local_dir, remote_dir) in [(true, false), (false, true)] {
+            let actions = reconcile(
+                &HashMap::new(),
+                &[LocalChange::Added {
+                    path: "f".into(),
+                    is_dir: local_dir,
+                    size: 4,
+                    hash: Some("same".into()),
+                }],
+                &[RemoteChange::Added {
+                    path: "f".into(),
+                    is_dir: remote_dir,
+                    size: 4,
+                    hash: Some("same".into()),
+                    revision: Uuid::new_v4(),
+                }],
+                "dev",
+                "T",
+            );
+            assert!(matches!(actions[0], Action::Conflict { .. }));
+        }
     }
 
     #[test]

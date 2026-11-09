@@ -33,6 +33,25 @@
 | Provider retention loss | Health checks, repair, proactive refresh with read-back verification, honest unrecoverable status. | Erasure coding cannot recover data when more than `m` shards in a stripe are gone. Correlated batch loss can exceed this. |
 | Article content analysis | Random nonces; no deterministic encryption; opaque subjects; per-account dedupe only. | Sizes, timing, article counts and provider logs leak metadata. |
 
+## Live event-stream authorization
+
+`GET /api/v1/events/stream` revalidates the original token ID, SHA-256 digest,
+account and device binding against the shared database before every batch (up
+to 200 changes). The bearer secret is not retained; the digest has redacted
+`Debug`. Checks reject revoked or expired tokens, disabled accounts and revoked
+or missing bound devices; device-less tokens and NULL expiry remain supported.
+No process-local notification is required for invalidations on other replicas.
+
+The poll interval and in-batch authorization lease are **2 seconds**. A batch's
+check plus fetch has a **2-second deadline**; failures/timeouts close the stream
+without returning database diagnostics. On an actively polled idle body, closure
+is normally within one poll and at most **4 seconds** (poll plus DB deadline,
+excluding runtime scheduling delays). Backpressure may suspend polling; before
+resuming changes from a batch older than 2 seconds the server rechecks authority,
+with the same deadline. This is bounded polling, not instantaneous revocation:
+frames admitted during a still-valid lease or already buffered in HTTP/proxies
+cannot be retracted. Clients must reconnect and authenticate again after closure.
+
 ## Cryptographic choices
 
 | Purpose | Primitive |
@@ -73,8 +92,11 @@ No algorithm is implemented by this project.
 
 ## Deployment hardening checklist
 
-- Set a strong `POSTGRES_PASSWORD` and `NNTDRIVE_SECRET_KEY`; keep `deploy/.env`
-  out of version control (already ignored).
+- For fresh image-only installs, use the generate-once launcher and protect/back
+  up `.nntdrive-secrets/`. For other installs, explicitly set a strong
+  `POSTGRES_PASSWORD` and stable `NNTDRIVE_SECRET_KEY`; keep `.env` private.
+  Do not delete/replace saved secrets to retry startup or automatically rotate
+  keys over existing data. See [deployment threat model](../deploy/README-IMAGES.md#threat-model-and-interrupted-initialization).
 - Keep `NNTDRIVE_ALLOW_REGISTRATION=false` unless onboarding.
 - Put the backend behind a TLS reverse proxy; expose only 80/443.
 - Restrict the admin UI to trusted networks or add SSO/reverse-proxy auth.

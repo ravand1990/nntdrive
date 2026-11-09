@@ -70,7 +70,7 @@ export PATH="$HOME/flutter/bin:$PATH"
 
 # Java 17 + Linux desktop toolchain
 sudo apt-get install -y openjdk-17-jdk-headless clang cmake ninja-build \
-  pkg-config libgtk-3-dev liblzma-dev
+  pkg-config libgtk-3-dev liblzma-dev libayatana-appindicator3-dev
 
 # Android command-line tools + SDK 36
 sudo mkdir -p /opt/android-sdk/cmdline-tools

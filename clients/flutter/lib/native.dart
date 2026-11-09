@@ -11,6 +11,8 @@ import 'dart:isolate';
 
 import 'package:ffi/ffi.dart';
 
+import 'session_operations.dart';
+
 class NativeException implements Exception {
   NativeException(this.message);
   final String message;
@@ -65,6 +67,20 @@ Future<Map<String, dynamic>> _runSyncRequest(
     Isolate.run(
         () => NativeBridge.instance._syncRequest(handle, encoded, address));
 
+typedef _BackfillNative = Pointer<Utf8> Function(Uint64, Pointer<Utf8>);
+typedef _BackfillDart = Pointer<Utf8> Function(int, Pointer<Utf8>);
+
+// No callback or listener crosses isolates: this bounded operation returns one
+// owned string, decoded/freed on its worker isolate using the normal ABI helper.
+Future<Map<String, dynamic>> _runBackfill(int handle, String request) =>
+    Isolate.run(() => NativeBridge.instance._backfill(handle, request));
+
+Future<Map<String, dynamic>> _runCopy(int handle, String request) =>
+    Isolate.run(() => NativeBridge.instance._copyFile(handle, request));
+
+Future<bool> _runLocalFileMatches(String request) =>
+    Isolate.run(() => NativeBridge.instance._localFileMatches(request));
+
 class NativeBridge {
   NativeBridge._(this._lib) {
     _free = _lib.lookupFunction<_FreeNative, _FreeDart>('nntdrive_string_free');
@@ -77,6 +93,11 @@ class NativeBridge {
 
   static NativeBridge? _instance;
   static NativeBridge get instance => _instance ??= NativeBridge._(_open());
+
+  final _operations = SessionOperations();
+
+  /// Stop admitting handle-based workers and wait for their terminal callbacks.
+  Future<void> drainSession(int handle) => _operations.drain(handle);
 
   final DynamicLibrary _lib;
   late final _FreeDart _free;
@@ -133,6 +154,38 @@ class NativeBridge {
     }
   }
 
+  /// Local-only canonical/case comparison; never send this value to the API.
+  String nameCollisionKey(String name) {
+    final f = _lib.lookupFunction<_Str1Native, _Str1Dart>(
+        'nntdrive_name_collision_key');
+    final p = _cstr(name);
+    try {
+      return _decode(f(p))['comparison'] as String;
+    } finally {
+      malloc.free(p);
+    }
+  }
+
+  /// Runs disk hashing off the UI isolate; the result is a refresh-time snapshot.
+  Future<bool> localFileMatches(Map<String, dynamic> request) async {
+    final handle = request['handle'] as int;
+    return _operations.run(handle, () {
+      final encoded = jsonEncode(request);
+      return _runLocalFileMatches(encoded);
+    });
+  }
+
+  bool _localFileMatches(String encoded) {
+    final f = _lib.lookupFunction<_Str1Native, _Str1Dart>(
+        'nntdrive_local_file_matches');
+    final request = _cstr(encoded);
+    try {
+      return _decode(f(request))['matches'] == true;
+    } finally {
+      malloc.free(request);
+    }
+  }
+
   Map<String, dynamic> generateAccount(String password) {
     final f = _lib
         .lookupFunction<_Str1Native, _Str1Dart>('nntdrive_generate_account');
@@ -184,6 +237,37 @@ class NativeBridge {
     final f = _lib.lookupFunction<Void Function(Uint64), void Function(int)>(
         'nntdrive_lock');
     f(handle);
+  }
+
+  Future<Map<String, dynamic>> backfillReferencesAsync(
+          int handle, String baseUrl, String token) =>
+      _operations.run(handle, () =>
+        _runBackfill(handle, jsonEncode({'baseUrl': baseUrl, 'token': token})));
+
+  Map<String, dynamic> _backfill(int handle, String request) {
+    final f = _lib.lookupFunction<_BackfillNative, _BackfillDart>(
+        'nntdrive_backfill_references');
+    final input = _cstr(request);
+    try {
+      return _decode(f(handle, input));
+    } finally {
+      malloc.free(input);
+    }
+  }
+
+  Future<Map<String, dynamic>> copyFileAsync(
+          int handle, Map<String, dynamic> request) =>
+      _operations.run(handle, () => _runCopy(handle, jsonEncode(request)));
+
+  Map<String, dynamic> _copyFile(int handle, String request) {
+    final f = _lib.lookupFunction<_BackfillNative, _BackfillDart>(
+        'nntdrive_copy_file');
+    final input = _cstr(request);
+    try {
+      return _decode(f(handle, input));
+    } finally {
+      malloc.free(input);
+    }
   }
 
   Map<String, dynamic> deviceIdentity() {
@@ -309,6 +393,28 @@ class NativeBridge {
     required String journalPath,
     required String deviceName,
     String excludedJson = '[]',
+  }) =>
+      _operations.run(
+          handle,
+          () => _syncRunAsync(
+              handle: handle,
+              baseUrl: baseUrl,
+              token: token,
+              remoteRootId: remoteRootId,
+              localPath: localPath,
+              journalPath: journalPath,
+              deviceName: deviceName,
+              excludedJson: excludedJson));
+
+  Future<Map<String, dynamic>> _syncRunAsync({
+    required int handle,
+    required String baseUrl,
+    required String token,
+    required String remoteRootId,
+    required String localPath,
+    required String journalPath,
+    required String deviceName,
+    String excludedJson = '[]',
   }) {
     final args = <String, dynamic>{
       'handle': handle,
@@ -339,6 +445,12 @@ class NativeBridge {
   /// Runs the core off the UI thread. NativeCallable.listener is deliberately
   /// created on the receiving isolate: Tokio threads may emit events freely.
   Future<Map<String, dynamic>> syncRequestAsync(
+          int handle, Map<String, dynamic> request,
+          {void Function(Map<String, dynamic>)? onProgress}) =>
+      _operations.run(handle,
+          () => _syncRequestAsync(handle, request, onProgress: onProgress));
+
+  Future<Map<String, dynamic>> _syncRequestAsync(
       int handle, Map<String, dynamic> request,
       {void Function(Map<String, dynamic>)? onProgress}) async {
     // Fail before creating a callback if an old DLL is accidentally bundled.
@@ -398,6 +510,26 @@ class NativeBridge {
     required String revisionId,
     required String parentRevision,
     required String path,
+  }) =>
+      _operations.run(
+          handle,
+          () => _uploadAsync(
+              handle: handle,
+              baseUrl: baseUrl,
+              token: token,
+              fileId: fileId,
+              revisionId: revisionId,
+              parentRevision: parentRevision,
+              path: path));
+
+  Future<Map<String, dynamic>> _uploadAsync({
+    required int handle,
+    required String baseUrl,
+    required String token,
+    required String fileId,
+    required String revisionId,
+    required String parentRevision,
+    required String path,
   }) {
     final args = <String, dynamic>{
       'handle': handle,
@@ -423,6 +555,24 @@ class NativeBridge {
   }
 
   Future<Map<String, dynamic>> downloadAsync({
+    required int handle,
+    required String baseUrl,
+    required String token,
+    required String fileId,
+    required String revisionId,
+    required String destination,
+  }) =>
+      _operations.run(
+          handle,
+          () => _downloadAsync(
+              handle: handle,
+              baseUrl: baseUrl,
+              token: token,
+              fileId: fileId,
+              revisionId: revisionId,
+              destination: destination));
+
+  Future<Map<String, dynamic>> _downloadAsync({
     required int handle,
     required String baseUrl,
     required String token,

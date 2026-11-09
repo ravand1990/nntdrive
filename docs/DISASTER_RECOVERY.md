@@ -7,7 +7,8 @@
 | Recovery kit (`*.recovery.json`) + recovery code | Offline, separate from backups | Total, irreversible loss of E2EE data |
 | Password/keyfile | Password manager / user devices | Recover with the kit; otherwise lost |
 | PostgreSQL backup | Off-host backup storage | Article Message-IDs, manifests and provider configs are lost |
-| `NNTDRIVE_SECRET_KEY` | Secret manager **and** offline | Provider passwords in DB backups become unreadable |
+| `.nntdrive-secrets/` (image launcher) | Protected off-host backup, directory 0700/files 0600 | Missing state blocks startup with existing volumes; lost provider key makes encrypted provider passwords unreadable |
+| `NNTDRIVE_SECRET_KEY` (explicit/non-launcher installs) | Secret manager **and** offline | Provider passwords in DB backups become unreadable |
 | Usenet provider account | Provider | Cannot retrieve/post; storage still exists at the provider |
 | `checkpoint.json` | With each DB backup | Integrity/version reference; not secret |
 
@@ -30,11 +31,29 @@ are unknown. This is why backups must be frequent and verified.
 
 ## Scenario: backend server lost
 
-1. Provision a new Linux host, Docker + Compose.
-2. Restore `deploy/.env` (including the same `NNTDRIVE_SECRET_KEY` if you need
-   provider passwords from the DB; otherwise re-enter providers).
-3. Start PostgreSQL and the backend, then restore the latest dump with
-   `scripts/restore.sh <backup> --yes`.
+1. Provision a new Linux host, Docker + Compose (and Python 3 for image-launcher installs).
+2. For image-launcher installs, restore the original `.nntdrive-secrets/` directory
+   **before any start**, next to the matching launcher/Compose files. Restore optional
+   `.env`, preserve the same project name and invoking user, directory 0700 and
+   files 0600. Then use `python3 nntdrive-compose.py up`; do not initialize a new
+   secret over a restored database. For older/source installs, retain the original
+   workflow and restore `deploy/.env` including the same `NNTDRIVE_SECRET_KEY`.
+   A lost/corrupt secret file with existing named volumes deliberately blocks
+   startup: recover the original backup rather than deleting the guard or volumes.
+   The launcher does not migrate existing installs or rotate credentials.
+3. Restore the latest dump with writers stopped. For source installs use
+   `scripts/restore.sh <backup> --yes`. For image-launcher installs, after the
+   initial healthy `up`, use the same project option on every command:
+
+   ```bash
+   python3 nntdrive-compose.py stop backend
+   python3 nntdrive-compose.py exec -T postgres \
+     pg_restore -U nntdrive -d nntdrive --clean --if-exists < nntdrive.dump
+   python3 nntdrive-compose.py up
+   ```
+
+   The restore replaces database contents: verify the backup/checkpoint and take
+   a safety backup first. Do not serve traffic until restore and checks complete.
 4. Verify `/healthz`; open `/admin` with a newly minted operator token.
 5. Run a health sweep. Run downloads for a few important files.
 6. Clients resume from their last `since` cursor (events retained in the DB
@@ -99,7 +118,7 @@ within a stripe. Mitigations:
 1. Add the new provider with `retrieval_only` and check a sample download.
 2. If it lacks the old articles, keep the old account for retrieval or restore
    them from a client.
-3. Mark the new provider `both`/`posting_only` as desired, restart the backend.
+3. Mark the new provider `both`/`posting_only` as desired via admin CRUD; it is applied on the serving backend without restart.
 4. Health sweeps will record which articles are retrievable. Repairs and refreshes
    post to the current posting provider.
 5. Nothing in the metadata changes provider names retroactively; old references
