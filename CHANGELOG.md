@@ -4,6 +4,12 @@ All notable changes are documented here. Every release tag **must** have an
 entry with `### Features` and/or `### Bug fixes` (at least one bullet). The
 release workflow refuses to publish if the entry is missing.
 
+## [Unreleased]
+
+### Bug fixes
+
+- Windows updater launches PowerShell with valid standard handles while remaining detached, retains startup error output and the helper PID, and exercises handoff across real parent exit with a compiled executable regression (#49). Installed-release acceptance remains separate.
+
 ## [0.7.0] - 2026-11-09
 
 ### Features

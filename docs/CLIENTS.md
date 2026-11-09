@@ -286,7 +286,10 @@ inaccessible feeds never prevent using the app. The updater:
 4. unpacks to a temporary directory and starts a detached helper;
 5. exits, letting the helper replace the install directory and restart the app.
 
-The helper launch is awaited before the app exits. On Windows, the helper must
+The helper launch is awaited before the app exits. Windows uses detached-with-
+stdio mode so PowerShell receives valid standard handles; startup stderr is
+retained in `helper-stderr.log`, and the app drains output without waiting for
+helper termination. On Windows, the helper must
 also acknowledge its archive-layout and directory-write preflight within 15
 seconds; a launch/preflight failure leaves the app open with an error. It waits
 at most 60 seconds for the old process to exit, then backs up overwritten payload
