@@ -8,6 +8,7 @@ release workflow refuses to publish if the entry is missing.
 
 ### Bug fixes
 
+- Fresh image-only installations can start with an absent/empty `.env` using `nntdrive-compose.py`: database and provider-encryption secrets are generated once, privately persisted, and reused. Missing/corrupt secrets with existing data fail closed; explicit credentials cannot silently rotate saved values (#62).
 - Live sync event streams recheck the original credential and account/device status with a two-second authorization lease, closing after logout, revocation, disable or expiry (#16 partial). Already admitted/buffered frames cannot be retracted.
 
 ## [0.6.0] - 2026-11-09
