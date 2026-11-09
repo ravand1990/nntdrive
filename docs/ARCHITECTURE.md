@@ -150,7 +150,10 @@ panel. Concurrent edits preserve conflict copies.
 - `files` — namespace; `name_enc` is a client-sealed envelope bound to the node
   id. The server can order opaque bytes but cannot read names.
 - `file_versions` — immutable sealed manifests, one row per revision, with
-  parent revision and content size.
+  parent revision and content size. `version_chunks` indexes complete opaque
+  chunk identities supplied by authenticated clients; unknown legacy sets block
+  account GC until client-side backfill. GC opt-in permanently fences legacy
+  commits under the same account transaction lock; retained history is protected.
 - `chunks`, `stripes`, `shards`, `shard_history` — article locations and health.
   Message-IDs are mutable pointers to immutable content; manifests reference
   stripes and content hashes, so repair/refresh never rewrites a manifest.

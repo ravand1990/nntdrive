@@ -1,10 +1,35 @@
 # Changelog
 
+## Unreleased
+
+- Apply admin provider CRUD to the serving backend without restart, pinning one
+  provider snapshot per storage operation. Reject invalid configs/credentials
+  before commit; retain DB management when the final provider is removed.
+  Single-backend only; replica invalidation remains out of scope (partial #15).
+- Admin dashboard saves a durable article-age refresh policy and shows persisted
+  per-batch maintenance results, including refresh failures and unrecoverable
+  health/repair counts (#15 partial).
+- Add opt-in per-account orphan metadata cleanup with a 1..3650-day grace period,
+  complete immutable version/chunk references, authenticated-client legacy
+  backfill and a permanent reference-aware commit fence. All retained history
+  remains protected; incomplete accounts refuse cleanup. Admin jobs show deleted
+  or blocked batch results. Usenet articles are never retracted. Upgrade clients
+  before opting in. Flutter now offers explicit unlocked account reference-backfill
+  batches (200 revisions / 60 seconds), local manifest validation, results and safe
+  retry. Live-stack/browser acceptance remains open.
+
+
 All notable changes are documented here. Every release tag **must** have an
 entry with `### Features` and/or `### Bug fixes` (at least one bullet). The
 release workflow refuses to publish if the entry is missing.
 
-## [Unreleased]
+## [0.5.2] - 2026-11-08
+
+### Features
+
+- Release downloads now name each client asset with its version and platform: `nntdrive-<version>-linux-x64.tar.gz`, `nntdrive-<version>-windows-x64.zip` and `nntdrive-<version>-android.apk`. Checksums cover those names, and desktop downloads keep the unversioned names as aliases so older auto-updaters can still find them.
+
+## [0.5.1] - 2026-11-07
 
 ### Features
 
@@ -15,6 +40,10 @@ release workflow refuses to publish if the entry is missing.
 - File/folder rows now offer **Move to…** with an encrypted folder picker and a dedicated guarded move endpoint (#51, partial). Canonical client-local destination collision checks fail closed on unreadable names; the server atomically checks source identity/name/parent and complete destination membership under the account namespace lock. Moves preserve the node, sealed name, content versions and subtree; stale checks require refresh, with no unsafe old-server fallback. Copy and installed/two-device acceptance remain outstanding.
 - File/folder rows offer encrypted rename with portable-name validation, fresh local-decryption collision checks and stale-entry rejection (#51, partial). Guarded rename atomically compares the opaque sibling snapshot and emits a sync event; concurrent namespace changes require refresh. Copy and installed/two-device acceptance remain outstanding; legacy clients can still introduce duplicate names after a guarded rename.
 - Guided README installation and usage steps cover release downloads, server setup, offline recovery material, client connection, folder sync and conflicts (#52).
+
+### Features
+
+- Declarative six-target test environment launcher wraps isolated local checks or correlated exact-head manual GitHub Clients runs, with bounded waits and exact artifact links. Windows runtime fails closed pending approved host provisioning; Linux-client now requires an isolated release-bundle Xvfb process/window smoke with evidence upload (hosted execution not yet verified). Backend-sync/update E2E remains incomplete (#53). See `docs/TEST-ENVIRONMENTS.md`.
 
 ### Bug fixes
 

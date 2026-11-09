@@ -44,7 +44,12 @@ pub fn app(state: state::AppState) -> Router {
             "/files/{id}/versions",
             get(api::list_versions).post(api::commit_version),
         )
+        .route(
+            "/files/{id}/versions/{revision}/references",
+            axum::routing::put(api::backfill_references),
+        )
         .route("/files/{id}/manifest", get(api::get_manifest))
+        .route("/reference-backfill", get(api::incomplete_references))
         .route("/chunks/lookup", get(api::lookup_chunk))
         .route("/chunks", post(api::publish_chunk))
         .route("/chunks/{id}", get(api::get_chunk))
@@ -68,6 +73,10 @@ pub fn app(state: state::AppState) -> Router {
             "/admin/jobs",
             get(admin::list_jobs).post(admin::enqueue_job),
         )
+        .route(
+            "/admin/retention",
+            get(admin::get_retention).put(admin::set_retention),
+        )
         .route("/admin/restart", post(admin::restart_backend));
 
     Router::new()
@@ -86,59 +95,84 @@ pub fn app(state: state::AppState) -> Router {
         .with_state(state)
 }
 
-/// Builds the provider pool from the database (preferred) or the environment.
-/// The admin API persists providers for the next restart.
+/// DB-managed installations never fall back to environment providers.
 pub async fn load_providers(pool: &PgPool, secret_key: &[u8; 32]) -> anyhow::Result<NntpPool> {
-    let rows = sqlx::query(
-        "SELECT name, host, port, tls, username, password_enc, max_connections, role, priority,
-                groups, retention_days, enabled FROM providers WHERE enabled = TRUE ORDER BY priority",
+    let mut tx = pool.begin().await?;
+    let managed: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM provider_management) OR EXISTS(SELECT 1 FROM providers)",
     )
-    .fetch_all(pool)
+    .fetch_one(&mut *tx)
     .await?;
-
-    let mut configs = Vec::new();
-    for row in rows {
-        use sqlx::Row;
-        let password_enc: Option<Vec<u8>> = row.get("password_enc");
-        let password = password_enc
-            .as_deref()
-            .and_then(|b| state::decrypt_secret(secret_key, b))
-            .and_then(|b| String::from_utf8(b).ok());
-        let role = match row.get::<String, _>("role").as_str() {
-            "posting_only" => ProviderRole::PostingOnly,
-            "retrieval_only" => ProviderRole::RetrievalOnly,
-            _ => ProviderRole::Both,
-        };
-        configs.push(NntpConfig {
-            name: row.get("name"),
-            host: row.get("host"),
-            port: row.get::<i32, _>("port") as u16,
-            tls: row.get("tls"),
-            username: row.get("username"),
-            password,
-            max_connections: row.get::<i32, _>("max_connections") as usize,
-            role,
-            priority: row.get::<i32, _>("priority") as u8,
-            groups: row.get("groups"),
-            message_id_domain: "nntdrive.local".into(),
-            connect_timeout_secs: 30,
-            io_timeout_secs: 60,
-            retention_days: row
-                .get::<Option<i32>, _>("retention_days")
-                .map(|d| d as u32),
-            max_retries: 3,
-        });
-    }
-
-    if configs.is_empty() {
+    let db = load_db_providers(&mut tx, secret_key).await?;
+    if !managed {
         if let Ok(json) = std::env::var("NNTDRIVE_NNTP_PROVIDERS") {
-            configs = nntdrive_nntp::parse_providers(&json)?;
+            return Ok(NntpPool::new(nntdrive_nntp::parse_providers(&json)?)?);
         }
     }
-    if configs.is_empty() {
-        tracing::warn!("no NNTP providers configured; uploads will fail until one is added");
+    Ok(db)
+}
+
+pub(crate) async fn load_db_providers(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    secret_key: &[u8; 32],
+) -> anyhow::Result<NntpPool> {
+    let rows = sqlx::query("SELECT * FROM providers ORDER BY priority, id")
+        .fetch_all(&mut **tx)
+        .await?;
+    let mut configs = Vec::new();
+    for row in rows {
+        let config = provider_config(&row, secret_key)?;
+        if sqlx::Row::try_get::<bool, _>(&row, "enabled")? {
+            configs.push(config);
+        }
     }
     Ok(NntpPool::new(configs)?)
+}
+
+pub(crate) fn provider_config(
+    row: &sqlx::postgres::PgRow,
+    key: &[u8; 32],
+) -> anyhow::Result<NntpConfig> {
+    use sqlx::Row;
+    let blob: Option<Vec<u8>> = row.try_get("password_enc")?;
+    let password = match blob {
+        None => None,
+        Some(blob) => Some(
+            String::from_utf8(
+                state::decrypt_secret(key, &blob)
+                    .ok_or_else(|| anyhow::anyhow!("invalid provider credentials"))?,
+            )
+            .map_err(|_| anyhow::anyhow!("invalid provider credentials"))?,
+        ),
+    };
+    let role = match row.try_get::<String, _>("role")?.as_str() {
+        "both" => ProviderRole::Both,
+        "posting_only" => ProviderRole::PostingOnly,
+        "retrieval_only" => ProviderRole::RetrievalOnly,
+        _ => anyhow::bail!("invalid provider role"),
+    };
+    let config = NntpConfig {
+        name: row.try_get("name")?,
+        host: row.try_get("host")?,
+        port: row.try_get::<i32, _>("port")?.try_into()?,
+        tls: row.try_get("tls")?,
+        username: row.try_get("username")?,
+        password,
+        max_connections: row.try_get::<i32, _>("max_connections")?.try_into()?,
+        role,
+        priority: row.try_get::<i32, _>("priority")?.try_into()?,
+        groups: row.try_get("groups")?,
+        message_id_domain: "nntdrive.local".into(),
+        connect_timeout_secs: 30,
+        io_timeout_secs: 60,
+        retention_days: row
+            .try_get::<Option<i32>, _>("retention_days")?
+            .map(u32::try_from)
+            .transpose()?,
+        max_retries: 3,
+    };
+    config.validate()?;
+    Ok(config)
 }
 
 pub fn run_worker(state: Arc<state::AppState>) {

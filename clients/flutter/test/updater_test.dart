@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nntdrive/updater.dart';
 
@@ -20,12 +18,21 @@ void main() {
     expect(parseChecksum(body, 'missing.zip'), isNull);
   });
 
-  test('asset name matches the host platform', () {
-    final name = platformAssetName();
-    if (Platform.isWindows) {
-      expect(name, 'nntdrive-windows-x64.zip');
-    } else if (Platform.isLinux) {
-      expect(name, 'nntdrive-linux-x64.tar.gz');
-    }
+  test('asset name includes the release version and platform', () {
+    final name = platformAssetName('0.5.1');
+    expect(name, startsWith('nntdrive-0.5.1-'));
+    expect(name, endsWith(platformAssetSuffix()));
+  });
+
+  test('versioned asset is preferred over the unversioned alias', () {
+    final versioned = {'name': platformAssetName('0.5.1')};
+    final legacy = {'name': 'nntdrive${platformAssetSuffix()}'};
+    final chosen = selectPlatformAsset([legacy, versioned], '0.5.1');
+    expect(chosen, same(versioned));
+  });
+
+  test('unversioned asset still resolves for older releases', () {
+    final legacy = {'name': 'nntdrive${platformAssetSuffix()}'};
+    expect(selectPlatformAsset([legacy], '0.5.1'), same(legacy));
   });
 }

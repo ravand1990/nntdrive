@@ -110,7 +110,10 @@ impl std::fmt::Debug for NntpConfig {
 
 impl NntpConfig {
     pub fn validate(&self) -> Result<()> {
-        if self.host.is_empty() {
+        if self.name.trim().is_empty()
+            || self.host.trim().is_empty()
+            || self.host.chars().any(char::is_whitespace)
+        {
             return Err(NntpError::Config("host is required".into()));
         }
         if self.port == 0 {
@@ -119,8 +122,21 @@ impl NntpConfig {
         if self.max_connections == 0 || self.max_connections > 200 {
             return Err(NntpError::Config("max_connections must be 1..=200".into()));
         }
-        if self.groups.is_empty() {
+        if self.groups.is_empty()
+            || self
+                .groups
+                .iter()
+                .any(|g| g.is_empty() || g.chars().any(|c| c.is_whitespace() || c == ','))
+        {
             return Err(NntpError::Config("at least one group is required".into()));
+        }
+        if self
+            .username
+            .iter()
+            .chain(self.password.iter())
+            .any(|v| v.contains(['\r', '\n']))
+        {
+            return Err(NntpError::Config("invalid provider credentials".into()));
         }
         if self.username.is_some() != self.password.is_some() {
             return Err(NntpError::Config(

@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "toolchains": {
+    "local": {"definition": "deploy/docker-compose.checks.yml", "rust": "1.99.1", "flutter": "3.47.9", "postgres": "16-alpine (digest in Compose)"},
+    "github": {"definition": ".github/workflows/clients.yml", "flutter": "3.47.9", "java": "17", "rust": "stable (rolling, not fully pinned)", "android_emulator_api": 35, "linux_runner": "ubuntu-24.04", "windows_runner": "windows-2022"}
+  },
+  "hosted_command": {"workflow": "test-environments.yml", "event": "workflow_dispatch", "inputs": ["target", "expected_sha", "correlation"], "suite": ".github/workflows/clients.yml"},
+  "targets": {
+    "linux-core": {"executor": "local", "command": ["bash", "scripts/dev-check.sh", "all"], "timeout_seconds": 3600, "coverage": "isolated PostgreSQL/mock NNTP, Rust and Flutter native unit suites"},
+    "linux-client": {"executor": "github", "artifact": "nntdrive-linux-x64", "timeout_seconds": 5400, "coverage": "release bundle, native unit tests and network-isolated Xvfb live-process/window smoke; no backend sync/update E2E"},
+    "android-build": {"executor": "github", "artifact": "nntdrive-android", "timeout_seconds": 5400, "coverage": "release APK with three native ABIs; debug signing"},
+    "android-emulator": {"executor": "github", "artifact": "nntdrive-android", "timeout_seconds": 5400, "coverage": "KVM native crypto/private-storage smoke; no backend sync E2E"},
+    "windows-build": {"executor": "github", "artifact": "nntdrive-windows-x64", "timeout_seconds": 5400, "coverage": "hosted MSVC build and native unit tests; no clean-machine runtime"},
+    "windows-runtime": {"executor": "blocked", "timeout_seconds": 1, "reason": "No approved isolated Windows runtime host/budget. Human provisioning and trust policy required; generic self-hosted runners are forbidden."}
+  }
+}

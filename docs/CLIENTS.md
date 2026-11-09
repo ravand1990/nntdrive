@@ -89,6 +89,29 @@ contain path, direction, logical bytes/total and commit/verification completion.
 `tool/sync_smoke.dart` verifies two-folder progress and all conflict choices
 against a real HTTP backend and mock NNTP fixture (see Development).
 
+## Legacy reference preparation
+
+After unlocking, open the account menu → **Prepare legacy references** →
+**Start batch**. The client validates/decrypts manifests locally, including
+historical and deleted-file revisions, then submits only opaque chunk IDs using
+that session's bearer token. No keys or plaintext are sent to the server. Each
+explicit batch processes at most 200 revisions within a 60-second deadline.
+Results show confirmed revisions for that batch, remaining work, or a safe error;
+**Continue / retry** restarts at the first incomplete revision. Confirmed writes
+are immutable/idempotent, including retries after an ambiguous timeout. Counts
+are acknowledgements, not a whole-account total. There are no automatic retries.
+A bad manifest/wrong key stops the batch; resolve the cause rather than skipping
+it. A clean pass does not enable GC or guarantee a concurrently uploading legacy
+client cannot add incomplete history. Upgrade every client; admin GC independently
+rechecks completeness. No NNTP articles or file versions are deleted.
+
+`nntdrive_backfill_references(handle, request_json)` runs off the UI thread in a
+separate top-level isolate helper and returns one owned JSON result, freed exactly
+once with `nntdrive_string_free`; it retains no native callback/listener. Locked
+handles fail before HTTP. Old cores missing this additive export fail safely;
+ship Flutter and its native library together. Live browser acceptance is separate
+and remains unperformed.
+
 ## Build instructions
 
 ### Linux and Android (all-in-one)
@@ -236,7 +259,9 @@ and prompts are serialized across automatic and manual triggers, and offline or
 inaccessible feeds never prevent using the app. The updater:
 
 1. reads `releases/latest` and compares the tag with the installed version;
-2. selects `nntdrive-windows-x64.zip` or `nntdrive-linux-x64.tar.gz`;
+2. selects `nntdrive-<version>-windows-x64.zip` or
+   `nntdrive-<version>-linux-x64.tar.gz`, falling back to the unversioned name
+   used by older releases;
 3. downloads over HTTPS and verifies the SHA-256 from `SHA256SUMS.txt`;
 4. unpacks to a temporary directory and starts a detached helper;
 5. exits, letting the helper replace the install directory and restart the app.

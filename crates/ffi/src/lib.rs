@@ -567,6 +567,28 @@ pub unsafe extern "C" fn nntdrive_sync_request(
     result
 }
 
+/// Bounded, explicit reference backfill for the authenticated token's account.
+/// No callback is retained; only the returned owned JSON string crosses the ABI.
+///
+/// # Safety
+/// `request` must be NUL-terminated UTF-8 JSON. Free the result exactly once with
+/// `nntdrive_string_free`. Invoke off the UI thread.
+#[no_mangle]
+pub unsafe extern "C" fn nntdrive_backfill_references(
+    handle: u64,
+    request: *const c_char,
+) -> *mut c_char {
+    guard(|| {
+        let master = key(handle)?;
+        let config: serde_json::Value =
+            serde_json::from_str(&arg(request)?).map_err(|_| "invalid backfill request")?;
+        let mut api = ApiClient::new(config["baseUrl"].as_str().ok_or("missing baseUrl")?)
+            .map_err(|_| "invalid backend URL")?;
+        api.set_token(config["token"].as_str().ok_or("missing token")?);
+        Ok(runtime().block_on(nntdrive_client::backfill_reference_batch(&api, &master)))
+    })
+}
+
 /// Creates a recovery kit for an unlocked account.
 ///
 /// # Safety

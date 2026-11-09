@@ -70,7 +70,7 @@
 
   <section>
     <h2>Repair queue &amp; recent failures</h2>
-    <table><thead><tr><th>Job</th><th>State</th><th>Attempts</th><th>Last error</th><th>Updated</th></tr></thead><tbody id="jobs"></tbody></table>
+    <table><thead><tr><th>Job</th><th>State</th><th>Attempts</th><th>Result / last error</th><th>Updated</th></tr></thead><tbody id="jobs"></tbody></table>
   </section>
 
   <section>
@@ -80,7 +80,7 @@
 
   <section>
     <h2>Usenet providers</h2>
-    <p class="muted">Posting and retrieval can use different hosts/accounts. Edits are saved immediately and applied after <strong>Restart backend</strong> in Maintenance.</p>
+    <p class="muted">Posting and retrieval can use different hosts/accounts. Edits are saved and applied immediately on this backend; active storage operations retain their provider snapshot.</p>
     <table><thead><tr><th>Provider</th><th>Type</th><th>Priority</th><th>Groups</th><th>Traffic</th><th>Enabled</th><th></th></tr></thead><tbody id="configured"></tbody></table>
     <div class="row" style="margin-top:12px">
       <button id="addprovider">Add provider</button>
@@ -91,12 +91,24 @@
   <section>
     <h2>Maintenance</h2>
     <div class="row">
+      <label for="refresh-days">Refresh articles older than (days)</label>
+      <input id="refresh-days" type="number" min="1" max="36500" step="1">
+      <button id="save-retention" class="secondary">Save refresh policy</button>
+    </div>
+    <p class="muted">Saved policy applies to subsequent refresh batches and survives restarts. Provider retention is only a hint, not a durability guarantee. Results below are per batch; continued batches have separate jobs. A done batch with blocked, failed or unrecoverable counts is not healthy. Orphan cleanup removes only local chunk/article metadata, never NNTP articles. All historical, conflict and deleted versions stay protected. Cleanup refuses accounts with incomplete references; an unlocked upgraded client must backfill every legacy revision first.</p>
+    <div class="row">
+      <label for="gc-account">GC account ID</label><input id="gc-account" placeholder="Account UUID">
+      <label for="gc-days">Orphan grace (days)</label><input id="gc-days" type="number" min="1" max="3650" value="7">
+      <button class="secondary danger" id="run-gc">Collect orphan metadata</button>
+    </div>
+    <p class="muted">Explicit opt-in: successful cleanup permanently requires reference-aware version commits for this account, even if zero chunks are removed. Upgrade all clients first. Upload/reuse older than the grace period may fail safely and require retry. One run collects at most 1000 chunks; run again for further batches.</p>
+    <div class="row">
       <button class="secondary" data-job="health_sweep">Run health sweep</button>
       <button class="secondary" data-job="refresh_sweep">Run retention refresh</button>
       <button class="secondary" id="verify-articles">Verify recent articles</button>
       <button class="secondary danger" id="restart">Restart backend</button>
     </div>
-    <p id="jobmsg" class="muted">Restarting applies new provider settings. Active transfers will be interrupted.</p>
+    <p id="jobmsg" class="muted">Provider edits do not require a restart. Restarting interrupts active transfers.</p>
   </section>
 </main>
 
@@ -157,6 +169,8 @@ let userCache = [];
 let providerCache = [];
 let editingUser = null;
 let editingProvider = null;
+let retentionDirty = false;
+$('refresh-days').oninput = () => { retentionDirty = true; };
 
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function bytes(n) { if (n == null) return '—'; const u=['B','KiB','MiB','GiB','TiB']; let i=0,v=Number(n); while(v>=1024&&i<u.length-1){v/=1024;i++;} return v.toFixed(i?1:0)+' '+u[i]; }
@@ -215,11 +229,12 @@ function openProvider(id) {
 }
 
 async function load() {
-  const [stats, users, jobs, configured] = await Promise.all([
-    api('/admin/stats'), api('/admin/users'), api('/admin/jobs'), api('/admin/providers')
+  const [stats, users, jobs, configured, retention] = await Promise.all([
+    api('/admin/stats'), api('/admin/users'), api('/admin/jobs'), api('/admin/providers'), api('/admin/retention')
   ]);
   $('app').hidden = false; $('login').hidden = true;
   $('refresh').hidden = false; $('logout').hidden = false;
+  if (!retentionDirty && document.activeElement !== $('refresh-days')) $('refresh-days').value = retention.refresh_days;
 
   const cards = [
     ['Encrypted storage', bytes(stats.logical_bytes), bytes(stats.ciphertext_bytes) + ' ciphertext'],
@@ -239,7 +254,7 @@ async function load() {
 
   $('jobs').innerHTML = (jobs.jobs||[]).slice(0,50).map(j => `<tr>
     <td>${esc(j.kind)}</td><td><span class="pill">${esc(j.state)}</span></td>
-    <td>${j.attempts}/${j.max_attempts}</td><td class="${j.last_error?'bad':'muted'}">${esc(j.last_error||'—')}</td>
+    <td>${j.attempts}/${j.max_attempts}</td><td class="${j.last_error || j.result?.blocked || j.result?.failed || j.result?.unrecoverable || j.result?.below_threshold?'bad':'muted'}">${esc(j.last_error || (j.result ? JSON.stringify(j.result) : '—'))}</td>
     <td>${when(j.updated_at)}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">Queue is empty.</td></tr>';
 
   userCache = users.users || [];
@@ -275,7 +290,7 @@ async function load() {
   const runtimeOnly = (stats.providers||[])
     .filter(s => !providerCache.some(p => p.name === s.name))
     .map(s => `<tr>
-      <td><strong>${esc(s.name)}</strong><div class="muted">running, not in saved config (restart to remove)</div></td>
+      <td><strong>${esc(s.name)}</strong><div class="muted">environment provider (replaced by first saved DB configuration)</div></td>
       <td colspan="3" class="muted">—</td><td>${traffic(s)}</td><td class="muted">—</td><td class="muted">—</td>
       </tr>`);
   $('configured').innerHTML = providerRows.concat(runtimeOnly).join('') ||
@@ -292,11 +307,11 @@ async function load() {
   });
   $('configured').querySelectorAll('button[data-edit-provider]').forEach(b => b.onclick = () => openProvider(b.dataset.editProvider));
   $('configured').querySelectorAll('button[data-delete-provider]').forEach(b => b.onclick = async () => {
-    if (!confirm(`Delete provider "${b.dataset.name}"? This takes effect after a restart.`)) return;
+    if (!confirm(`Delete provider "${b.dataset.name}"? New operations stop using it immediately; active operations retain their snapshot.`)) return;
     b.disabled = true;
     try {
       await api('/admin/providers/' + b.dataset.deleteProvider, { method: 'DELETE' });
-      $('pmsg').textContent = 'Provider deleted. Restart the backend to apply it.';
+      $('pmsg').textContent = 'Provider deleted and applied on this backend.';
       await load();
     } catch (e) { alert(e.message); b.disabled = false; }
   });
@@ -358,12 +373,39 @@ $('provider-save').onclick = async () => {
       await api('/admin/providers', { method:'POST', body: JSON.stringify(body) });
     }
     $('provider-dialog').close();
-    $('pmsg').textContent = 'Saved. Restart the backend to apply provider changes.';
+    $('pmsg').textContent = 'Saved and applied on this backend.';
     await load();
   } catch (e) { $('provider-msg').textContent = e.message; }
   $('provider-save').disabled = false;
 };
 
+$('save-retention').onclick = async () => {
+  const input = $('refresh-days');
+  if (!input.value || !input.reportValidity()) return;
+  const button = $('save-retention'); button.disabled = true;
+  try {
+    const saved = await api('/admin/retention', { method: 'PUT', body: JSON.stringify({ refresh_days: Number(input.value) }) });
+    const actual = await api('/admin/retention');
+    if (actual.refresh_days !== saved.refresh_days) throw new Error('Policy changed concurrently; refresh and retry.');
+    retentionDirty = false;
+    $('jobmsg').textContent = `Saved refresh policy: ${actual.refresh_days} days.`;
+  } catch (e) { $('jobmsg').textContent = e.message; }
+  finally { button.disabled = false; }
+};
+
+$('run-gc').onclick = async () => {
+  const account_id = $('gc-account').value.trim();
+  const grace_days = Number($('gc-days').value);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(account_id) || !Number.isInteger(grace_days) || grace_days < 1 || grace_days > 3650) {
+    $('jobmsg').textContent = 'Enter a valid account UUID and grace period (1..3650 days).'; return;
+  }
+  if (!confirm('Collect orphan metadata for this account? Successful collection permanently blocks legacy clients from committing versions. Upgrade all clients and backfill historical references first.')) return;
+  try {
+    await api('/admin/jobs', {method:'POST', body:JSON.stringify({kind:'orphan_gc', payload:{account_id, grace_days, require_reference_commits:true}})});
+    $('jobmsg').textContent = 'Orphan cleanup queued. Inspect its batch result below.';
+    await load();
+  } catch(e) { $('jobmsg').textContent = e.message; }
+};
 document.querySelectorAll('button[data-job]').forEach(b => b.onclick = async () => {
   try { await api('/admin/jobs', { method:'POST', body: JSON.stringify({ kind: b.dataset.job, payload: {} })}); $('jobmsg').textContent = 'Job queued.'; load(); }
   catch (e) { $('jobmsg').textContent = e.message; }

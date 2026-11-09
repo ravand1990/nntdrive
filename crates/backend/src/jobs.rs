@@ -76,11 +76,12 @@ pub async fn worker_loop(state: Arc<AppState>, worker: String) {
             Ok(Some(job)) => {
                 let job_id = job.id;
                 match process(&state, &job).await {
-                    Ok(()) => {
+                    Ok(result) => {
                         let _ = sqlx::query(
-                            "UPDATE jobs SET state = 'done', updated_at = now(), locked_by = NULL WHERE id = $1",
+                            "UPDATE jobs SET state = 'done', result = $2, last_error = NULL, updated_at = now(), locked_by = NULL WHERE id = $1",
                         )
                         .bind(job_id)
+                        .bind(result)
                         .execute(&state.pool)
                         .await;
                     }
@@ -96,7 +97,7 @@ pub async fn worker_loop(state: Arc<AppState>, worker: String) {
                         )
                         .bind(job_id)
                         .bind(if retry { "pending" } else { "failed" })
-                        .bind(e.to_string())
+                        .bind("maintenance failed; retry or inspect backend diagnostics")
                         .bind(backoff.to_string())
                         .execute(&state.pool)
                         .await;
@@ -112,16 +113,55 @@ pub async fn worker_loop(state: Arc<AppState>, worker: String) {
     }
 }
 
-async fn process(state: &AppState, job: &Job) -> anyhow::Result<()> {
+async fn process(state: &AppState, job: &Job) -> anyhow::Result<Value> {
     match job.kind.as_str() {
         "health_sweep" => health_sweep(state, job).await,
         "repair_stripe" => repair_stripe(state, job).await,
         "refresh_sweep" => refresh_sweep(state, job).await,
+        "orphan_gc" => {
+            let account_id: Uuid = job
+                .payload
+                .get("account_id")
+                .and_then(Value::as_str)
+                .context("account_id required")?
+                .parse()?;
+            let grace_days = job
+                .payload
+                .get("grace_days")
+                .and_then(Value::as_u64)
+                .context("grace_days required")?;
+            anyhow::ensure!(
+                (1..=3650).contains(&grace_days)
+                    && job
+                        .payload
+                        .get("require_reference_commits")
+                        .and_then(Value::as_bool)
+                        == Some(true),
+                "invalid GC opt-in"
+            );
+            match state
+                .store
+                .collect_orphan_chunks(account_id, grace_days as u32, 1000)
+                .await
+            {
+                Ok(deleted) => Ok(
+                    json!({ "account_id": account_id, "deleted_chunks": deleted, "grace_days": grace_days, "batch_limit": 1000, "reference_commits_required": true }),
+                ),
+                Err(nntdrive_storage::StoreError::Invalid(reason))
+                    if reason == "GC blocked: incomplete version references" =>
+                {
+                    Ok(
+                        json!({ "account_id": account_id, "deleted_chunks": 0, "blocked": "incomplete_version_references" }),
+                    )
+                }
+                Err(e) => Err(e.into()),
+            }
+        }
         other => Err(anyhow::anyhow!("unknown job kind {other}")),
     }
 }
 
-async fn health_sweep(state: &AppState, job: &Job) -> anyhow::Result<()> {
+async fn health_sweep(state: &AppState, job: &Job) -> anyhow::Result<Value> {
     let after: Option<Uuid> = job
         .payload
         .get("after")
@@ -130,12 +170,17 @@ async fn health_sweep(state: &AppState, job: &Job) -> anyhow::Result<()> {
     let batch = state.store.list_stripe_specs(after, 100).await?;
     let mut checked = 0usize;
     let mut degraded = 0usize;
+    let mut below_threshold = 0usize;
     let mut last = None;
     for (stripe, shards) in &batch {
         last = Some(stripe.id);
         checked += 1;
         let available = state.storage.check_stripe_rows(shards).await?;
         let total = shards.len();
+        if available < stripe.data_shards as usize {
+            // STAT failures are unknown availability, not confirmed loss.
+            below_threshold += 1;
+        }
         if available < total && available >= stripe.data_shards as usize {
             degraded += 1;
             enqueue(
@@ -160,10 +205,13 @@ async fn health_sweep(state: &AppState, job: &Job) -> anyhow::Result<()> {
         .await?;
     }
     tracing::info!(checked, degraded, "health sweep finished");
-    Ok(())
+    Ok(
+        json!({ "checked": checked, "degraded": degraded, "below_threshold": below_threshold,
+               "continued": batch.len() == 100 }),
+    )
 }
 
-async fn repair_stripe(state: &AppState, job: &Job) -> anyhow::Result<()> {
+async fn repair_stripe(state: &AppState, job: &Job) -> anyhow::Result<Value> {
     let stripe_id: Uuid = job
         .payload
         .get("stripe_id")
@@ -182,18 +230,30 @@ async fn repair_stripe(state: &AppState, job: &Job) -> anyhow::Result<()> {
         unrecoverable = report.stripes_unrecoverable,
         "repair finished"
     );
-    Ok(())
+    Ok(json!({ "reposted": report.shards_reposted, "unrecoverable": report.stripes_unrecoverable }))
 }
 
-async fn refresh_sweep(state: &AppState, job: &Job) -> anyhow::Result<()> {
+pub async fn refresh_days(state: &AppState) -> anyhow::Result<u32> {
+    let days: Option<i32> =
+        sqlx::query_scalar("SELECT refresh_days FROM maintenance_settings WHERE singleton = true")
+            .fetch_optional(&state.pool)
+            .await?;
+    Ok(days
+        .map(|d| d as u32)
+        .unwrap_or(state.config.retention_refresh_days))
+}
+
+async fn refresh_sweep(state: &AppState, job: &Job) -> anyhow::Result<Value> {
     let after: Option<Uuid> = job
         .payload
         .get("after")
         .and_then(|v| v.as_str())
         .and_then(|s| s.parse().ok());
-    let cutoff = Utc::now() - Duration::days(state.config.retention_refresh_days as i64);
+    let days = refresh_days(state).await?;
+    let cutoff = Utc::now() - Duration::days(days as i64);
     let batch = state.store.list_stripe_specs(after, 100).await?;
     let mut refreshed = 0usize;
+    let mut failed = 0usize;
     let mut last = None;
     for (stripe, shards) in &batch {
         last = Some(stripe.id);
@@ -203,9 +263,16 @@ async fn refresh_sweep(state: &AppState, job: &Job) -> anyhow::Result<()> {
                 .refresh_stripe_db(stripe, shards, cutoff)
                 .await
             {
-                Ok(r) if r.stripes_refreshed > 0 => refreshed += 1,
-                Ok(_) => {}
-                Err(e) => tracing::warn!(stripe = %stripe.id, error = %e, "refresh failed"),
+                Ok(r) => {
+                    refreshed += r.stripes_refreshed;
+                    // This batch selected an expired stripe. A zero refresh report
+                    // includes unrecoverable data (not an error in the storage API).
+                    failed += usize::from(r.stripes_refreshed == 0);
+                }
+                Err(e) => {
+                    failed += 1;
+                    tracing::warn!(stripe = %stripe.id, error = %e, "refresh failed");
+                }
             }
         }
     }
@@ -220,7 +287,10 @@ async fn refresh_sweep(state: &AppState, job: &Job) -> anyhow::Result<()> {
         .await?;
     }
     tracing::info!(refreshed, "retention refresh finished");
-    Ok(())
+    Ok(
+        json!({ "checked": batch.len(), "refreshed": refreshed, "failed": failed,
+               "refresh_days": days, "continued": batch.len() == 100 }),
+    )
 }
 
 /// Enqueues periodic maintenance if the queue does not already hold it.

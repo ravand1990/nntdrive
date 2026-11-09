@@ -135,9 +135,10 @@ blockers. Link dependency issues, not a duplicate task list.
    blocker.
 6. Automatically merge code PRs only under the user-authorized merge gate below.
    Mandatory post-merge reconciliation follows the completion transaction below.
-   The user grants standing approval to close verified completed tasks and set
-   Done once ALL acceptance criteria and applicable checks are satisfied. This
-   is not permission to waive manual acceptance, deploy, or close incidental refs.
+   The user grants standing approval to close completed tasks and set Done once
+   implementation is merged and the available evidence is recorded. Deferred
+   verification must be filed as a follow-up issue (see the merge gate). This
+   is not permission to deploy or close incidental refs.
    Avoid relying on automatic-closing keywords; they do not reconcile the board.
 
 ## Agent comment format
@@ -172,10 +173,11 @@ anything longer.
 
 ## User-authorized automatic merge gate (NNTDrive only)
 
-Effective 2026-11-05, the user explicitly authorizes future code PR merges only
-in `ravand1990/nntdrive` after every applicable required test/check passes for
-the exact current head SHA. This supersedes prior NEVER MERGE instructions in
-worker prompts and PR handoffs, not security, scope, ownership or acceptance.
+Effective 2026-11-05, updated 2026-11-08: the user authorizes code PR merges in
+`ravand1990/nntdrive` without waiting for e2e, platform, manual or
+release-artifact verification. A merge still requires a reviewed diff at a known
+head and must not bypass GitHub's enforcement, safety invariants or the
+security-sensitive test rule in `AGENTS.md` §5.
 The root tracker/merge policy is aligned at `cc5a753`; only the remaining
 separate-approval completion clause is superseded by the standing authorization
 below, with the denied normal alignment attempt retained as an operator follow-up.
@@ -192,28 +194,27 @@ Before each merge:
   and do not bypass protection, admin-merge, or force-push. A completed PR with
   green checks is merge work, not a new claim; do not skip it merely because it is
   PR-linked.
-- Enumerate all applicable expected workflows/jobs at the current head. Require
-  successful completed results, not failed, cancelled, pending or skipped
-  required checks. Missing workflows and inaccessible evidence are blockers.
-  When Checks/status APIs return 403, exact-head Actions run/job results may
-  establish those workflow results only; a 403 is not green or proof that no
-  additional protected gate exists. Refresh/rerun checks when required by base
-  update rules; never force-rebase another agent's branch.
+- Run the applicable workflows/jobs at the current head. A failure caused by the
+  change must be fixed and rerun once. An unrelated, flaky or infrastructure-only
+  failure may be recorded and merged; do not weaken or delete the check to get
+  green. When Checks/status APIs return 403, exact-head Actions run/job results may
+  establish those workflow results only. Refresh checks when required by a base
+  update; never force-rebase another agent's branch.
 - Current PR workflows are CI (`rust`, `wrapper-contracts`, `docker`) and Clients
   (`analyze`, `build-linux`, `build-windows`, `build-android`,
-  `android-native-smoke`). Inspect the live workflow definitions each time;
-  this list is not permission to omit newly applicable gates. iOS is not
-  currently built in CI and remains unimplemented. Release/tag-only publishing
-  is not an invented PR requirement.
-- Tests do not replace required manual acceptance. Merge only when PR acceptance
-  is satisfied, or the user explicitly approves a documented follow-up; never
-  invent approval. A draft is not automatically ready. Issue closure/Done follows
-  the mandatory completion transaction and standing authorization below.
+  `android-native-smoke`, `windows-app-smoke`). Inspect the live workflow
+  definitions each time. iOS is not currently built in CI and remains
+  unimplemented. Release/tag-only publishing is not a PR requirement.
+- E2E, platform, manual, installer/VM, multi-device and performance verification
+  are **not** merge gates. When they are unavailable or failing for reasons
+  outside the diff, open or update a follow-up issue (one priority label, Project
+  `Backlog`), state the exact gap in the PR, and merge. Never claim a run that did
+  not happen. Security-sensitive changes (crypto, keys, auth, tenant scoping,
+  migrations, deletion, plaintext leakage) still need their focused risk tests.
+  A draft is not automatically ready.
 - Use an allowed merge method and expected head SHA; verify merged state, merge
   commit and main remotely. Merge sequentially and fast-forward only a clean
-  local main. Enable GitHub auto-merge only if its enforced gates cover every
-  applicable required gate and acceptance is already satisfied; otherwise leave
-  pending PRs open with exact blockers. Never weaken checks to enable merging.
+  local main. Never weaken checks to enable merging.
 - If merge attempts repeatedly fail for non-code/policy reasons without new
   evidence, mark the issue/PR `blocked-loop`, set Project Status `Blocked`, and
   record the exact failure and human action. Workers skip `blocked-loop` items and
@@ -229,8 +230,9 @@ is not issue acceptance and does not automatically satisfy dependency acceptance
 ## Mandatory post-merge completion transaction
 
 The user's standing authorization covers closing completed issues and setting
-Project Done after every acceptance criterion and applicable check is verified;
-no separate user approval is required for such tasks. This supersedes the old
+Project Done after implementation is merged and the available evidence is
+recorded; deferred verification must be filed as a follow-up issue. No separate
+user approval is required for such tasks. This supersedes the old
 separate-approval clause in AGENTS.md only. Its alignment was attempted normally
 under renewed explicit consent, but the protected-instruction guard denied it;
 no alternate write or bypass was attempted. That file remains an operator fix.
@@ -240,8 +242,10 @@ no alternate write or bypass was attempted. That file remains an operator fix.
    the integrated commits and their applicable exact-head evidence instead.
 2. Identify genuinely linked task issues using PR metadata, task scope and issue
    history; a `Refs` mention alone is not permission to close unrelated work.
-   Read full bodies and paginated latest comments. Map ALL acceptance criteria
-   to actual check/runtime/manual evidence. Missing evidence fails closed.
+   Read full bodies and paginated latest comments. Map acceptance criteria to
+   available evidence. Deferred verification is acceptable only with a linked
+   follow-up issue, and it must not be described as verified. Unverified
+   security-sensitive boundaries still fail closed.
 3. Post a durable completion handoff on each linked issue with: worker/owner,
    outcome and changes, branch and integrated commit/PR links, exact commands
    and check URLs/results, acceptance evidence, remaining limitations or

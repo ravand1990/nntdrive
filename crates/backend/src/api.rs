@@ -472,6 +472,8 @@ pub struct CommitVersion {
     pub base_revision: Option<Uuid>,
     pub size: i64,
     pub sealed_manifest: String,
+    /// Omitted by legacy clients; never interpret omission as an empty file.
+    pub chunk_ids: Option<Vec<Uuid>>,
 }
 
 pub async fn commit_version(
@@ -519,23 +521,75 @@ pub async fn commit_version(
         created_at: Utc::now(),
         chunks: Vec::new(),
     };
-    // `insert_version` in the store only consumes identity, size and timestamp
-    // from this value; the authoritative data is the sealed manifest.
+    // Opaque API manifests use only the identity/size/timestamp header here;
+    // references come from the explicit client declaration, never this dummy
+    // empty chunk list. Omission must stay incomplete for legacy compatibility.
     state
         .store
-        .insert_version(
+        .insert_version_with_references(
             auth.account_id,
             id,
             &manifest,
             &sealed,
             auth.device_id,
             body.parent_revision,
+            body.chunk_ids.as_deref(),
         )
-        .await?;
+        .await
+        .map_err(reference_error)?;
     Ok((
         StatusCode::CREATED,
         Json(json!({ "revision_id": body.revision_id })),
     ))
+}
+
+fn reference_error(error: nntdrive_storage::StoreError) -> ApiError {
+    match error {
+        nntdrive_storage::StoreError::NotFound => ApiError::NotFound,
+        nntdrive_storage::StoreError::Invalid(reason) => ApiError::BadRequest(reason),
+        other => ApiError::Store(other),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct BackfillPage {
+    pub after: Option<Uuid>,
+}
+
+/// Includes historical/conflict/tombstoned versions, not only the current tree.
+pub async fn incomplete_references(
+    State(state): State<AppState>,
+    auth: Auth,
+    Query(q): Query<BackfillPage>,
+) -> ApiResult<impl IntoResponse> {
+    let rows = sqlx::query("SELECT id, file_id, revision_id FROM file_versions WHERE account_id = $1 AND NOT references_complete AND ($2::uuid IS NULL OR id > $2) ORDER BY id LIMIT 200")
+        .bind(auth.account_id).bind(q.after).fetch_all(&state.pool).await?;
+    let versions: Vec<Value> = rows.iter().map(|r| json!({"id":r.get::<Uuid,_>("id"),"file_id":r.get::<Uuid,_>("file_id"),"revision_id":r.get::<Uuid,_>("revision_id")})).collect();
+    let next = if rows.len() == 200 {
+        rows.last().map(|r| r.get::<Uuid, _>("id"))
+    } else {
+        None
+    };
+    Ok(Json(json!({"versions":versions,"next":next})))
+}
+
+#[derive(Deserialize)]
+pub struct BackfillReferences {
+    pub chunk_ids: Vec<Uuid>,
+}
+
+pub async fn backfill_references(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path((file_id, revision_id)): Path<(Uuid, Uuid)>,
+    Json(body): Json<BackfillReferences>,
+) -> ApiResult<impl IntoResponse> {
+    state
+        .store
+        .backfill_references(auth.account_id, file_id, revision_id, &body.chunk_ids)
+        .await
+        .map_err(reference_error)?;
+    Ok(Json(json!({ "references_complete": true })))
 }
 
 pub async fn list_versions(
@@ -579,7 +633,11 @@ pub async fn get_manifest(
     Path(id): Path<Uuid>,
     Query(q): Query<RevisionQuery>,
 ) -> ApiResult<impl IntoResponse> {
-    ensure_file(&state, auth.account_id, id).await?;
+    // Exact revisions remain readable for authenticated backfill/restore even
+    // after logical namespace deletion; latest-tree reads still hide tombstones.
+    if q.revision.is_none() {
+        ensure_file(&state, auth.account_id, id).await?;
+    }
     let version = state.store.version(auth.account_id, id, q.revision).await?;
     let mut resp = (StatusCode::OK, version.manifest).into_response();
     resp.headers_mut().insert(

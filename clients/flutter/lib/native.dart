@@ -65,6 +65,14 @@ Future<Map<String, dynamic>> _runSyncRequest(
     Isolate.run(
         () => NativeBridge.instance._syncRequest(handle, encoded, address));
 
+typedef _BackfillNative = Pointer<Utf8> Function(Uint64, Pointer<Utf8>);
+typedef _BackfillDart = Pointer<Utf8> Function(int, Pointer<Utf8>);
+
+// No callback or listener crosses isolates: this bounded operation returns one
+// owned string, decoded/freed on its worker isolate using the normal ABI helper.
+Future<Map<String, dynamic>> _runBackfill(int handle, String request) =>
+    Isolate.run(() => NativeBridge.instance._backfill(handle, request));
+
 class NativeBridge {
   NativeBridge._(this._lib) {
     _free = _lib.lookupFunction<_FreeNative, _FreeDart>('nntdrive_string_free');
@@ -213,6 +221,21 @@ class NativeBridge {
     final f = _lib.lookupFunction<Void Function(Uint64), void Function(int)>(
         'nntdrive_lock');
     f(handle);
+  }
+
+  Future<Map<String, dynamic>> backfillReferencesAsync(
+          int handle, String baseUrl, String token) =>
+      _runBackfill(handle, jsonEncode({'baseUrl': baseUrl, 'token': token}));
+
+  Map<String, dynamic> _backfill(int handle, String request) {
+    final f = _lib.lookupFunction<_BackfillNative, _BackfillDart>(
+        'nntdrive_backfill_references');
+    final input = _cstr(request);
+    try {
+      return _decode(f(handle, input));
+    } finally {
+      malloc.free(input);
+    }
   }
 
   Map<String, dynamic> deviceIdentity() {

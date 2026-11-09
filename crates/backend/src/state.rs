@@ -98,6 +98,7 @@ pub struct AppState {
     /// Notified by the admin restart endpoint; the server then shuts down
     /// gracefully and the container manager (Compose/systemd) starts it again.
     pub restart: Arc<tokio::sync::Notify>,
+    pub provider_mutations: Arc<Mutex<()>>,
 }
 
 impl AppState {
@@ -116,6 +117,7 @@ impl AppState {
             config: Arc::new(config),
             cache,
             restart: Arc::new(tokio::sync::Notify::new()),
+            provider_mutations: Arc::new(Mutex::new(())),
         })
     }
 
