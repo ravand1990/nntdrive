@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add bounded encrypted file Copy through the Rust SDK and dedicated guarded
+  publication endpoint: fresh metadata identities, canonical collision preflight,
+  atomic source/destination snapshots and GC-safe tenant references (#51 partial).
+  Flutter/UI, folder Copy and durable retry receipts remain out of scope.
+
 - Apply admin provider CRUD to the serving backend without restart, pinning one
   provider snapshot per storage operation. Reject invalid configs/credentials
   before commit; retain DB management when the final provider is removed.

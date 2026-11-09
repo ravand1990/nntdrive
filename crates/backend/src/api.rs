@@ -281,6 +281,13 @@ async fn lock_namespace(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     account_id: Uuid,
 ) -> ApiResult<()> {
+    // Match version commits and GC: advisory lock first, then account row.
+    // append_event also takes this advisory lock; reversing the order can
+    // deadlock guarded Copy/GC against a namespace writer.
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+        .bind(account_id.to_string())
+        .execute(&mut **tx)
+        .await?;
     sqlx::query("SELECT id FROM accounts WHERE id = $1 FOR UPDATE")
         .bind(account_id)
         .fetch_one(&mut **tx)

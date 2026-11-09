@@ -7,6 +7,15 @@ Base path: `/api/v1`. All endpoints except registration/login require
 The server cannot decrypt names or manifests. `name_enc` and
 `sealed_manifest` are base64-encoded client ciphertext.
 
+## Guarded file Copy
+
+`POST /files/{source}/copy-checked` publishes one same-account current file,
+returning 201 `{id, revision_id}`. It requires authenticated ciphertext preparation,
+complete source/destination snapshot guards and explicit complete chunk references.
+See [the Copy protocol](COPY-DESIGN.md) for exact fields, bounds, transaction/GC
+locking, collision policy, error semantics and ambiguous-response handling.
+Folders and legacy fallback are not supported.
+
 ## Identity
 
 | Method | Path | Body |

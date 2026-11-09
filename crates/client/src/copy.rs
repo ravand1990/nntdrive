@@ -1,7 +1,5 @@
-//! Local-only preparation for a future guarded Copy transaction.
-//!
-//! This does not publish a node or check destination collisions. Callers must not
-//! use separate create/commit requests as an atomic Copy implementation.
+//! Authenticated preparation and guarded publication for bounded file Copy.
+//! Separate create/commit requests are never used as a Copy fallback.
 use crate::{ClientError, Result};
 use nntdrive_crypto::{Envelope, MasterKey};
 use nntdrive_storage::manifest::FileManifest;
@@ -14,6 +12,7 @@ pub struct PreparedFileCopy {
     pub size: u64,
     pub name_enc: Vec<u8>,
     pub sealed_manifest: Vec<u8>,
+    pub chunk_ids: Vec<Uuid>,
 }
 
 /// Authenticate the source and re-encrypt its name and manifest for fresh IDs.
@@ -54,6 +53,7 @@ pub fn prepare_file_copy(
         file_id,
         revision_id,
         size: copied.size,
+        chunk_ids: copied.chunks.iter().map(|c| c.id).collect(),
         name_enc: master.seal_name(file_id, &name)?.to_bytes(),
         sealed_manifest: master
             .seal_manifest(file_id, revision_id, &copied.to_bytes())?
@@ -61,9 +61,141 @@ pub fn prepare_file_copy(
     })
 }
 
+fn portable_component(name: &str) -> bool {
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.ends_with([' ', '.'])
+        || name
+            .chars()
+            .any(|c| c.is_control() || "<>:\"/\\|?*".contains(c))
+    {
+        return false;
+    }
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or("")
+        .trim_end_matches(' ')
+        .to_lowercase();
+    if matches!(stem.as_str(), "con" | "prn" | "aux" | "nul") {
+        return false;
+    }
+    for prefix in ["com", "lpt"] {
+        if let Some(suffix) = stem.strip_prefix(prefix) {
+            if matches!(
+                suffix,
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+            ) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+impl crate::ApiClient {
+    /// Copy one current encrypted file into a freshly checked destination.
+    /// No automatic retries: an ambiguous response requires refreshing the tree.
+    /// Same-folder copies collide intentionally; rename-copy UI is not provided.
+    pub async fn copy_file_checked(
+        &self,
+        master: &MasterKey,
+        source: &crate::FileDto,
+        parent: Option<Uuid>,
+    ) -> Result<(Uuid, Uuid)> {
+        use base64::Engine;
+        use unicode_normalization::UnicodeNormalization;
+        let decode = |s: &str| {
+            base64::engine::general_purpose::STANDARD
+                .decode(s)
+                .map_err(|_| ClientError::Protocol("invalid encrypted name".into()))
+        };
+        let invalid = || ClientError::Integrity("invalid copy namespace".into());
+        if source.is_dir {
+            return Err(invalid());
+        }
+        let revision = source.current_version.ok_or_else(invalid)?;
+        let source_name = decode(&source.name_enc)?;
+        let name = master.open_name(source.id, &Envelope::from_bytes(&source_name)?)?;
+        // Reuse the sync engine's portable relative component validator.
+        nntdrive_sync::scanner::validate_relative_path(&name).map_err(|_| invalid())?;
+        if !portable_component(&name) {
+            return Err(invalid());
+        }
+        let key = |s: &str| {
+            s.nfc()
+                .collect::<String>()
+                .to_lowercase()
+                .nfc()
+                .collect::<String>()
+        };
+        let siblings = self.list_files(parent).await?;
+        if siblings.len() > 4096 {
+            return Err(invalid());
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for sibling in &siblings {
+            let bytes = decode(&sibling.name_enc)?;
+            let plain = master.open_name(sibling.id, &Envelope::from_bytes(&bytes)?)?;
+            if !portable_component(&plain) {
+                return Err(invalid());
+            }
+            let comparison = key(&plain);
+            if comparison == key(&name) || !seen.insert(comparison) {
+                return Err(invalid());
+            }
+        }
+        let (manifest, actual_revision) = self.manifest(source.id, Some(revision)).await?;
+        if actual_revision != revision {
+            return Err(invalid());
+        }
+        let candidate = prepare_file_copy(master, source.id, revision, &source_name, &manifest)?;
+        if candidate.chunk_ids.len() > 4096 || candidate.sealed_manifest.len() > 1024 * 1024 {
+            return Err(invalid());
+        }
+        let response = self.auth(self.http.post(self.url(&format!("/files/{}/copy-checked", source.id))))
+            .json(&serde_json::json!({
+                "source_revision": revision, "source_parent_id": source.parent_id,
+                "source_name_enc": source.name_enc, "parent_id": parent,
+                "siblings": siblings.iter().map(|s| serde_json::json!({"id":s.id,"name_enc":s.name_enc})).collect::<Vec<_>>(),
+                "id":candidate.file_id,"revision_id":candidate.revision_id,"size":candidate.size,
+                "name_enc":crate::b64(&candidate.name_enc), "sealed_manifest":crate::b64(&candidate.sealed_manifest),
+                "chunk_ids":candidate.chunk_ids,
+            })).send().await?;
+        self.check(response).await?;
+        Ok((candidate.file_id, candidate.revision_id))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn copy_portable_components_fail_closed() {
+        for name in [
+            "",
+            ".",
+            "..",
+            "../x",
+            "a/b",
+            "a\\b",
+            "NUL .txt",
+            "COM¹.txt",
+            "lpt9",
+            "x.",
+            "x ",
+            "bad?",
+            "a\0b",
+            "x:y",
+        ] {
+            assert!(!portable_component(name));
+        }
+        for name in ["Café.txt", "file😀", "COM10", "NULish", "a.b"] {
+            assert!(portable_component(name));
+        }
+    }
 
     #[test]
     fn copy_rebinds_authenticated_metadata_and_preserves_source() {

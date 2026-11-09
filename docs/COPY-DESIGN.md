@@ -1,55 +1,74 @@
-# Copy preparation and remaining transaction work (#51)
+# Bounded guarded encrypted file Copy (#51)
 
-Copy is **not exposed in the client UI or implemented as a server operation**.
-The bounded SDK primitive `copy::prepare_file_copy` only authenticates source
-metadata and prepares new ciphertext locally. It performs no HTTP or disk I/O.
+The Rust SDK `ApiClient::copy_file_checked` and dedicated
+`POST /api/v1/files/{source}/copy-checked` publish **one current file** atomically.
+Copy is not exposed through Flutter/FFI or the UI. Folder Copy is unsupported.
+There is no legacy create/commit fallback.
 
-## Implemented preparation contract
+## Client contract
 
-- Open the source name and manifest under the supplied master key and expected
-  source node/revision AAD; validate manifest structure and embedded identity.
-- Generate fresh file and revision IDs. Re-encrypt the exact source name and a
-  new manifest bound to these IDs with fresh authenticated-encryption nonces.
-- Preserve size, content hash and immutable chunk/stripe references. Do not
-  mutate source ciphertext or export any key. Return no plaintext metadata.
-- Wrong account keys, tampering, malformed manifests and identity substitutions
-  fail before a candidate is returned. Errors do not include decrypted data.
+The client authenticates source name and manifest AAD and embedded identities,
+validates manifest structure, generates fresh node/revision IDs, and re-encrypts
+metadata with fresh nonces. Size, content hash and immutable chunk references
+remain unchanged. Wrong keys, tampering and malformed metadata fail closed.
+Destination names are freshly decrypted, validated as portable components and
+compared using NFC/lowercase/NFC. Unreadable, duplicate or colliding names reject
+the operation. Exact spelling is retained in encryption; comparison keys and
+plaintext never go on the wire. Same-folder Copy intentionally collides; this
+slice does not provide a new-name picker.
 
 Current v1 storage uses account-scoped content-derived chunk keys (ADR-002),
-not `MasterKey::file_key`. New node IDs derive distinct per-file keys, but
-claiming that v1 content is encrypted with these keys would be incorrect.
-Immutable chunks can be safely shared within the same account/key scope just
-as normal uploads already deduplicate identical bytes; future edits publish
-new immutable revisions, never rewrite shared chunks. Names/manifests are
-re-encrypted, not copied byte-for-byte. This is not independent revocation or
-cross-account sharing. A requirement for independent *content* encryption
-keys would require a separately reviewed versioned format/migration design.
+not `MasterKey::file_key`. Reusing immutable chunks within the same account/key
+scope is the normal deduplication model. New IDs separate metadata identity,
+not content revocation domains. This is not cross-account sharing, independently
+revocable content encryption, or a provider-durability guarantee.
 
-The primitive does not download/reverify chunk bytes or provider durability;
-its tests establish authenticated metadata preparation, not a complete copy.
+## Publication protocol
 
-## Required before enabling Copy
+The ciphertext-only request contains `source_revision`, `source_parent_id`,
+`source_name_enc`, destination `parent_id`, complete opaque `siblings` entries
+(`id`, `name_enc`), fresh `id` and `revision_id`, `name_enc`, `sealed_manifest`,
+`size`, and explicit `chunk_ids`. Success is 201 with both new IDs.
 
-1. Dedicated tenant-scoped guarded publication endpoint, no legacy fallback.
-   In one transaction under the existing account namespace lock, validate the
-   source identity/current revision/parent/name, destination ownership/type,
-   complete opaque sibling snapshot and all referenced chunk ownership, then
-   insert the fresh node/version/reference index and sync event atomically.
-   Reuse the GC/version-commit lock protocol; no dangling references or legacy
-   incomplete-reference commits. Reject reused node/revision IDs. Keep errors
-   opaque across tenants. Never accept plaintext collision tags or keys.
-2. Client locally decrypts/validates destination names and portable canonical
-   collision rules; collisions require rename/cancel. A stale guard requires
-   refresh, not blind retry. The primitive is not that collision policy.
-3. Folder copy needs a bounded traversal/staging/publication protocol with fresh
-   IDs and remapped parents, fail-closed unreadable/colliding descendants, cycle
-   and source-into-descendant policy, interruption/retry and no partial visible
-   tree. Do not compose unguarded create/commit requests and call it atomic.
-4. Real PostgreSQL + HTTP + mock-NNTP tests for independent edits/deletion and
-   source preservation, tenant opacity, destination races/collisions, commit/GC
-   races, interrupted and ambiguous responses, then native/UI wiring and
-   installed Windows/Linux/two-device acceptance.
+One PostgreSQL transaction acquires the account GC/version advisory lock before
+the account namespace row lock. All namespace writers use that order (event
+publication also takes the advisory lock). It checks the live non-directory
+source's parent, sealed name, current revision and size, destination ownership
+and folder type, and exact complete sibling snapshot. Source commits serialize
+under the GC lock. The transaction rejects reused identities, validates every
+chunk's tenant ownership, inserts a complete reference index with the new
+node/version and emits a normal `version` sync event before commit. No partial
+node or dangling reference is published on failure. Historical/tombstoned source
+versions remain untouched. Shared chunks incur no additional physical quota.
+No migration or encrypted format change is needed.
 
-This slice changes no encrypted format, server API, database or FFI ABI. It
-intentionally leaves publication and folder copy unimplemented rather than
-shipping a non-atomic or cross-tenant shortcut.
+Bounds: 2 MiB HTTP body, 4096 destination entries and chunk declarations,
+8192-byte sealed names, 1 MiB sealed manifest, nonnegative size up to 16 TiB.
+Oversized destination reads cannot match a bounded guard. An absent/foreign
+source or destination is opaque (404); stale source/snapshot and reused IDs
+conflict (409). Invalid envelopes/references reject (400). Errors carry no keys
+or decrypted metadata. The backend cannot verify a plaintext collision or
+opaque manifest semantics; those remain authenticated-client obligations.
+
+There is deliberately **no automatic retry**. A stale guard requires fresh
+listing/decryption. A lost response may have committed: refresh the destination
+before initiating a new copy, rather than blindly retrying with new IDs. This
+slice does not promise idempotent replay or durable operation receipts.
+Legacy writers can still introduce duplicate names after guarded publication;
+mixed-version backends/direct DB namespace writers do not honor new app locks.
+
+## Verification and remaining scope
+
+Real SDK/HTTP/PostgreSQL/mock-NNTP regression covers encrypted Copy download,
+independent source edits/deletion, retained references and GC, exact and Unicode
+canonical collisions, stale namespace/source guards, rejected identities and
+reference sets, tenant opacity, transaction rollback and actual lock exclusion.
+Local crypto tests cover wrong keys, tampering, malformed identity/structure,
+empty content and repeated fresh preparation. A sabotage run weakens the
+snapshot check and must fail the HTTP regression before restoring production.
+
+Remaining: recursive folder traversal/staging/remapped parents with atomic tree
+publication; Flutter/FFI/UI destination/new-name selection; durable retry receipts;
+installed Windows/Linux and two-device acceptance; exhaustive disconnect/GC race
+scheduling and cross-platform filesystem acceptance. These are not implied by
+this bounded file protocol slice. No production/deploy/release changes.

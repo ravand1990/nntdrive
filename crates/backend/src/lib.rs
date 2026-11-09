@@ -15,6 +15,7 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 
+mod copy;
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../migrations");
 
 pub fn app(state: state::AppState) -> Router {
@@ -30,6 +31,10 @@ pub fn app(state: state::AppState) -> Router {
         .route("/devices/{id}", delete(auth::revoke_device))
         .route("/files", get(api::list_files).post(api::create_file))
         .route("/files/{id}", patch(api::patch_file))
+        .route(
+            "/files/{id}/copy-checked",
+            post(copy::publish).layer(axum::extract::DefaultBodyLimit::max(2 * 1024 * 1024)),
+        )
         .route("/files/{id}/move", post(api::move_file))
         .route(
             "/files/{id}/move-checked",

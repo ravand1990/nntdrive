@@ -1,9 +1,9 @@
 # Project status
 
-Copy remains unimplemented as a user operation (#51). A local-only SDK helper
-now authenticates source metadata and re-encrypts names/manifests for fresh IDs;
-no server publication or folder copy is enabled. See [Copy design](COPY-DESIGN.md)
-for the v1 key/dedupe contract and required collision/tenant/GC-safe transaction.
+A bounded encrypted file Copy SDK + guarded backend publication protocol is
+implemented (#51), with atomic namespace/source guards and GC-safe complete
+references. Flutter/FFI/UI and recursive folder Copy remain unimplemented.
+See [Copy design](COPY-DESIGN.md) for bounds, retry policy and v1 key/dedupe limits.
 
 Last updated: 2026-11-06. This file is the handoff record for the next agent.
 

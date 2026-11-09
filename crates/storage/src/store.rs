@@ -553,7 +553,8 @@ impl Store {
         Ok(())
     }
 
-    async fn write_references(
+    /// Insert validated tenant references in a caller-owned GC-locked transaction.
+    pub async fn write_references(
         tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
         account_id: Uuid,
         version_id: Uuid,
