@@ -66,6 +66,17 @@ process-death recovery preserve baseline history. The per-journal lease is
 separate from application ownership. See [background sync](BACKGROUND-SYNC.md)
 for compatibility limits and remaining platform/security acceptance.
 
+## Security-review increment (#16)
+
+Account admission now uses a transaction-held PostgreSQL table gate shared by
+API registration and CLI account/bootstrap commands. Independent backend pools
+exercise first-account roles, registration policy, rollback and API/operator
+exclusion against real PostgreSQL. yEnc validates declared sizes before fallible
+allocation and stops at the declared decoded length; regressions cover oversized
+headers, excess output, empty content and a bounded deterministic corpus. This
+is targeted hardening, not a completed audit or coverage-guided fuzz campaign;
+dependency triage and the broader review remain unfinished under #16.
+
 ## Verified working
 
 Everything below is exercised by `cargo test --workspace --all-targets`

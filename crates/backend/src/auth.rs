@@ -147,15 +147,14 @@ pub async fn register(
     let hash = nntdrive_crypto::hash_verifier(&body.verifier)
         .map_err(|_| ApiError::Internal(anyhow::anyhow!("verifier hashing failed")))?;
 
-    let account_count: i64 = sqlx::query_scalar("SELECT count(*) FROM accounts")
-        .fetch_one(&state.pool)
-        .await?;
-    if account_count > 0 && !state.config.allow_registration {
-        return Err(ApiError::Forbidden);
-    }
-    let is_admin = account_count == 0;
-
     let mut tx = state.pool.begin().await?;
+    let is_admin = nntdrive_storage::store::account_creation_is_admin(
+        &mut tx,
+        state.config.allow_registration,
+        false,
+    )
+    .await?
+    .ok_or(ApiError::Forbidden)?;
     let existing: Option<Uuid> =
         sqlx::query_scalar("SELECT id FROM accounts WHERE lower(email) = lower($1)")
             .bind(&body.email)

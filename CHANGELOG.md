@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Harden account admission across backend and operator CLI instances with one
+  transaction-scoped database gate; preserve first-account administrator setup
+  and explicit operator role grants. Bound yEnc decoded allocation/output by
+  the supplied input and declared length, returning validation errors for invalid
+  sizes. Focused isolated regressions accompany this partial security-review
+  increment (#16); this is not a completed independent security audit.
+
 - Windows/Linux same-process close-to-tray retains one unlocked sync session, with Open, sync state, Pause/Resume and Quit. Missing tray support falls back to quit; session ownership excludes duplicate clients using the same settings directory. Quit/sign-out drain active work, including Copy, rename/move and maintenance, before locking keys. This is partial #6 delivery, not autostart, cold-start unlock or a mobile worker; installed-platform acceptance remains pending.
 - Sync rounds and conflict resolution reject another updated process using the same journal, with automatic operation-lease release after cancellation or process death; baseline history is preserved. This per-journal lease is separate from the desktop session owner and does not itself provide background scheduling (#6).
 - The locked-vault screen explicitly shows that synchronization is paused until unlock. Background service delivery remains incomplete; see `docs/BACKGROUND-SYNC.md` for the cold-start security constraint and remaining platform work (#6).

@@ -206,9 +206,10 @@ async fn main() -> Result<()> {
             let (keyfile, master) = KeyFile::create(&password, account_id)?;
             let verifier = nntdrive_crypto::derive_auth_verifier(&password, account_id);
             let hash = hash_verifier(&verifier)?;
-            let count: i64 = sqlx::query_scalar("SELECT count(*) FROM accounts")
-                .fetch_one(&pool)
-                .await?;
+            let mut tx = pool.begin().await?;
+            let is_admin = nntdrive_storage::store::account_creation_is_admin(&mut tx, true, admin)
+                .await?
+                .expect("account-create allows existing accounts");
             sqlx::query(
                 "INSERT INTO accounts (id, email, password_hash, display_name, keyfile, is_admin)
                  VALUES ($1, lower($2), $3, $2, $4, $5)",
@@ -217,9 +218,10 @@ async fn main() -> Result<()> {
             .bind(&email)
             .bind(hash)
             .bind(serde_json::to_value(&keyfile)?)
-            .bind(admin || count == 0)
-            .execute(&pool)
+            .bind(is_admin)
+            .execute(&mut *tx)
             .await?;
+            tx.commit().await?;
             std::fs::write(&keyfile_out, serde_json::to_vec_pretty(&keyfile)?)?;
             let (kit, code) = RecoveryKit::create(&master, Some(format!("account {account_id}")))?;
             let kit_path =
@@ -387,12 +389,6 @@ async fn main() -> Result<()> {
             recovery_out,
         } => {
             let pool = pool(&cli).await?;
-            let count: i64 = sqlx::query_scalar("SELECT count(*) FROM accounts")
-                .fetch_one(&pool)
-                .await?;
-            if count > 0 {
-                bail!("this server already has accounts; use account-create/token-create instead");
-            }
             if password.len() < 8 {
                 bail!("password must be at least 8 characters");
             }
@@ -400,6 +396,13 @@ async fn main() -> Result<()> {
             let (keyfile, master) = KeyFile::create(&password, account_id)?;
             let verifier = nntdrive_crypto::derive_auth_verifier(&password, account_id);
             let hash = hash_verifier(&verifier)?;
+            let mut tx = pool.begin().await?;
+            if nntdrive_storage::store::account_creation_is_admin(&mut tx, false, false)
+                .await?
+                .is_none()
+            {
+                bail!("this server already has accounts; use account-create/token-create instead");
+            }
             sqlx::query(
                 "INSERT INTO accounts (id, email, password_hash, display_name, keyfile, is_admin)
                  VALUES ($1, lower($2), $3, $2, $4, TRUE)",
@@ -408,8 +411,9 @@ async fn main() -> Result<()> {
             .bind(&email)
             .bind(hash)
             .bind(serde_json::to_value(&keyfile)?)
-            .execute(&pool)
+            .execute(&mut *tx)
             .await?;
+            tx.commit().await?;
             let (kit, code) = RecoveryKit::create(&master, Some(format!("account {account_id}")))?;
 
             if let Some(parent) = keyfile_out.parent() {
