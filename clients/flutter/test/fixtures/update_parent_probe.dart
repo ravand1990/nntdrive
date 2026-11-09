@@ -1,6 +1,6 @@
 // A real PE parent/restart fixture, compiled by the Windows regression test.
 // No Flutter binding or mocked Process: the parent holds its own installed
-// executable open and exits only after the production detached handoff.
+// executable open and exits only after the production helper handoff.
 import 'dart:io';
 
 import 'package:nntdrive/update_handoff.dart';

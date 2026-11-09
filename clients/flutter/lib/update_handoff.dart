@@ -41,11 +41,15 @@ Future<Directory> launchWindowsUpdateHelper({
         [
           '-NoProfile',
           '-NonInteractive',
+          '-WindowStyle',
+          'Hidden',
           '-EncodedCommand',
           encodePowerShellCommand(source)
         ],
-        // Retain startup stderr without coupling helper lifetime to the app.
-        mode: ProcessStartMode.detachedWithStdio,
+        // Use ordinary Windows process creation: PowerShell does not reach
+        // preflight with Dart's detached creation flags. The app explicitly
+        // exits after acknowledgement; the OS child continues independently.
+        mode: ProcessStartMode.normal,
       );
       // No input is ever sent to the helper. Close the pipe so PowerShell
       // cannot wait for input/EOF before executing a redirected invocation.

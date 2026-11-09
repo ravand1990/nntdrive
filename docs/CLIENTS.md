@@ -287,8 +287,9 @@ inaccessible feeds never prevent using the app. The updater:
 5. exits, letting the helper replace the install directory and restart the app.
 
 The helper launch is awaited before the app exits. Windows sends the script with
-PowerShell's UTF-16LE `-EncodedCommand`, uses detached-with-stdio mode and closes
-unused stdin immediately; startup stderr is
+PowerShell's UTF-16LE `-EncodedCommand`, uses ordinary process creation with a
+hidden window (not Dart's detached flags), and closes unused stdin immediately;
+startup stderr is
 retained in `helper-stderr.log`, and the app drains output without waiting for
 helper termination. On Windows, the helper must
 also acknowledge its archive-layout and directory-write preflight within 15
@@ -311,7 +312,7 @@ these temporary directories and the matching staged update can be removed
 manually. Installed-release version/data/journal preservation and locked-file
 manual acceptance remain #49/#28; hosted helper fixtures do not replace them.
 The Windows unit suite also compiles a disposable executable that launches the
-production helper in detached mode, exits while installed at the replacement
+production helper, exits while installed at the replacement
 path, and requires a new process to write its own startup marker after replacement.
 Run `flutter test test/update_handoff_test.dart --reporter expanded` with the
 Flutter SDK (`FLUTTER_ROOT`) available. This checks helper survival, payload

@@ -126,8 +126,7 @@ void main() {
     expect(diagnostic.readAsStringSync(), contains('complete'));
   }, skip: !Platform.isWindows);
 
-  test(
-      'detached Windows helper survives its real installed parent and restarts',
+  test('Windows helper survives its real installed parent and restarts',
       () async {
     final root =
         await Directory.systemTemp.createTemp("detached O'Brien & update-");
