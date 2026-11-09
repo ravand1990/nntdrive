@@ -444,8 +444,9 @@ No names, hashes or journal paths are sent to the backend by this inspection.
 Hashing reads the full file on each refresh and can take time for large folders.
 This is a snapshot of observed local bytes and listed metadata, not an atomic
 guarantee against hostile filesystem swaps, later edits, remote rollback or
-provider retention loss. Installed Windows/Linux and two-device UI acceptance
-remain outstanding, as does independent encrypted Copy.
+provider retention loss. Bounded encrypted file/folder Copy is available as
+described above; installed Windows/Linux and two-device UI acceptance remain
+outstanding.
 
 The sync core now persists the matching remote revision when both sides have
 independently added or edited a regular file to identical known hashes and sizes.

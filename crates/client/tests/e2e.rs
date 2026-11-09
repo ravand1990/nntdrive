@@ -12,6 +12,8 @@ use std::path::Path;
 use std::sync::Arc;
 use uuid::Uuid;
 
+#[path = "e2e/copy_pool.rs"]
+mod copy_pool_tests;
 #[path = "e2e/copy_tree.rs"]
 mod copy_tree_tests;
 
@@ -27,7 +29,29 @@ struct Stack {
 }
 
 async fn stack() -> Option<Stack> {
+    stack_with_pool_limit(None).await
+}
+
+async fn stack_with_pool_limit(max_connections: Option<u32>) -> Option<Stack> {
     let db = TestDb::create().await?;
+    let backend_pool = if let Some(max) = max_connections {
+        let schema = db.schema.clone();
+        sqlx::postgres::PgPoolOptions::new()
+            .max_connections(max)
+            .acquire_timeout(std::time::Duration::from_secs(2))
+            .after_connect(move |conn, _| {
+                let sql = format!("SET search_path TO \"{schema}\"");
+                Box::pin(async move {
+                    sqlx::query(&sql).execute(conn).await?;
+                    Ok(())
+                })
+            })
+            .connect_with((*db.store.pool().connect_options()).clone())
+            .await
+            .unwrap()
+    } else {
+        db.store.pool().clone()
+    };
     let nntp = MockNntpServer::start(MockConfig::default()).await;
     let pool = Arc::new(NntpPool::new(vec![nntp.client_config()]).unwrap());
     let cache = tempfile::tempdir().unwrap();
@@ -42,7 +66,7 @@ async fn stack() -> Option<Stack> {
         retention_refresh_days: 30,
         retention_interval_secs: 3600,
     };
-    let state = AppState::new(db.store.pool().clone(), pool, config).unwrap();
+    let state = AppState::new(backend_pool, pool, config).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let app = nntdrive_backend::app(state);

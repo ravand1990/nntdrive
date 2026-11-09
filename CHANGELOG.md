@@ -12,6 +12,10 @@
   under exact subtree/destination guards and the GC lock. Nested/empty folders
   are supported, bounded to 256 entries, depth 31 and bounded metadata/references.
   Copy-time renaming and durable retry receipts remain unsupported.
+- Fix file/folder Copy quota checks to reuse the publication transaction's
+  connection instead of exhausting the database pool while holding its locks.
+  Real HTTP regressions cover a one-connection backend pool, concurrent Copy,
+  quota rejection/rollback and shared-content downloads (#51 partial).
 
 - Apply admin provider CRUD to the serving backend without restart, pinning one
   provider snapshot per storage operation. Reject invalid configs/credentials
@@ -44,12 +48,12 @@ release workflow refuses to publish if the entry is missing.
 
 ### Features
 
-- Added local-only SDK Copy metadata preparation with fresh node/revision IDs and re-encrypted authenticated names/manifests; account-scoped immutable v1 chunk references retain safe dedupe. No Copy UI/server publication or folder copy is enabled; guarded tenant/collision/GC-safe publication remains unfinished (see `docs/COPY-DESIGN.md`, #51 partial).
+- Added the initial SDK Copy metadata preparation with fresh node/revision IDs and re-encrypted authenticated names/manifests; account-scoped immutable v1 chunk references retain safe dedupe. This release's preparation-only stage is superseded by the guarded file/folder publication and Flutter/FFI UI described under Unreleased (see `docs/COPY-DESIGN.md`, #51 partial).
 
-- Local file tooltips now distinguish presence from refresh-time journal/content-revision equality using fresh confined-file hashing off the UI isolate and a read-only existing journal. Missing/invalid evidence, active sync and directories remain unverified; conflict/error precedence and independent safe reveal are preserved (#51 partial). This is not an atomic filesystem snapshot or a durability guarantee; Copy and installed/two-device acceptance remain outstanding.
+- Local file tooltips now distinguish presence from refresh-time journal/content-revision equality using fresh confined-file hashing off the UI isolate and a read-only existing journal. Missing/invalid evidence, active sync and directories remain unverified; conflict/error precedence and independent safe reveal are preserved (#51 partial). This is not an atomic filesystem snapshot or a durability guarantee; installed Windows/Linux and two-device acceptance remain outstanding.
 - File rows show disk-derived local presence and explanatory availability labels; desktop **Show in folder** revalidates fresh remote ancestry and confined local paths before opening a file's containing folder (folders open themselves). Symlinks, traversal, ambiguous names and excluded/uncovered paths fail closed (#51 partial). Local presence does not certify content/revision equality; installed desktop acceptance remains pending.
-- File/folder rows now offer **Move to…** with an encrypted folder picker and a dedicated guarded move endpoint (#51, partial). Canonical client-local destination collision checks fail closed on unreadable names; the server atomically checks source identity/name/parent and complete destination membership under the account namespace lock. Moves preserve the node, sealed name, content versions and subtree; stale checks require refresh, with no unsafe old-server fallback. Copy and installed/two-device acceptance remain outstanding.
-- File/folder rows offer encrypted rename with portable-name validation, fresh local-decryption collision checks and stale-entry rejection (#51, partial). Guarded rename atomically compares the opaque sibling snapshot and emits a sync event; concurrent namespace changes require refresh. Copy and installed/two-device acceptance remain outstanding; legacy clients can still introduce duplicate names after a guarded rename.
+- File/folder rows now offer **Move to…** with an encrypted folder picker and a dedicated guarded move endpoint (#51, partial). Canonical client-local destination collision checks fail closed on unreadable names; the server atomically checks source identity/name/parent and complete destination membership under the account namespace lock. Moves preserve the node, sealed name, content versions and subtree; stale checks require refresh, with no unsafe old-server fallback. Installed Windows/Linux and two-device acceptance remain outstanding.
+- File/folder rows offer encrypted rename with portable-name validation, fresh local-decryption collision checks and stale-entry rejection (#51, partial). Guarded rename atomically compares the opaque sibling snapshot and emits a sync event; concurrent namespace changes require refresh. Installed Windows/Linux and two-device acceptance remain outstanding; legacy clients can still introduce duplicate names after a guarded rename.
 - Guided README installation and usage steps cover release downloads, server setup, offline recovery material, client connection, folder sync and conflicts (#52).
 
 ### Features

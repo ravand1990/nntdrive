@@ -251,7 +251,7 @@ pub async fn publish(
     if reused {
         return Err(ApiError::Conflict("copy identity unavailable".into()));
     }
-    state.check_quota(auth.account_id, 0).await?;
+    state.check_quota_on(&mut *tx, auth.account_id, 0).await?;
     // Insert parents first; request ordering is never trusted.
     let mut pending: BTreeSet<Uuid> = expected.keys().copied().collect();
     let mut inserted = BTreeSet::new();

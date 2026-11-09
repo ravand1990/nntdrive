@@ -1,7 +1,13 @@
 use super::*;
 use serde_json::Value;
 
-async fn node(s: &Stack, api: &ApiClient, parent: Option<Uuid>, name: &str, is_dir: bool) -> Uuid {
+pub(super) async fn node(
+    s: &Stack,
+    api: &ApiClient,
+    parent: Option<Uuid>,
+    name: &str,
+    is_dir: bool,
+) -> Uuid {
     let id = Uuid::new_v4();
     api.create_file(
         id,
@@ -29,7 +35,7 @@ async fn tree_snapshot(s: &Stack, root: Uuid) -> Value {
         .await
         .unwrap()
 }
-async fn payload(s: &Stack, api: &ApiClient, root: Uuid, destination: Uuid) -> Value {
+pub(super) async fn payload(s: &Stack, api: &ApiClient, root: Uuid, destination: Uuid) -> Value {
     let source = tree_snapshot(s, root).await;
     let mut nodes = Vec::new();
     for n in source.as_array().unwrap() {

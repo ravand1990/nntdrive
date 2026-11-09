@@ -123,7 +123,7 @@ pub async fn publish(
     if reused {
         return Err(ApiError::Conflict("copy identity unavailable".into()));
     }
-    state.check_quota(auth.account_id, 0).await?;
+    state.check_quota_on(&mut *tx, auth.account_id, 0).await?;
     sqlx::query("INSERT INTO files(id,account_id,parent_id,name_enc,is_dir,current_version,size) VALUES($1,$2,$3,$4,FALSE,$5,$6)")
         .bind(body.id).bind(auth.account_id).bind(body.parent_id).bind(name).bind(body.revision_id).bind(body.size).execute(&mut *tx).await?;
     let version = Uuid::new_v4();

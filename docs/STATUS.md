@@ -14,6 +14,13 @@ passes (real PostgreSQL, no skips), release FFI build, clean Flutter analysis an
 subset matching failed the added-descendant HTTP regression (201 instead of 409);
 it was restored before the complete run. These are isolated Linux-container results, not installed
 client or two-device UI acceptance.
+The quota-check follow-up reuses each Copy publication transaction's connection.
+Three real HTTP regressions with a one-connection backend pool failed against
+the original pool-based quota calls (bounded pool exhaustion), then passed after the fix:
+file/folder quota denial and shared-content downloads, plus concurrent file/folder
+publication. The follow-up canonical `all` run passed **126 Rust tests** (no skips),
+release FFI build, clean Flutter analysis and **61 Flutter tests / 3 Windows-only
+skips**; all **8 agent-policy tests** and `git diff --check` passed.
 
 Last updated: 2026-11-06. This file is the handoff record for the next agent.
 
@@ -152,8 +159,9 @@ The file browser now includes an encrypted destination picker and guarded moves
 for files and folders, preserving opaque node identity, sealed name, content
 history and subtree membership. Client-local canonical collisions and unreadable
 destination names cancel before writes; concurrent source/destination changes
-fail atomically under the account namespace lock. Copy and installed
-Windows/Linux plus two-device acceptance remain outstanding. Legacy clients may
+fail atomically under the account namespace lock. Bounded encrypted file/folder
+Copy is implemented as described above; installed Windows/Linux plus two-device
+acceptance remain outstanding. Legacy clients may
 still introduce duplicate names after a guarded
 rename. See [client details](CLIENTS.md#rename-in-the-file-browser-51-partial).
 
