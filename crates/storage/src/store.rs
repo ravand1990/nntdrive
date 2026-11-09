@@ -20,6 +20,29 @@ pub enum StoreError {
 
 pub type Result<T> = std::result::Result<T, StoreError>;
 
+/// Serialize account admission across API/CLI instances, including an empty table.
+/// Returns None when only bootstrap is allowed and an account already exists.
+/// The caller must insert and commit using this same transaction. Keep expensive
+/// key derivation outside it. Use the default READ COMMITTED isolation so the
+/// count observes the previous lock holder's commit after acquiring the lock.
+/// Explicit administrator grants are for trusted operator commands only.
+pub async fn account_creation_is_admin(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    allow_existing: bool,
+    explicit_admin: bool,
+) -> std::result::Result<Option<bool>, sqlx::Error> {
+    sqlx::query("LOCK TABLE accounts IN SHARE ROW EXCLUSIVE MODE")
+        .execute(&mut **tx)
+        .await?;
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM accounts")
+        .fetch_one(&mut **tx)
+        .await?;
+    if count > 0 && !allow_existing {
+        return Ok(None);
+    }
+    Ok(Some(explicit_admin || count == 0))
+}
+
 #[derive(Debug, Clone)]
 pub struct ChunkRow {
     pub id: Uuid,
