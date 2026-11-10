@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:isolate';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nntdrive/account_search.dart';
@@ -25,7 +26,196 @@ RemoteFile row(
       updatedAt: modified,
     );
 
+// No injected runner: observe where the production scanner reads its rows.
+// Even delaying a synchronous UI scan would fail this identity check.
+class IsolateCheckedEntry extends SearchEntry {
+  IsolateCheckedEntry(super.file, super.name)
+      : sourceIsolate = Isolate.current.hashCode;
+  final int sourceIsolate;
+
+  @override
+  String get foldedName {
+    if (Isolate.current.hashCode == sourceIsolate) {
+      throw StateError('Query scanned on caller isolate');
+    }
+    return name.toLowerCase();
+  }
+}
+
 void main() {
+  test('production scanner reads entries on a different isolate', () async {
+    final entry = IsolateCheckedEntry(row('a', null), 'Match');
+    expect(
+        await runSearchQuery(
+            {'a': entry}, const SearchFilter(text: 'match'), 200),
+        ['a']);
+  });
+
+  test(
+      'query workers serialize, skip superseded work and discard old snapshots',
+      () async {
+    for (final replaceSnapshot in [false, true]) {
+      final operations = SessionOperations();
+      final entered = Completer<void>();
+      final release = Completer<void>();
+      var calls = 0;
+      var generation = 'old';
+      final index = AccountSearch(
+        handle: 30,
+        operations: operations,
+        list: (_) async => [row('a', null)],
+        decrypt: (_) => generation,
+        authorize: () {},
+        queryWorker: (snapshot, filter, limit) async {
+          calls++;
+          if (calls == 1) {
+            entered.complete();
+            await release.future;
+          }
+          return runSearchQuery(snapshot, filter, limit);
+        },
+      );
+      addTearDown(index.dispose);
+      await index.rebuild();
+      final first = index.search(const SearchFilter());
+      await entered.future;
+      final second = index.search(const SearchFilter());
+      final third = index.search(const SearchFilter());
+      generation = 'new';
+      if (replaceSnapshot) await index.rebuild();
+      final latest = index.search(const SearchFilter());
+      release.complete();
+      expect(await first, isEmpty);
+      expect(await second, isEmpty);
+      expect(await third, isEmpty);
+      expect((await latest).single.name, replaceSnapshot ? 'new' : 'old');
+      expect(calls, 2);
+    }
+  });
+
+  test(
+      'query close drains running worker and queued admissions before revocation',
+      () async {
+    final operations = SessionOperations();
+    final entered = Completer<void>();
+    final release = Completer<void>();
+    var calls = 0;
+    var revoked = false;
+    final index = AccountSearch(
+      handle: 31,
+      operations: operations,
+      list: (_) async => [row('a', null)],
+      decrypt: (_) => 'private',
+      authorize: () {
+        expect(revoked, isFalse);
+      },
+      queryWorker: (snapshot, filter, limit) async {
+        calls++;
+        entered.complete();
+        await release.future;
+        expect(revoked, isFalse);
+        return runSearchQuery(snapshot, filter, limit);
+      },
+    );
+    addTearDown(index.dispose);
+    await index.rebuild();
+    final first = expectLater(
+        index.search(const SearchFilter()), throwsA(isA<SearchUnavailable>()));
+    await entered.future;
+    final queued = expectLater(
+        index.search(const SearchFilter()), throwsA(isA<SearchUnavailable>()));
+    index.close();
+    final drain = operations.drain(31).then((_) => revoked = true);
+    await Future<void>.delayed(Duration.zero);
+    expect(revoked, isFalse);
+    await expectLater(
+        index.search(const SearchFilter()), throwsA(isA<SearchUnavailable>()));
+    release.complete();
+    await Future.wait([first, queued, drain]);
+    expect(revoked, isTrue);
+    expect(calls, 1);
+    expect(index.count, 0);
+  });
+
+  test('snapshot publication alone invalidates a running query', () async {
+    final entered = Completer<void>();
+    final release = Completer<void>();
+    final index = AccountSearch(
+      handle: 34,
+      operations: SessionOperations(),
+      list: (_) async => [row('a', null)],
+      decrypt: (_) => 'private',
+      authorize: () {},
+      queryWorker: (snapshot, filter, limit) async {
+        entered.complete();
+        await release.future;
+        return runSearchQuery(snapshot, filter, limit);
+      },
+    );
+    addTearDown(index.dispose);
+    await index.rebuild();
+    final pending = index.search(const SearchFilter());
+    await entered.future;
+    await index.rebuild();
+    release.complete();
+    expect(await pending, isEmpty);
+  });
+
+  test('worker failure is redacted, releases queue and preserves snapshot',
+      () async {
+    var fail = true;
+    final index = AccountSearch(
+      handle: 32,
+      operations: SessionOperations(),
+      list: (_) async => [row('a', null)],
+      decrypt: (_) => 'private',
+      authorize: () {},
+      queryWorker: (snapshot, filter, limit) {
+        if (fail) throw StateError('private query/token');
+        return runSearchQuery(snapshot, filter, limit);
+      },
+    );
+    addTearDown(index.dispose);
+    await index.rebuild();
+    await expectLater(
+        index.search(const SearchFilter()),
+        throwsA(predicate((Object e) =>
+            e is SearchUnavailable && !e.toString().contains('private'))));
+    fail = false;
+    expect((await index.search(const SearchFilter())).single.name, 'private');
+  });
+
+  test('top-k tie order and filter boundaries remain exact', () async {
+    final date = DateTime.utc(2026);
+    final index = AccountSearch(
+      handle: 33,
+      operations: SessionOperations(),
+      list: (parent) async => parent != null
+          ? []
+          : [
+              row('z', null, modified: date, favorite: true),
+              row('a', null, modified: date, favorite: true),
+              row('d', null, dir: true, modified: date, favorite: true),
+              row('missing', null, favorite: true),
+            ],
+      decrypt: (_) => 'Match.PDF',
+      authorize: () {},
+    );
+    addTearDown(index.dispose);
+    await index.rebuild();
+    final f = SearchFilter(
+        text: ' MATCH.PDF ',
+        extension: '.PDF',
+        minSize: 20,
+        maxSize: 20,
+        favoritesOnly: true,
+        modifiedAfter: date,
+        modifiedBefore: date.add(const Duration(seconds: 1)));
+    expect((await index.search(f)).map((e) => e.file.id), ['a', 'z']);
+    expect((await index.search(f, limit: 0)).single.file.id, 'a');
+    expect(await index.search(SearchFilter(modifiedBefore: date)), isEmpty);
+  });
+
   test('async batches are bounded, sequential and atomically published',
       () async {
     final data = List.generate(257, (i) => row('$i', null));
@@ -366,10 +556,12 @@ void main() {
       await index.rebuild();
       expect(index.count, 100000);
       expect(ticks, greaterThan(0));
+      ticks = 0;
       expect(
         (await index.search(const SearchFilter(text: 'file'))).length,
         200,
       );
+      expect(ticks, greaterThan(0)); // query worker permits real timer events
       final pending = index.search(const SearchFilter(text: 'file'));
       index.close();
       await expectLater(pending, throwsA(isA<SearchUnavailable>()));

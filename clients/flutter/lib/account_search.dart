@@ -1,9 +1,18 @@
 import 'dart:async';
+import 'dart:isolate';
 
 import 'package:flutter/foundation.dart';
 
 import 'api.dart';
 import 'session_operations.dart';
+
+/// Captures only sendable RAM data, never the controller or session completers.
+Future<List<String>> runSearchQuery(
+  Map<String, SearchEntry> snapshot,
+  SearchFilter filter,
+  int limit,
+) =>
+    Isolate.run(() => _scanSearch(snapshot, filter, limit));
 
 /// Deliberately diagnostic-free: upstream errors may contain names or tokens.
 class SearchUnavailable implements Exception {
@@ -47,8 +56,9 @@ class SearchEntry {
 /// One unlocked account/session only. No preferences, files, telemetry or query
 /// HTTP endpoint. A successful build is an atomic, rebuildable RAM snapshot.
 /// Production decryption uses sequential bounded worker batches; injected sync
-/// fixtures remain supported. Assembly/ranking still cooperatively yield on the
-/// caller isolate. This is not a durable offline index or a content extractor.
+/// fixtures remain supported. Query scans/filtering/top-k run off-isolate;
+/// cold assembly/folding still cooperatively yield on the caller isolate.
+/// This is not a durable offline index or a content extractor.
 class AccountSearch extends ChangeNotifier {
   AccountSearch({
     required this.handle,
@@ -56,6 +66,7 @@ class AccountSearch extends ChangeNotifier {
     required this.list,
     required this.decrypt,
     this.decryptBatch,
+    this.queryWorker = runSearchQuery,
     required this.authorize,
   });
   static const decryptBatchSize = 128;
@@ -67,6 +78,11 @@ class AccountSearch extends ChangeNotifier {
   /// Ordered, all-or-error names. Never invoked concurrently by a build.
   final Future<List<String>> Function(List<RemoteFile> files)? decryptBatch;
   final void Function() authorize;
+
+  /// Test seam; production always uses the top-level isolate boundary.
+  final Future<List<String>> Function(
+      Map<String, SearchEntry>, SearchFilter, int) queryWorker;
+  Future<void> _queryTail = Future<void>.value();
   Map<String, SearchEntry> _entries = {};
   final List<SearchFilter> _recent = [];
   final List<SearchFilter> _saved = [];
@@ -101,7 +117,7 @@ class AccountSearch extends ChangeNotifier {
     _closed = true;
     _epoch++;
     _query++;
-    _entries.clear();
+    _entries = {}; // In-flight snapshots remain immutable until worker drain.
     _recent.clear();
     _saved.clear();
     ready = false;
@@ -224,8 +240,8 @@ class AccountSearch extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// No query or filter ever reaches list(). Keep only a bounded ranked top 200
-  /// and yield during large scans instead of sorting 100k matches on the UI.
+  /// No query/filter reaches list(). At most one query worker is in flight.
+  /// Superseded queued queries never dispatch; running workers finish and drain.
   Future<List<SearchEntry>> search(
     SearchFilter filter, {
     int limit = 200,
@@ -237,79 +253,86 @@ class AccountSearch extends ChangeNotifier {
         _check(epoch);
         _authorize();
         if (!ready) return <SearchEntry>[];
-        final snapshot = _entries;
-        final text = filter.text.trim().toLowerCase();
-        final terms =
-            text.split(RegExp(r'\s+')).where((s) => s.isNotEmpty).toList();
-        final extension = filter.extension.trim().toLowerCase().replaceFirst(
-              RegExp(r'^\.'),
-              '',
-            );
-        final best = <({SearchEntry entry, int rank})>[];
-        final cap = limit.clamp(1, 200);
-        final slice = Stopwatch()..start();
-        for (final entry in snapshot.values) {
-          if (query != _query) return <SearchEntry>[];
+        // Do not retain a snapshot for each queued keystroke.
+        final previous = _queryTail;
+        final done = Completer<void>();
+        _queryTail = done.future;
+        try {
+          await previous;
           _check(epoch);
-          final f = entry.file;
-          final name = entry.foldedName;
-          final date = f.updatedAt;
-          if ((filter.kind != SearchKind.file || !f.isDir) &&
-              (filter.kind != SearchKind.folder || f.isDir) &&
-              (!filter.favoritesOnly || f.favorite) &&
-              (filter.minSize == null ||
-                  (!f.isDir && f.size >= filter.minSize!)) &&
-              (filter.maxSize == null ||
-                  (!f.isDir && f.size <= filter.maxSize!)) &&
-              (filter.modifiedAfter == null ||
-                  (date != null && !date.isBefore(filter.modifiedAfter!))) &&
-              (filter.modifiedBefore == null ||
-                  (date != null && date.isBefore(filter.modifiedBefore!))) &&
-              (extension.isEmpty ||
-                  (!f.isDir && name.endsWith('.$extension'))) &&
-              terms.every(name.contains)) {
-            final rank = name == text
-                ? 0
-                : name.startsWith(text)
-                    ? 1
-                    : terms.any((term) => name.contains(' $term'))
-                        ? 2
-                        : 3;
-            var low = 0;
-            var high = best.length;
-            while (low < high) {
-              final mid = (low + high) >> 1;
-              final other = best[mid];
-              final order = rank != other.rank
-                  ? rank.compareTo(other.rank)
-                  : name != other.entry.foldedName
-                      ? name.compareTo(other.entry.foldedName)
-                      : f.id.compareTo(other.entry.file.id);
-              if (order < 0) {
-                high = mid;
-              } else {
-                low = mid + 1;
-              }
-            }
-            if (low < cap) {
-              best.insert(low, (entry: entry, rank: rank));
-              if (best.length > cap) best.removeLast();
-            }
+          if (query != _query) return <SearchEntry>[];
+          final snapshot = _entries;
+          final ids = await queryWorker(snapshot, filter, limit.clamp(1, 200));
+          _check(epoch);
+          _authorize();
+          if (query != _query || !identical(snapshot, _entries)) {
+            return <SearchEntry>[];
           }
-          if (slice.elapsedMilliseconds >= 4) {
-            await Future<void>.delayed(Duration.zero);
-            _check(epoch);
-            if (query != _query) return <SearchEntry>[];
-            slice.reset();
-          }
+          return ids.map((id) => snapshot[id]!).toList();
+        } finally {
+          done.complete();
         }
-        _check(epoch);
-        _authorize();
-        if (query != _query) return <SearchEntry>[];
-        return best.map((e) => e.entry).toList();
       });
     } catch (_) {
       throw const SearchUnavailable();
     }
   }
+}
+
+/// Pure synchronous scan: only called inside the production worker isolate.
+List<String> _scanSearch(
+    Map<String, SearchEntry> snapshot, SearchFilter filter, int limit) {
+  final text = filter.text.trim().toLowerCase();
+  final terms = text.split(RegExp(r'\s+')).where((s) => s.isNotEmpty).toList();
+  final extension = filter.extension.trim().toLowerCase().replaceFirst(
+        RegExp(r'^\.'),
+        '',
+      );
+  final best = <({SearchEntry entry, int rank})>[];
+  final cap = limit.clamp(1, 200);
+  for (final entry in snapshot.values) {
+    final f = entry.file;
+    final name = entry.foldedName;
+    final date = f.updatedAt;
+    if ((filter.kind != SearchKind.file || !f.isDir) &&
+        (filter.kind != SearchKind.folder || f.isDir) &&
+        (!filter.favoritesOnly || f.favorite) &&
+        (filter.minSize == null || (!f.isDir && f.size >= filter.minSize!)) &&
+        (filter.maxSize == null || (!f.isDir && f.size <= filter.maxSize!)) &&
+        (filter.modifiedAfter == null ||
+            (date != null && !date.isBefore(filter.modifiedAfter!))) &&
+        (filter.modifiedBefore == null ||
+            (date != null && date.isBefore(filter.modifiedBefore!))) &&
+        (extension.isEmpty || (!f.isDir && name.endsWith('.$extension'))) &&
+        terms.every(name.contains)) {
+      final rank = name == text
+          ? 0
+          : name.startsWith(text)
+              ? 1
+              : terms.any((term) => name.contains(' $term'))
+                  ? 2
+                  : 3;
+      var low = 0;
+      var high = best.length;
+      while (low < high) {
+        final mid = (low + high) >> 1;
+        final other = best[mid];
+        final order = rank != other.rank
+            ? rank.compareTo(other.rank)
+            : name != other.entry.foldedName
+                ? name.compareTo(other.entry.foldedName)
+                : f.id.compareTo(other.entry.file.id);
+        if (order < 0) {
+          high = mid;
+        } else {
+          low = mid + 1;
+        }
+      }
+      if (low < cap) {
+        best.insert(low, (entry: entry, rank: rank));
+        if (best.length > cap) best.removeLast();
+      }
+    }
+  }
+  return best.map((e) => e.entry.file.id).toList();
 }

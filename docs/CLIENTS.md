@@ -103,9 +103,17 @@ synced plaintext files/journals are separate from this index.
 Not complete #80: sync/availability filtering and verified result-state badges,
 durable encrypted offline persistence/history and incremental refresh remain
 unfinished. Explicit rebuild is needed after changes; offline snapshots may be
-stale. Snapshot assembly and query loops still yield cooperatively in ~4 ms
-slices. Worker name decryption is not proof the entire HTTP parsing, traversal,
-normalization, ranking or build runs off-isolate: those remain on the UI isolate.
+stale. Query scanning, combined filtering and bounded top-200 ranking now run in
+one worker isolate at a time, returning only winning IDs. Exact ranking ties use
+lowercased name then opaque ID. Superseded queued queries skip dispatch; late
+results after a newer query, snapshot replacement or close are discarded. Entire
+queued/running workflows remain session-owned until completion, including drain
+before key revocation. A running scan is not forcibly killed. Each dispatched
+query copies the bounded RAM snapshot to a short-lived worker; transfer/spawn
+costs are not eliminated, and names remain in worker RAM until completion.
+Snapshot assembly still yields cooperatively in ~4 ms slices. HTTP parsing,
+traversal, cold name folding and assembly remain on the UI isolate; this is not
+a fully off-isolate cold build.
 Builds reject malformed/unreadable trees and bounds above 100k
 entries/depth 256 without replacing the previous complete index. Synthetic warm
 query tests are not installed-device/cold-network performance acceptance. No
