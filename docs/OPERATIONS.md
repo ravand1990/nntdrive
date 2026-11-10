@@ -7,7 +7,7 @@
 Images are published to GHCR with semantic version tags:
 
 ```
-ghcr.io/ravand1990/nntdrive-backend:0.8.0
+ghcr.io/ravand1990/nntdrive-backend:0.8.1
 ghcr.io/ravand1990/nntdrive-backend:latest
 ghcr.io/ravand1990/nntdrive-backend:edge
 ```
@@ -22,7 +22,7 @@ echo "$GHCR_TOKEN" | docker login ghcr.io -u ravand1990 --password-stdin
 Download matching `docker-compose.release.yml`, `nntdrive-compose.py` and
 `env.release.example` files. Releases from v0.7.0 include the launcher; use the
 deployment files from the matching release (see the root README). Optionally copy the
-example to `.env` and pin `NNTDRIVE_VERSION=0.8.0`; both secret fields can stay
+example to `.env` and pin `NNTDRIVE_VERSION=0.8.1`; both secret fields can stay
 empty. On Linux/WSL with Python 3 and Compose 2.24+:
 
 ```bash
@@ -67,7 +67,7 @@ Tagging `vX.Y.Z` runs `.github/workflows/release.yml`:
    image-only Compose files attached.
 
 Before tagging, choose a new version; **0.4.2 below is an example, not a
-published release**. Do not reuse the v0.8.0 release tag.
+published release**. Do not reuse the v0.8.1 release tag.
 
 ```bash
 # 1. bump the workspace version in Cargo.toml and client version in
