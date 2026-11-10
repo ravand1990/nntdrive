@@ -39,7 +39,7 @@ class AccountInfo {
 }
 
 class RemoteFile {
-  RemoteFile(this.id, this.parentId, this.nameEnc, this.isDir, this.size, this.favorite, this.revision, this.currentVersion);
+  RemoteFile(this.id, this.parentId, this.nameEnc, this.isDir, this.size, this.favorite, this.revision, this.currentVersion, {this.updatedAt});
   final String id;
   final String? parentId;
   final String nameEnc; // sealed bytes, base64
@@ -48,6 +48,8 @@ class RemoteFile {
   final bool favorite;
   final int revision;
   final String? currentVersion;
+  /// Server namespace modification time; not a verified content timestamp.
+  final DateTime? updatedAt;
 
   factory RemoteFile.fromJson(Map<String, dynamic> j) => RemoteFile(
         j['id'] as String,
@@ -58,6 +60,7 @@ class RemoteFile {
         j['favorite'] as bool? ?? false,
         j['revision'] as int? ?? 0,
         j['current_version'] as String?,
+        updatedAt: DateTime.tryParse(j['updated_at'] as String? ?? ''),
       );
 }
 

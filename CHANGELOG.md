@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Features
+
+- Search decrypted names across all account folders using an explicitly rebuildable, session-memory-only client index (#80 partial). Ranked results include containing folders and sizes, with combined type, extension, size, server modification-date and favorite filters; recent searches and saved filters last until sign-out. Indexed results remain searchable offline within that unlocked session. Search availability/sync-status filters and durable encrypted offline persistence remain unfinished.
+
 ## [0.7.1] - 2026-11-10
 
 ### Bug fixes
