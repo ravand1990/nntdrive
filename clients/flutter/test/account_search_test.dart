@@ -26,6 +26,99 @@ RemoteFile row(
     );
 
 void main() {
+  test('async batches are bounded, sequential and atomically published',
+      () async {
+    final data = List.generate(257, (i) => row('$i', null));
+    final sizes = <int>[];
+    var active = 0;
+    var fail = false;
+    late AccountSearch index;
+    index = AccountSearch(
+      handle: 20,
+      operations: SessionOperations(),
+      list: (_) async => data,
+      decrypt: (_) => throw StateError('sync path used'),
+      decryptBatch: (files) async {
+        sizes.add(files.length);
+        expect(++active, 1);
+        // No partial snapshot is visible across any batch boundary.
+        expect(index.count, index.ready ? 257 : 0);
+        await Future<void>.delayed(Duration.zero);
+        active--;
+        if (fail && sizes.length == 2) throw StateError('private name/token');
+        return files.map((f) => 'name-${f.id}').toList();
+      },
+      authorize: () {},
+    );
+    addTearDown(index.dispose);
+    await index.rebuild();
+    expect(sizes, [128, 128, 1]);
+    expect(index.count, 257);
+    sizes.clear();
+    fail = true;
+    await expectLater(
+        index.rebuild(),
+        throwsA(predicate((Object e) =>
+            e is SearchUnavailable && !e.toString().contains('private'))));
+    expect(index.ready, isTrue);
+    expect(index.failed, isTrue);
+    expect(index.count, 257);
+    expect(
+        (await index.search(const SearchFilter(text: 'name-256'))).single.name,
+        'name-256');
+  });
+
+  test('close drains suspended async batch and rejects late publication',
+      () async {
+    final entered = Completer<void>();
+    final result = Completer<List<String>>();
+    final operations = SessionOperations();
+    var calls = 0;
+    final index = AccountSearch(
+      handle: 21,
+      operations: operations,
+      list: (_) async => List.generate(129, (i) => row('$i', null)),
+      decrypt: (_) => throw StateError('sync path used'),
+      decryptBatch: (_) {
+        calls++;
+        entered.complete();
+        return result.future;
+      },
+      authorize: () {},
+    );
+    addTearDown(index.dispose);
+    final rejected =
+        expectLater(index.rebuild(), throwsA(isA<SearchUnavailable>()));
+    await entered.future.timeout(const Duration(seconds: 5));
+    index.close();
+    var drained = false;
+    final drain = operations.drain(21).then((_) => drained = true);
+    await Future<void>.delayed(Duration.zero);
+    expect(drained, isFalse);
+    result.complete(List.filled(128, 'secret'));
+    await rejected;
+    await drain;
+    expect(calls, 1);
+    expect(index.count, 0);
+    expect(index.ready, isFalse);
+    await expectLater(index.rebuild(), throwsA(isA<SearchUnavailable>()));
+  });
+
+  test('wrong batch result length cannot publish', () async {
+    final index = AccountSearch(
+      handle: 22,
+      operations: SessionOperations(),
+      list: (_) async => [row('a', null)],
+      decrypt: (_) => throw StateError('sync path used'),
+      decryptBatch: (_) async => [],
+      authorize: () {},
+    );
+    addTearDown(index.dispose);
+    await expectLater(index.rebuild(), throwsA(isA<SearchUnavailable>()));
+    expect(index.count, 0);
+    expect(index.ready, isFalse);
+  });
+
   test(
     'walks nested and empty folders; ranks names and combines real metadata',
     () async {

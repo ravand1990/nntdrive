@@ -6,6 +6,12 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Bug fixes
+
+- Account-search cold builds open authenticated encrypted names on worker isolates in sequential batches of at most 128, draining worker completion before session key revocation (#80 partial). HTTP parsing, snapshot assembly and ranking are not moved off the UI isolate; status filters and encrypted persistence remain unfinished.
+
+## [0.8.0] - 2026-11-10
+
 ### Features
 
 - Search decrypted names across all account folders using an explicitly rebuildable, session-memory-only client index (#80 partial). Ranked results include containing folders and sizes, with combined type, extension, size, server modification-date and favorite filters; recent searches and saved filters last until sign-out. Indexed results remain searchable offline within that unlocked session. Search availability/sync-status filters and durable encrypted offline persistence remain unfinished.
