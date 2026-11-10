@@ -81,6 +81,21 @@ Future<Map<String, dynamic>> _runCopy(int handle, String request) =>
 Future<bool> _runLocalFileMatches(String request) =>
     Isolate.run(() => NativeBridge.instance._localFileMatches(request));
 
+// Capture only opaque IDs/envelopes and the process-local handle, never the
+// bridge (DynamicLibrary), a Session, listeners or completers.
+Future<List<String>> _runOpenNames(
+        int handle, List<({String id, String nameEnc})> names) =>
+    Isolate.run(() {
+      try {
+        final bridge = NativeBridge.instance;
+        return names
+            .map((n) => bridge.openName(handle, n.id, n.nameEnc))
+            .toList();
+      } catch (_) {
+        throw NativeException('Encrypted names unavailable');
+      }
+    });
+
 class NativeBridge {
   NativeBridge._(this._lib) {
     _free = _lib.lookupFunction<_FreeNative, _FreeDart>('nntdrive_string_free');
@@ -292,6 +307,22 @@ class NativeBridge {
     } finally {
       malloc.free(a);
       malloc.free(b);
+    }
+  }
+
+  /// One bounded, ordered, authenticated batch on a worker isolate. No new ABI,
+  /// ciphertext format or key material crosses the isolate boundary. Callers
+  /// must also own their complete listing/build workflow through completion.
+  Future<List<String>> openNamesAsync(
+      int handle, List<({String id, String nameEnc})> names) async {
+    if (names.isEmpty || names.length > 128) {
+      throw NativeException('Encrypted names unavailable');
+    }
+    final batch = List<({String id, String nameEnc})>.of(names);
+    try {
+      return await _operations.run(handle, () => _runOpenNames(handle, batch));
+    } catch (_) {
+      throw NativeException('Encrypted names unavailable');
     }
   }
 

@@ -4,7 +4,11 @@
 
 The file browser's **Search all files** action builds an account/session-local
 RAM index by recursively listing opaque folder IDs and opening authenticated
-names through the existing native bridge. Queries stay local. Results rank exact,
+names through the existing native bridge on worker isolates, in sequential
+batches of at most 128 (one batch in flight). The whole build awaits worker
+completion inside SessionOperations, so close discards late results and drain
+precedes key revocation. Name errors remain redacted; ciphertext formats/keys
+are unchanged and decrypted names remain client RAM only. Queries stay local. Results rank exact,
 prefix, word-substring and substring names, combine file/folder, extension, byte
 size, namespace modification-date and real API favorite filters, show containing
 folder paths/sizes, and navigate back through the existing browser. Recent and
@@ -15,7 +19,7 @@ index before draining operations/revoking keys; delayed listings cannot decrypt
 or republish afterward. No search index/query persistence, logging or telemetry
 is added. Dart strings are garbage-collected, not guaranteed physically zeroized.
 
-The focused isolated Flutter run passed **10 tests** and clean analysis, including
+The original search increment's focused isolated Flutter run passed **10 tests** and clean analysis, including
 real native encryption + loopback nested HTTP listings, no query/name/path in
 requests, revoked-key rejection, delayed-response cancellation/drain, cross-session
 clearing, atomic failure/offline reuse and widget navigation/filter reuse. A
@@ -24,12 +28,25 @@ yielding; 20 warm 10k-entry searches measured p95 **7750 microseconds** in that
 container run (target <150 ms). Temporarily restoring folder-only traversal failed
 the nested-listing regression; recursion was restored before the green run.
 
+The worker-decryption follow-up passed the canonical isolated
+`bash scripts/dev-check.sh flutter`: clean analysis and **104 passed / 4 skipped**
+(existing platform-specific tests). The separate search-only run passed **16 tests**.
+Coverage includes real authenticated worker decryption, ordered/bounded batches,
+wrong/locked keys, substituted name AAD, real Session/loopback HTTP wiring,
+suspended batch close/drain, redacted errors and atomic snapshot retention.
+Restoring the synchronous build path failed the async-batch regression; replacing
+`Isolate.run` with synchronous `Future.sync` failed the event-loop-yield regression.
+Both sabotages were restored before the final canonical green run. These checks
+do not establish installed-device cold-build latency or whole-build isolation.
+
 This is not full #80 completion: availability/sync-status filtering is absent and
 search rows explicitly say status unknown; open the folder for fresh inspection.
 Persistent encrypted offline indexing/history, incremental event updates,
 installed-device performance and full cold-build responsiveness remain unverified
-or unfinished. Builds and scans yield in ~4 ms slices, but individual native calls
-and HTTP response JSON decoding still execute on the UI isolate. Index builds are
+or unfinished. Assembly and scans yield in ~4 ms slices, but worker name
+decryption is not proof of an entirely off-isolate build: HTTP response parsing,
+traversal, name folding, snapshot assembly and ranking still run on the UI
+isolate. Index builds are
 bounded to 100k entries/depth 256 and fail rather than publish a partial index;
 large-folder network/decode cost is not established by the synthetic benchmark.
 Content extraction is out of scope. See [client search](CLIENTS.md#account-wide-search-80-partial).

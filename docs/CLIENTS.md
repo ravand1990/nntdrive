@@ -90,8 +90,12 @@ Names, paths, queries and saved filters live only in unlocked-session memory,
 never the search network requests, preferences, index files, backups or logs.
 Only normal ciphertext folder listings by opaque parent IDs are requested. The
 index is closed/cleared before sign-out/Quit drains native work and locks keys;
-late listing responses are rejected before decryption. A new session starts
-empty, and every search/build checks native unlock authority. Dart immutable
+late listing responses are rejected before decryption. Cold-build name opening
+uses the existing authenticated native ABI on worker isolates, in sequential
+batches of at most 128 names (one batch in flight). The whole listing/build,
+including awaited worker completion, remains session-owned; close discards late
+worker results and drain waits before key revocation. Worker errors are redacted.
+A new session starts empty, and every search/build checks native unlock authority. Dart immutable
 strings cannot promise physical memory zeroization; OS swap/crash dumps and
 device compromise are outside this in-process guarantee. Existing intentionally
 synced plaintext files/journals are separate from this index.
@@ -99,9 +103,10 @@ synced plaintext files/journals are separate from this index.
 Not complete #80: sync/availability filtering and verified result-state badges,
 durable encrypted offline persistence/history and incremental refresh remain
 unfinished. Explicit rebuild is needed after changes; offline snapshots may be
-stale. Build/query loops yield cooperatively in ~4 ms slices rather than block on
-one full-tree scan, but native name calls and HTTP JSON decoding are not moved to
-worker isolates. Builds reject malformed/unreadable trees and bounds above 100k
+stale. Snapshot assembly and query loops still yield cooperatively in ~4 ms
+slices. Worker name decryption is not proof the entire HTTP parsing, traversal,
+normalization, ranking or build runs off-isolate: those remain on the UI isolate.
+Builds reject malformed/unreadable trees and bounds above 100k
 entries/depth 256 without replacing the previous complete index. Synthetic warm
 query tests are not installed-device/cold-network performance acceptance. No
 content extraction or server-side plaintext search is introduced.

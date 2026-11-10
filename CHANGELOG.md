@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Bug fixes
+
+- Account-search cold builds open authenticated encrypted names on worker isolates in sequential batches of at most 128, draining worker completion before session key revocation (#80 partial). HTTP parsing, snapshot assembly and ranking are not moved off the UI isolate; status filters and encrypted persistence remain unfinished.
+
 ## [0.8.0] - 2026-11-10
 
 ### Features

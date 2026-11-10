@@ -73,6 +73,8 @@ class Session {
     operations: operations,
     list: (parent) => ApiClient(baseUrl: server, token: token).listFiles(parentId: parent),
     decrypt: (file) => NativeBridge.instance.openName(handle, file.id, file.nameEnc),
+    decryptBatch: (files) => NativeBridge.instance.openNamesAsync(handle,
+        files.map((f) => (id: f.id, nameEnc: f.nameEnc)).toList()),
     // This local native operation validates a live handle even with an empty
     // index. The random ciphertext is discarded; it is never sent or persisted.
     authorize: () { NativeBridge.instance.sealName(handle, '00000000-0000-0000-0000-000000000000', ''); },

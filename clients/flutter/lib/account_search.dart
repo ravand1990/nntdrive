@@ -46,20 +46,26 @@ class SearchEntry {
 
 /// One unlocked account/session only. No preferences, files, telemetry or query
 /// HTTP endpoint. A successful build is an atomic, rebuildable RAM snapshot.
-/// Cooperative bounded work yields to Flutter between batches, including during
-/// decryption. This is not a durable offline index or a content extractor.
+/// Production decryption uses sequential bounded worker batches; injected sync
+/// fixtures remain supported. Assembly/ranking still cooperatively yield on the
+/// caller isolate. This is not a durable offline index or a content extractor.
 class AccountSearch extends ChangeNotifier {
   AccountSearch({
     required this.handle,
     required this.operations,
     required this.list,
     required this.decrypt,
+    this.decryptBatch,
     required this.authorize,
   });
+  static const decryptBatchSize = 128;
   final int handle;
   final SessionOperations operations;
   final Future<List<RemoteFile>> Function(String? parent) list;
   final String Function(RemoteFile file) decrypt;
+
+  /// Ordered, all-or-error names. Never invoked concurrently by a build.
+  final Future<List<String>> Function(List<RemoteFile> files)? decryptBatch;
   final void Function() authorize;
   Map<String, SearchEntry> _entries = {};
   final List<SearchFilter> _recent = [];
@@ -130,19 +136,35 @@ class AccountSearch extends ChangeNotifier {
           final parent = queue[cursor];
           final files = await list(parent.id);
           _check(epoch); // Never decrypt a late response after close.
-          for (final file in files) {
+          for (var offset = 0;
+              offset < files.length;
+              offset += decryptBatchSize) {
             _check(epoch);
-            if (file.parentId != parent.id ||
-                candidate.containsKey(file.id) ||
-                candidate.length >= 100000 ||
-                parent.depth > 256) {
-              throw const SearchUnavailable();
+            final end = (offset + decryptBatchSize).clamp(0, files.length);
+            final batch = files.sublist(offset, end);
+            final ids = <String>{};
+            for (final file in batch) {
+              if (file.parentId != parent.id ||
+                  candidate.containsKey(file.id) ||
+                  !ids.add(file.id) ||
+                  candidate.length + ids.length > 100000 ||
+                  parent.depth > 256) {
+                throw const SearchUnavailable();
+              }
             }
-            final name = decrypt(
-              file,
-            ); // Authenticated native name opening only.
-            candidate[file.id] = SearchEntry(file, name);
-            if (file.isDir) queue.add((id: file.id, depth: parent.depth + 1));
+            // Await INSIDE operations.run: close/drain must retain the handle
+            // until the worker has finished, even if publication is cancelled.
+            final openBatch = decryptBatch;
+            final names = openBatch == null
+                ? batch.map(decrypt).toList()
+                : await openBatch(List.unmodifiable(batch));
+            _check(epoch); // Discard every late worker result after close.
+            if (names.length != batch.length) throw const SearchUnavailable();
+            for (var i = 0; i < batch.length; i++) {
+              final file = batch[i];
+              candidate[file.id] = SearchEntry(file, names[i]);
+              if (file.isDir) queue.add((id: file.id, depth: parent.depth + 1));
+            }
             if (slice.elapsedMilliseconds >= 4) {
               await Future<void>.delayed(Duration.zero);
               _check(epoch);
