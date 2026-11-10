@@ -286,7 +286,12 @@ inaccessible feeds never prevent using the app. The updater:
 4. unpacks to a temporary directory and starts a detached helper;
 5. exits, letting the helper replace the install directory and restart the app.
 
-The helper launch is awaited before the app exits. On Windows, the helper must
+The helper launch is awaited before the app exits. Windows sends the script with
+PowerShell's UTF-16LE `-EncodedCommand`, uses ordinary process creation with a
+hidden window (not Dart's detached flags), and closes unused stdin immediately;
+startup stderr is
+retained in `helper-stderr.log`, and the app drains output without waiting for
+helper termination. On Windows, the helper must
 also acknowledge its archive-layout and directory-write preflight within 15
 seconds; a launch/preflight failure leaves the app open with an error. It waits
 at most 60 seconds for the old process to exit, then backs up overwritten payload
@@ -298,13 +303,22 @@ restart can itself fail, so this is not a durability guarantee.
 
 Windows diagnostics remain in the system temporary directory under a unique
 `nntdrive-update-handoff-*` directory: `update.log` names the failing step,
-`failed`/`complete` records the outcome, `update.ps1` retains the helper source,
+`failed`/`complete` records the outcome, `helper-pid` identifies the launched
+helper, `update.ps1` retains its source,
 and `backup/` retains overwritten files. Failed stages/backups are deliberately
 not deleted. These files contain local install paths, not update tokens or keys;
 review/redact paths before sharing a log. After confirming a working install,
 these temporary directories and the matching staged update can be removed
 manually. Installed-release version/data/journal preservation and locked-file
 manual acceptance remain #49/#28; hosted helper fixtures do not replace them.
+The Windows unit suite also compiles a disposable executable that launches the
+production helper, exits while installed at the replacement
+path, and requires a new process to write its own startup marker after replacement.
+Run `flutter test test/update_handoff_test.dart --reporter expanded` with the
+Flutter SDK (`FLUTTER_ROOT`) available. This checks helper survival, payload
+replacement and a probe restart, not the packaged Flutter app, installed release
+version or real user data. A `complete` helper marker alone means that Windows
+accepted the launch request; it does not prove the app reached a usable window.
 
 Public releases do not require a token. For a private release repository, open
 **Account → Update settings**, set the repository and a read-only token; an
