@@ -18,6 +18,21 @@ Future<AccountSearch> fixture() async {
   return index;
 }
 
+// pumpAndSettle only drains fake frames, not real isolate messages. Keep the
+// production runner here and wait bounded real event turns for its UI result.
+Future<void> waitForResult(WidgetTester tester,
+    {bool Function()? until}) async {
+  for (var i = 0;
+      i < 500 &&
+          !(until?.call() ?? find.text('Report.pdf').evaluate().isNotEmpty);
+      i++) {
+    await tester
+        .runAsync(() => Future<void>.delayed(const Duration(milliseconds: 10)));
+    await tester.pump();
+  }
+  await tester.pumpAndSettle();
+}
+
 void main() {
   testWidgets(
       'account result shows path size honest status and returns selection; save and recent reuse',
@@ -40,12 +55,14 @@ void main() {
         find.widgetWithText(TextField, 'Search decrypted names'), 'Report');
     await tester.pump(const Duration(milliseconds: 200));
     await tester.pumpAndSettle();
+    await waitForResult(tester);
     expect(find.text('Report.pdf'), findsOneWidget);
     expect(find.text('/Private folder · 42 bytes · Sync status unknown'),
         findsOneWidget);
     await tester.ensureVisible(find.text('Save filter'));
     await tester.tap(find.text('Save filter'));
     await tester.pumpAndSettle();
+    await waitForResult(tester, until: () => index.saved.isNotEmpty);
     expect(index.saved.single.text, 'Report');
     expect(find.text('Saved: Report'), findsOneWidget);
     await tester.tap(find.text('Report.pdf'));
@@ -58,6 +75,7 @@ void main() {
     await tester.tap(find.text('Saved: Report'));
     await tester.pump(const Duration(milliseconds: 200));
     await tester.pumpAndSettle();
+    await waitForResult(tester);
     expect(find.text('Report.pdf'), findsOneWidget);
     expect(find.widgetWithText(TextField, 'Report'), findsOneWidget);
     index.close();
@@ -93,6 +111,7 @@ void main() {
     await tester.tap(find.text('Clear filters'));
     await tester.pump(const Duration(milliseconds: 200));
     await tester.pumpAndSettle();
+    await waitForResult(tester);
     expect(find.byKey(const Key('search-error')), findsNothing);
     expect(find.text('Report.pdf'), findsOneWidget);
     expect(find.text('Private folder'), findsOneWidget);

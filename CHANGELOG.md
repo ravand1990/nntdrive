@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Bug fixes
+
+- Account-search query scanning, filtering and bounded top-200 ranking run on worker isolates, with serialized dispatch, stale-result rejection and complete session drain ownership (#80 partial). Per-query snapshot-copy/spawn costs remain; HTTP parsing, cold folding/assembly, status filters, persistence and incremental refresh are not addressed.
+
 ## [0.8.1] - 2026-11-10
 
 ### Bug fixes

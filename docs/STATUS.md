@@ -39,14 +39,31 @@ Restoring the synchronous build path failed the async-batch regression; replacin
 Both sabotages were restored before the final canonical green run. These checks
 do not establish installed-device cold-build latency or whole-build isolation.
 
+The query-worker follow-up passed canonical `bash scripts/dev-check.sh flutter`:
+clean analysis, **110 passed / 4 skipped**, real release FFI. Tests cover exact
+filter boundaries/ties, 100k bounded results with real timer progress, newer-query
+and snapshot-only invalidation, suspended close/drain and redacted failure/retry.
+A scanner-entry isolate-identity check proves execution away from the caller;
+actual Session + native/loopback HTTP search also yields a real event turn.
+Replacing the query `Isolate.run` with `Future.sync` failed both regressions;
+the worker was restored before this green run. Synthetic warm 10k-query p95 was
+**34577 microseconds** (20 queries), including spawn/copy overhead, not installed
+performance acceptance. Widget tests retain the real runner and wait bounded
+real event turns rather than treating fake-frame settling as worker completion.
+
 This is not full #80 completion: availability/sync-status filtering is absent and
 search rows explicitly say status unknown; open the folder for fresh inspection.
 Persistent encrypted offline indexing/history, incremental event updates,
 installed-device performance and full cold-build responsiveness remain unverified
-or unfinished. Assembly and scans yield in ~4 ms slices, but worker name
-decryption is not proof of an entirely off-isolate build: HTTP response parsing,
-traversal, name folding, snapshot assembly and ranking still run on the UI
-isolate. Index builds are
+or unfinished. Query scanning/filtering and bounded top-200 ranking now run on
+short-lived worker isolates, with at most one query worker in flight per index.
+New queries/snapshot publication invalidate old results, superseded queued work
+never dispatches, and close/drain owns every queued/running workflow through
+completion. Only winning IDs return to the UI. Spawn/snapshot-copy overhead
+remains per dispatched query; running scans finish rather than being killed,
+with their RAM copies retained until then. Snapshot assembly yields in ~4 ms
+slices; HTTP response parsing, traversal, cold name folding and assembly remain
+on the UI isolate. Index builds are
 bounded to 100k entries/depth 256 and fail rather than publish a partial index;
 large-folder network/decode cost is not established by the synthetic benchmark.
 Content extraction is out of scope. See [client search](CLIENTS.md#account-wide-search-80-partial).

@@ -182,6 +182,8 @@ void main() {
       await index.rebuild();
       expect(index.count, 2);
       await server.close(force: true);
+      var queryEventRan = false;
+      Timer.run(() => queryEventRan = true);
       final found = await index.search(
         const SearchFilter(
           text: 'ConfidentialSearchNeedle',
@@ -190,6 +192,9 @@ void main() {
           maxSize: 50,
         ),
       );
+      // Real Session + native encrypted HTTP build, not an injected runner.
+      // A tiny scan must yield too: the old cooperative scan never did here.
+      expect(queryEventRan, isTrue);
       expect(found.single.name, secret);
       expect(index.folderPath(found.single), '/Private directory');
       expect(requests, [
