@@ -16,10 +16,9 @@ takes precedence over autonomous task selection, but never over safety rules.
 - **GitHub Issues:** task scope, acceptance criteria, dependencies, handoff and
   priority. Do not create a second backlog. `TASKS.md` is a pointer only.
 - **NNTDrive GitHub Project:** authoritative task phase (`Backlog`, `Ready`,
-  `In Progress`, `Ready For Review`, `Blocked`, `Done`). Workers may move an
-  issue from `Backlog` to `Ready` only through the end-of-run backlog review in
-  section 3; no other status transition is delegated. Do not recreate
-  status labels.
+  `In Progress`, `Ready For Review`, `Blocked`, `Done`). Workers may set any
+  status when it matches the issue's real state, including `Backlog` to `Ready`
+  at any time. Read the change back. Do not recreate status labels.
 - **`docs/GITHUB-TASK-ISSUES.md`:** detailed live GitHub API/Project procedures,
   current standing merge authorization, and post-merge reconciliation.
 - **`docs/CI.md`:** what CI actually verifies and does not verify.
@@ -133,10 +132,17 @@ nothing durable done while eligible work exists.
 - Report only work actually done; a truthful blocker is acceptable when no
   eligible work remains, but never inflate or fabricate progress.
 
-**End-of-run backlog review (coordinator delegation):** after finishing the
-run's task, or recording why no task was possible, and after reconciling its
-state, review the Project `Backlog` and promote to `Ready` every issue that
-meets all of:
+**Project status changes:** workers may move issues between any statuses
+(`Backlog`, `Ready`, `In Progress`, `Ready For Review`, `Blocked`, `Done`) when
+the new status reflects reality, including promoting a `Backlog` issue to
+`Ready` at any time. Record the reason in the handoff and read the status back.
+Status changes never substitute for implementation, acceptance or evidence, and
+`Done` still requires the completion rules in section 6.
+
+**End-of-run backlog sweep:** after finishing the run's task, or recording why
+no task was possible, and after reconciling its state, also check the Project
+`Backlog` and promote actionable issues to `Ready` so the next worker has work.
+Prefer issues that meet all of:
 
 - open, unowned, with no active claim, branch or PR;
 - dependencies closed or integrated, or the first slice does not need them;
@@ -144,10 +150,9 @@ meets all of:
 - one priority label and a concrete, bounded scope;
 - actionable by the next worker without new context.
 
-Set Project Status `Ready` and read it back for each promotion. Do not promote
-blocked items, epics without a first slice, or anything created in the current
-run; newly filed issues start in `Backlog` and can be promoted only in a later
-run. List promoted issues with a one-line reason in the run handoff.
+Set Project Status `Ready` and read it back for each promotion. List promoted
+issues with a one-line reason in the run handoff. This sweep is a minimum, not
+the only permitted status change.
 
 **Concurrency rule:** GitHub comments, assignees and Project updates are **not
 atomic locks**. A branch name containing an issue ID is only a collision signal,
@@ -330,9 +335,8 @@ For an unrelated finding, first de-duplicate against issues/PRs, then create
 an issue with outcome, scope/exclusions, testable acceptance, dependencies,
 verification and handoff. Give it **one** `priority:P0`, `priority:P1` or
 `priority:P2` label, Project Status `Backlog`; verify Project membership and
-readback. Newly created issues start in `Backlog`; they cannot be promoted to
-`Ready` in the run that created them, but the end-of-run review in section 3 may
-promote older `Backlog` items.
+readback. Newly created issues default to `Backlog`; workers may move them to any
+status later when it reflects the issue's real state (section 3).
 Report sensitive vulnerabilities privately rather than posting secrets or
 exploit details in a public issue.
 

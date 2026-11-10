@@ -22,8 +22,8 @@ IDs or rely on cached options.
 
 | Project Status | Meaning |
 |---|---|
-| Backlog | Not authorized to start; coordinator triage pending |
-| Ready | Authorized and eligible when dependencies are satisfied |
+| Backlog | Not currently scheduled; any worker may promote it when actionable |
+| Ready | Eligible when dependencies are satisfied; any worker may set this |
 | In Progress | Claimed implementation |
 | Ready For Review | Implementation/evidence handed off; not accepted |
 | Blocked | Explicit dependency, decision or environment blocker |
@@ -60,25 +60,30 @@ worker's ref. It must also handle failed claims, abandoned claims, resumption,
 and existing task branches without destructive cleanup. A scheduler must not
 start using the new protocol until **all** competing workers have migrated.
 
-The issue form deliberately offers only `Backlog` for new issues. The
-coordinator grants `Ready` explicitly after triage; an issue submitter's
-self-selected queue value is not authorization. Form options are a workflow
+The issue form deliberately offers only `Backlog` for new issues. Workers may
+promote them to `Ready` whenever the issue is actionable; an issue submitter's
+self-selected queue value is not acceptance. Form options are a workflow
 guard, not an access-control boundary; permissions must enforce policy.
 
 ## Backlog is not Ready
 
-Project Status is the sole queue and phase tracker. `Backlog` means not authorized
-to start; `Ready` means authorized and eligible once dependencies are satisfied.
-There is no separate readiness field in issue text, and status labels must not be
-recreated. Workers promote `Backlog` to `Ready` only through the end-of-run
-backlog review defined in `AGENTS.md` §3.
+Project Status is the sole queue and phase tracker. The status names are
+descriptive, not permission gates: workers may move issues between any statuses
+(`Backlog`, `Ready`, `In Progress`, `Ready For Review`, `Blocked`, `Done`) when
+the new status reflects the issue's real state. Read back every change and record
+the reason in the handoff. There is no separate readiness field in issue text, and
+status labels must not be recreated.
 
-At the end of a run, after task reconciliation, review every `Backlog` item and
-promote it when it is open, unowned, has no active claim/branch/PR, has no
-unresolved blocker, has one priority label and a bounded first slice, and its
-dependencies are closed/integrated or unnecessary for that slice. Read back each
-Status. Do not promote blocked items, unsliced epics, or issues created in the
-same run, and list promotions with a one-line reason in the handoff.
+`Backlog` means not currently scheduled; `Ready` means eligible; `In Progress`,
+`Ready For Review` and `Blocked` describe active work; `Done` requires the
+completion rules. A closed issue is never eligible for selection. Status changes
+never substitute for implementation, acceptance or evidence.
+
+Workers may promote `Backlog` items to `Ready` at any time, and should sweep the
+`Backlog` at the end of a run so the next worker has work. Prefer items that are
+open, unowned, have no active claim/branch/PR, have no unresolved blocker, have
+one priority label and a bounded first slice, and have dependencies
+closed/integrated or unnecessary for that slice. Read back each Status.
 
 `In Progress`, `Ready For Review`, `Blocked` and `Done` are not eligible for new
 selection regardless of history. A closed issue is never eligible. `Ready` still
