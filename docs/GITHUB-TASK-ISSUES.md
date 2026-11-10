@@ -237,9 +237,34 @@ Before each merge:
   on the PR/issue. Preserve Project phase authority and priority labels.
 
 This permission does not authorize deployment, destructive operations, branch
-or tag deletion, force pushes, or direct-main code changes. The present scoped
-policy/documentation update on main is separately user-authorized. A merged PR
+or tag deletion, force pushes, or direct-main code changes outside the routine
+release commit in the post-merge release procedure. A merged PR
 is not issue acceptance and does not automatically satisfy dependency acceptance.
+
+## Post-merge release (standing authorization)
+
+The user authorizes a release after every merge to `main`, delegated to the
+worker that merged the PR or, if it stopped, to the next run before new work.
+
+Procedure:
+
+1. Confirm the merge commit is on remote `main` and its required checks are green.
+2. Skip a release only when the merged diff touches no shipped code, deployment
+   file or client asset (pure docs/governance/CI); record that decision.
+3. Choose the bump: patch by default; minor when the merge adds a user-visible
+   feature or changes compatibility; never major automatically.
+4. Update `CHANGELOG.md` with the new `## [X.Y.Z] - YYYY-MM-DD` heading and
+   `### Features`/`### Bug fixes`; bump Rust and Flutter versions (build +1);
+   update README, image guide, operations and status version references.
+5. Commit as `release: X.Y.Z`, tag `vX.Y.Z`, push `main`, then the tag.
+6. Run the Release workflow; verify the image tags, assets, checksums and notes.
+7. If the release fails, do not delete or move the tag; fix forward with the
+   next patch and record the exact failure. Never claim a published release
+   that the workflow did not produce.
+
+One release per merge. If several PRs are merged between runs, cut one release
+covering them instead of one per PR. Do not release from a dirty tree or a red
+`main`.
 
 ## Mandatory post-merge completion transaction
 

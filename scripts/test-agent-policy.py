@@ -44,6 +44,14 @@ class AgentPolicyTests(unittest.TestCase):
         self.assertIn("end of a run", other)
         self.assertIn("promote", other)
 
+    def test_release_after_merge(self):
+        text = self.read("AGENTS.md").lower()
+        self.assertIn("release after every merge", text)
+        self.assertIn("never retag", text)
+        other = self.read("docs/GITHUB-TASK-ISSUES.md").lower()
+        self.assertIn("post-merge release", other)
+        self.assertIn("one release per merge", other)
+
     def test_agent_comment_format(self):
         text = self.read("AGENTS.md")
         for required in (

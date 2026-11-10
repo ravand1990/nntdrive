@@ -265,8 +265,24 @@ rather than shipping an unverified security boundary.
    as follow-up issues instead. Never claim verification that did not happen.
 5. If a required state update fails or cannot be read back, report an
    incomplete reconciliation—never claim `Done` from a merge alone.
+6. Release after every merge. The worker that merged the PR owns the release; if
+   it cannot finish, the next run cuts it before selecting new work.
+   - Skip only when the merged diff touches no shipped code, deployment file or
+     client asset (pure docs/governance/CI); say so in the completion comment.
+   - Bump `Cargo.toml`/`Cargo.lock` and Flutter `pubspec.yaml` (build number +1):
+     patch by default, minor when the merge adds a user-visible feature or
+     changes compatibility, never major automatically.
+   - Add the new `CHANGELOG.md` heading with `### Features`/`### Bug fixes` and
+     update the version references in `README.md`, `deploy/README-IMAGES.md`,
+     `docs/OPERATIONS.md` and `docs/STATUS.md`. Commit, tag `vX.Y.Z`, push `main`
+     and the tag, and start the Release workflow.
+   - Release only from a clean `main` whose merge commit's required checks are
+     green. Never retag a failed release; fix forward with the next patch.
+   - Verify the published assets, image tags, checksums and notes, or leave a
+     handoff for the next run. Never claim a release that did not publish.
 
-**Explicit approval required:** direct pushes to `main`, tagging/releases,
+**Explicit approval required:** direct pushes to `main` outside the routine
+release commit in rule 6, tagging/releases outside that rule,
 deployments, force pushes, destructive history changes, data resets, deletion
 of production/user data, changes to credentials or permissions, and taking
 control of another worker's branch or host. Do not weaken CI, security rules,
