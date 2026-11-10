@@ -65,6 +65,47 @@ update automation are outside
 - iOS build/signing.
 - Windows packaging/signing (build works; the FFI DLL must ship next to the exe).
 
+## Account-wide search (#80 partial)
+
+Open **Search all files** (globe/search icon) in the file browser. First use builds
+an account-wide index of decrypted names, including nested and empty folders,
+independently of configured local sync roots. **Rebuild account index** explicitly
+refreshes the complete snapshot. Name queries match case-insensitively, require
+all space-separated terms and rank exact names before prefixes, word substrings
+and other substrings. Up to 200 best results show their containing folder, size
+and an honest **Sync status unknown** label. Selecting a result navigates through
+the existing browser, refreshing before offering file actions. Offline searching
+works on the existing snapshot; opening/refetching an item still needs the server.
+
+Combine file/folder type, filename extension, minimum/maximum bytes, **Favorites**,
+and modification dates. Favorites come from actual namespace listings, not inferred
+state. Dates use the server's namespace `updated_at` (including rename/favorite
+changes), not authenticated content timestamps; **since** is inclusive and
+**before** exclusive at UTC midnight (`YYYY-MM-DD`). Entries lacking dates do not
+match date filters; directories do not match byte-size/extension filters.
+Press **Search**/Enter to remember a search or **Save filter** to retain the full
+combination; chips restore it. Each list retains at most ten session-local entries.
+
+Names, paths, queries and saved filters live only in unlocked-session memory,
+never the search network requests, preferences, index files, backups or logs.
+Only normal ciphertext folder listings by opaque parent IDs are requested. The
+index is closed/cleared before sign-out/Quit drains native work and locks keys;
+late listing responses are rejected before decryption. A new session starts
+empty, and every search/build checks native unlock authority. Dart immutable
+strings cannot promise physical memory zeroization; OS swap/crash dumps and
+device compromise are outside this in-process guarantee. Existing intentionally
+synced plaintext files/journals are separate from this index.
+
+Not complete #80: sync/availability filtering and verified result-state badges,
+durable encrypted offline persistence/history and incremental refresh remain
+unfinished. Explicit rebuild is needed after changes; offline snapshots may be
+stale. Build/query loops yield cooperatively in ~4 ms slices rather than block on
+one full-tree scan, but native name calls and HTTP JSON decoding are not moved to
+worker isolates. Builds reject malformed/unreadable trees and bounds above 100k
+entries/depth 256 without replacing the previous complete index. Synthetic warm
+query tests are not installed-device/cold-network performance acceptance. No
+content extraction or server-side plaintext search is introduced.
+
 ## What the Rust bridge exports
 
 `crates/ffi` exposes a JSON C ABI:

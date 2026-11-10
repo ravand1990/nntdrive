@@ -1,5 +1,39 @@
 # Project status
 
+## Account-wide encrypted-name search (#80 partial)
+
+The file browser's **Search all files** action builds an account/session-local
+RAM index by recursively listing opaque folder IDs and opening authenticated
+names through the existing native bridge. Queries stay local. Results rank exact,
+prefix, word-substring and substring names, combine file/folder, extension, byte
+size, namespace modification-date and real API favorite filters, show containing
+folder paths/sizes, and navigate back through the existing browser. Recent and
+saved filters are RAM-only (up to ten each). Explicit rebuild atomically replaces
+the snapshot; failed/offline rebuild preserves the last complete snapshot. It may
+be stale after remote or local mutations until rebuilt. Sign-out/Quit closes the
+index before draining operations/revoking keys; delayed listings cannot decrypt
+or republish afterward. No search index/query persistence, logging or telemetry
+is added. Dart strings are garbage-collected, not guaranteed physically zeroized.
+
+The focused isolated Flutter run passed **10 tests** and clean analysis, including
+real native encryption + loopback nested HTTP listings, no query/name/path in
+requests, revoked-key rejection, delayed-response cancellation/drain, cross-session
+clearing, atomic failure/offline reuse and widget navigation/filter reuse. A
+100k-entry synthetic fixture verified bounded top-200 results and cooperative
+yielding; 20 warm 10k-entry searches measured p95 **7750 microseconds** in that
+container run (target <150 ms). Temporarily restoring folder-only traversal failed
+the nested-listing regression; recursion was restored before the green run.
+
+This is not full #80 completion: availability/sync-status filtering is absent and
+search rows explicitly say status unknown; open the folder for fresh inspection.
+Persistent encrypted offline indexing/history, incremental event updates,
+installed-device performance and full cold-build responsiveness remain unverified
+or unfinished. Builds and scans yield in ~4 ms slices, but individual native calls
+and HTTP response JSON decoding still execute on the UI isolate. Index builds are
+bounded to 100k entries/depth 256 and fail rather than publish a partial index;
+large-folder network/decode cost is not established by the synthetic benchmark.
+Content extraction is out of scope. See [client search](CLIENTS.md#account-wide-search-80-partial).
+
 ## Android folder access (#69, v0.7.0)
 
 Shared-folder sync now explains and explicitly requests Android all-files access
@@ -381,8 +415,8 @@ rename. See [client details](CLIENTS.md#rename-in-the-file-browser-51-partial).
   are not whole-sweep totals; running-job crash recovery/leases remain absent.
 - `nntdrive_storage::store::platform_totals` casts aggregate sums to `bigint` because
   PostgreSQL returns `numeric`; keep casts when editing.
-- Full-text search is impossible server-side (names/content encrypted); the
-  client must cache a decrypted index.
+- Server-side plaintext search is intentionally absent. The client has a
+  session-memory name/metadata index; content/full-text extraction is absent.
 - Orphan cleanup is explicit per account with a grace period (minimum one day)
   and 1000-chunk batches. Complete references protect all retained versions;
   legacy/incomplete accounts refuse collection. Rust SDK backfill decrypts each

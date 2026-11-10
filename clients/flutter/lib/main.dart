@@ -11,6 +11,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import 'api.dart';
+import 'account_search.dart';
+import 'search_page.dart';
 import 'desktop_host.dart';
 import 'desktop_instance.dart';
 import 'desktop_lifecycle.dart';
@@ -63,7 +65,18 @@ class Session {
     required this.handle,
     required this.accountId,
     required this.email,
+    required this.operations,
   });
+  final SessionOperations operations;
+  late final AccountSearch search = AccountSearch(
+    handle: handle,
+    operations: operations,
+    list: (parent) => ApiClient(baseUrl: server, token: token).listFiles(parentId: parent),
+    decrypt: (file) => NativeBridge.instance.openName(handle, file.id, file.nameEnc),
+    // This local native operation validates a live handle even with an empty
+    // index. The random ciphertext is discarded; it is never sent or persisted.
+    authorize: () { NativeBridge.instance.sealName(handle, '00000000-0000-0000-0000-000000000000', ''); },
+  );
   final String server;
   final String token;
   final int handle;
@@ -229,6 +242,7 @@ class _NntDriveAppState extends State<NntDriveApp> {
           handle: unlocked['handle'] as int,
           accountId: accountId,
           email: email,
+          operations: _fileOperations,
         );
       });
       adopted = true;
@@ -263,6 +277,7 @@ class _NntDriveAppState extends State<NntDriveApp> {
     try { await _authFuture; } catch (_) { /* Failed unlock has no session. */ }
     final session = _session;
     final sync = _sync;
+    session?.search.close(); // Clear plaintext and cancel indexing before drain.
     await Future.wait([
       if (sync != null) sync.stopAndDrain(),
       if (session != null) _fileOperations.drain(session.handle),
@@ -307,6 +322,7 @@ class _NntDriveAppState extends State<NntDriveApp> {
     Widget home;
     if (_session != null) {
       home = FilesPage(
+        key: ValueKey('${_session!.accountId}:${_session!.handle}'),
         session: _session!,
         sync: _sync!,
         operations: _fileOperations,
@@ -925,6 +941,7 @@ class _FilesPageState extends State<FilesPage> {
   bool _loading = true;
   String? _error;
   String _search = '';
+  final _folderFilter = TextEditingController();
   late final SyncController _sync;
   bool _wasSyncing = false;
   bool _syncLoaded = false;
@@ -995,7 +1012,29 @@ class _FilesPageState extends State<FilesPage> {
   @override
   void dispose() {
     _sync.removeListener(_onSyncChanged);
+    _folderFilter.dispose();
     super.dispose();
+  }
+
+  Future<void> _openAccountSearch() async {
+    final index = widget.session.search;
+    final entry = await Navigator.of(context).push<SearchEntry>(MaterialPageRoute(
+      builder: (_) => AccountSearchPage(index: index),
+    ));
+    if (entry == null || !mounted || !index.ready) return;
+    final parents = index.ancestors(entry);
+    setState(() {
+      _search = '';
+      _folderFilter.clear();
+      _path
+        ..clear()
+        ..addAll(parents.map((e) => e.file));
+      if (entry.file.isDir) _path.add(entry.file);
+    });
+    await _refresh(); // Resolve current state before offering file actions.
+    if (!mounted || !index.ready || _error != null || entry.file.isDir) return;
+    final current = _files.where((file) => file.id == entry.file.id).firstOrNull;
+    if (current != null) _open(current);
   }
 
   Future<void> _openSync() async {
@@ -1789,6 +1828,8 @@ class _FilesPageState extends State<FilesPage> {
           ],
         ),
         actions: [
+          IconButton(onPressed: _openAccountSearch, icon: const Icon(Icons.travel_explore),
+            tooltip: 'Search all files'),
           IconButton(
             onPressed: _openSync,
             tooltip: 'Sync folders',
@@ -1816,6 +1857,7 @@ class _FilesPageState extends State<FilesPage> {
           child: Padding(
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
             child: TextField(
+              controller: _folderFilter,
               onChanged: (v) => setState(() => _search = v),
               decoration: InputDecoration(
                 isDense: true,
