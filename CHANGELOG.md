@@ -6,6 +6,8 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-11-11
+
 ### Bug fixes
 
 - Account-search builds now construct entries, lowercase names and assemble bounded entry maps on worker isolates, in sequential batches of at most 128, including reused authenticated names (#80 partial). Complete snapshots still publish atomically and session drain awaits workers before key revocation. HTTP parsing, traversal/validation and final candidate-map merging remain caller-side; this is not a fully isolated cold build or installed-device performance acceptance.
