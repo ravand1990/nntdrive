@@ -64,6 +64,22 @@ old always-decrypt path; weakening reuse to ID-only failed the native regression
 The exact-envelope guard was restored before final verification. This is not
 an event-driven or durable cache and does not reduce listing/parsing costs.
 
+The cold-entry follow-up moves name lowercasing, SearchEntry construction and
+bounded entry-map assembly to a top-level sendable worker helper. Each build
+awaits sequential batches of at most 128, including reused names, without copying
+the whole candidate into workers. Results merge only after the close/epoch check;
+the complete candidate still publishes atomically and session drain includes the
+worker await. Canonical isolated `bash scripts/dev-check.sh flutter` passed
+**118 tests / 4 platform skips**, clean analysis and the real release FFI build.
+The search unit/native-only run passed **28 tests**. Regressions cover worker
+isolate identity and real event progress, ordered bounds, failed-entry snapshot
+retention/retry and suspended close/drain. Actual Session/native/loopback tests
+retain the default entry worker and verify folded results. Replacing its isolate
+with Future.sync failed both execution-location/event tests; bypassing dispatch
+with caller-side assembly failed both batch/lifecycle tests. Both mutations were
+restored. Widget fixtures now build in runAsync to receive real worker messages.
+These are not installed-device cold-build latency measurements.
+
 This is not full #80 completion: availability/sync-status filtering is absent and
 search rows explicitly say status unknown; open the folder for fresh inspection.
 Persistent encrypted offline indexing/history, incremental event updates,
@@ -74,9 +90,12 @@ New queries/snapshot publication invalidate old results, superseded queued work
 never dispatches, and close/drain owns every queued/running workflow through
 completion. Only winning IDs return to the UI. Spawn/snapshot-copy overhead
 remains per dispatched query; running scans finish rather than being killed,
-with their RAM copies retained until then. Snapshot assembly yields in ~4 ms
-slices; HTTP response parsing, traversal, cold name folding and assembly remain
-on the UI isolate. Index builds are
+with their RAM copies retained until then. Cold entry construction/folding and
+bounded entry-map assembly run off-isolate. HTTP response parsing, fresh tree
+traversal/validation, reuse selection, queue updates and final candidate-map
+merges remain on the caller/UI isolate (with cooperative ~4 ms slice yields).
+Worker spawn/send overhead and retained in-flight names remain; this is not
+whole-build isolation. Index builds are
 bounded to 100k entries/depth 256 and fail rather than publish a partial index;
 large-folder network/decode cost is not established by the synthetic benchmark.
 Content extraction is out of scope. See [client search](CLIENTS.md#account-wide-search-80-partial).

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:isolate';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -42,7 +43,145 @@ class IsolateCheckedEntry extends SearchEntry {
   }
 }
 
+// Sendable fixture: construction must consume names away from the caller.
+class WorkerOnlyNames extends ListBase<String?> {
+  final int caller = Isolate.current.hashCode;
+  @override
+  int get length => 1;
+  @override
+  set length(int value) => throw UnsupportedError('immutable');
+  @override
+  String? operator [](int index) {
+    if (Isolate.current.hashCode == caller) {
+      throw StateError('Entry construction read names on caller isolate');
+    }
+    return 'MiXeD.Ä';
+  }
+
+  @override
+  void operator []=(int index, String? value) =>
+      throw UnsupportedError('immutable');
+}
+
 void main() {
+  test('cold entry worker consumes and folds names on another isolate',
+      () async {
+    final entries =
+        await runSearchEntryBatch([row('a', null)], WorkerOnlyNames());
+    expect(entries.keys, ['a']);
+    expect(entries['a']!.name, 'MiXeD.Ä');
+    expect(entries['a']!.foldedName, 'mixed.ä');
+  });
+
+  test('tiny cold entry batch yields a real event turn', () async {
+    var eventRan = false;
+    Timer.run(() => eventRan = true);
+    await runSearchEntryBatch([row('a', null)], ['Name']);
+    expect(eventRan, isTrue);
+  });
+
+  test('cold entry helper rejects invalid bounds and incomplete names',
+      () async {
+    for (final (files, names) in <(List<RemoteFile>, List<String?>)>[
+      ([], []),
+      (List.filled(129, row('a', null)), List.filled(129, 'name')),
+      ([row('a', null)], []),
+      ([row('a', null)], [null]),
+      ([row('a', null), row('a', null)], ['a', 'b']),
+    ]) {
+      await expectLater(
+          runSearchEntryBatch(files, names), throwsA(isA<SearchUnavailable>()));
+    }
+  });
+
+  test(
+      'entry batches are ordered, bounded, atomic and retain snapshot on failure',
+      () async {
+    final operations = SessionOperations();
+    var fail = false;
+    var active = 0;
+    final sizes = <int>[];
+    late AccountSearch index;
+    index = AccountSearch(
+      handle: 40,
+      operations: operations,
+      list: (_) async => List.generate(257, (i) => row('$i', null)),
+      decrypt: (file) => 'NaMe-${file.id}',
+      authorize: () {},
+      entryWorker: (files, names) async {
+        expect(++active, 1);
+        expect(index.count, index.ready ? 257 : 0);
+        sizes.add(files.length);
+        expect(files.first.id, '${(sizes.length - 1) * 128}');
+        final result = await runSearchEntryBatch(files, names);
+        active--;
+        if (fail && sizes.length == 2) throw StateError('private name/token');
+        return result;
+      },
+    );
+    addTearDown(index.dispose);
+    await index.rebuild();
+    expect(sizes, [128, 128, 1]);
+    sizes.clear();
+    fail = true; // All-cached names must still go through entry construction.
+    await expectLater(
+        index.rebuild(),
+        throwsA(predicate((Object e) =>
+            e is SearchUnavailable && !e.toString().contains('private'))));
+    expect(sizes, [128, 128]);
+    expect(index.ready, isTrue);
+    expect(index.failed, isTrue);
+    expect(index.count, 257);
+    expect(
+        (await index.search(const SearchFilter(text: 'name-256')))
+            .single
+            .foldedName,
+        'name-256');
+    sizes.clear();
+    fail = false;
+    await index.rebuild();
+    expect(sizes, [128, 128, 1]);
+    expect(index.failed, isFalse);
+  });
+
+  test('close drains cold entry worker and rejects late entries and next batch',
+      () async {
+    final operations = SessionOperations();
+    final entered = Completer<void>();
+    final release = Completer<void>();
+    var calls = 0;
+    final index = AccountSearch(
+      handle: 41,
+      operations: operations,
+      list: (_) async => List.generate(129, (i) => row('$i', null)),
+      decrypt: (_) => 'Secret',
+      authorize: () {},
+      entryWorker: (files, names) async {
+        calls++;
+        final worker = runSearchEntryBatch(files, names);
+        entered.complete();
+        final result = await worker;
+        await release.future;
+        return result;
+      },
+    );
+    addTearDown(index.dispose);
+    final rejected =
+        expectLater(index.rebuild(), throwsA(isA<SearchUnavailable>()));
+    await entered.future.timeout(const Duration(seconds: 5));
+    index.close();
+    var drained = false;
+    final drain = operations.drain(41).then((_) => drained = true);
+    await Future<void>.delayed(Duration.zero);
+    expect(drained, isFalse);
+    await expectLater(index.rebuild(), throwsA(isA<SearchUnavailable>()));
+    release.complete();
+    await Future.wait([rejected, drain]);
+    expect(drained, isTrue);
+    expect(calls, 1);
+    expect(index.count, 0);
+    expect(index.ready, isFalse);
+  });
   test('refresh reuses unchanged names but replaces metadata and membership',
       () async {
     var files = [row('keep', null), row('remove', null)];

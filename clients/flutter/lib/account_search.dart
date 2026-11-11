@@ -14,6 +14,35 @@ Future<List<String>> runSearchQuery(
 ) =>
     Isolate.run(() => _scanSearch(snapshot, filter, limit));
 
+/// Bounded cold folding/entry-map construction. Captures only sendable RAM,
+/// never an AccountSearch, native bridge or session lifecycle object.
+Future<Map<String, SearchEntry>> runSearchEntryBatch(
+  List<RemoteFile> files,
+  List<String?> names,
+) =>
+    Isolate.run(() => _assembleSearchEntries(files, names));
+
+Map<String, SearchEntry> _assembleSearchEntries(
+  List<RemoteFile> files,
+  List<String?> names,
+) {
+  if (files.isEmpty ||
+      files.length > AccountSearch.decryptBatchSize ||
+      files.length != names.length) {
+    throw const SearchUnavailable();
+  }
+  final entries = <String, SearchEntry>{};
+  for (var i = 0; i < files.length; i++) {
+    final name = names[i];
+    final file = files[i];
+    if (name == null || entries.containsKey(file.id)) {
+      throw const SearchUnavailable();
+    }
+    entries[file.id] = SearchEntry(file, name);
+  }
+  return entries;
+}
+
 /// Deliberately diagnostic-free: upstream errors may contain names or tokens.
 class SearchUnavailable implements Exception {
   const SearchUnavailable();
@@ -57,7 +86,8 @@ class SearchEntry {
 /// HTTP endpoint. A successful build is an atomic, rebuildable RAM snapshot.
 /// Production decryption uses sequential bounded worker batches; injected sync
 /// fixtures remain supported. Query scans/filtering/top-k run off-isolate;
-/// cold assembly/folding still cooperatively yield on the caller isolate.
+/// bounded cold entry construction/folding also run on worker isolates.
+/// HTTP parsing, traversal/validation and final map merging remain caller-side.
 /// This is not a durable offline index or a content extractor.
 class AccountSearch extends ChangeNotifier {
   AccountSearch({
@@ -67,6 +97,7 @@ class AccountSearch extends ChangeNotifier {
     required this.decrypt,
     this.decryptBatch,
     this.queryWorker = runSearchQuery,
+    this.entryWorker = runSearchEntryBatch,
     required this.authorize,
   });
   static const decryptBatchSize = 128;
@@ -77,6 +108,11 @@ class AccountSearch extends ChangeNotifier {
 
   /// Ordered, all-or-error names. Never invoked concurrently by a build.
   final Future<List<String>> Function(List<RemoteFile> files)? decryptBatch;
+
+  /// Ordered bounded construction; awaited within the owned build workflow.
+  /// Test seam; production always uses the top-level isolate helper.
+  final Future<Map<String, SearchEntry>> Function(
+      List<RemoteFile>, List<String?>) entryWorker;
   final void Function() authorize;
 
   /// Test seam; production always uses the top-level isolate boundary.
@@ -199,9 +235,13 @@ class AccountSearch extends ChangeNotifier {
                 names[positions[i]] = opened[i];
               }
             }
-            for (var i = 0; i < batch.length; i++) {
-              final file = batch[i];
-              candidate[file.id] = SearchEntry(file, names[i]!);
+            // Sequential bounded worker, including all-cached rebuild batches.
+            // Do not copy the whole accumulated candidate into each worker.
+            final entries = await entryWorker(batch, names);
+            _check(
+                epoch); // Close discards results, but drain awaits the worker.
+            candidate.addAll(entries);
+            for (final file in batch) {
               if (file.isDir) queue.add((id: file.id, depth: parent.depth + 1));
             }
             if (slice.elapsedMilliseconds >= 4) {
