@@ -70,7 +70,14 @@ update automation are outside
 Open **Search all files** (globe/search icon) in the file browser. First use builds
 an account-wide index of decrypted names, including nested and empty folders,
 independently of configured local sync roots. **Rebuild account index** explicitly
-refreshes the complete snapshot. Name queries match case-insensitively, require
+refreshes the complete snapshot. A warm rebuild reuses names authenticated in
+this unlocked session only for the same node ID and exact encrypted envelope;
+new or changed names are opened again in bounded worker batches. Every folder is
+still freshly listed and validated: metadata, moves, renamed ancestors and
+removed entries replace the previous snapshot only after complete success.
+A failed refresh keeps the previous complete snapshot, not partially updated
+names. This reduces repeated decryption, not HTTP listing/parsing or tree assembly.
+Name queries match case-insensitively, require
 all space-separated terms and rank exact names before prefixes, word substrings
 and other substrings. Up to 200 best results show their containing folder, size
 and an honest **Sync status unknown** label. Selecting a result navigates through
@@ -101,7 +108,7 @@ device compromise are outside this in-process guarantee. Existing intentionally
 synced plaintext files/journals are separate from this index.
 
 Not complete #80: sync/availability filtering and verified result-state badges,
-durable encrypted offline persistence/history and incremental refresh remain
+durable encrypted offline persistence/history and automatic event refresh remain
 unfinished. Explicit rebuild is needed after changes; offline snapshots may be
 stale. Query scanning, combined filtering and bounded top-200 ranking now run in
 one worker isolate at a time, returning only winning IDs. Exact ranking ties use

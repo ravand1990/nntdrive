@@ -51,6 +51,19 @@ the worker was restored before this green run. Synthetic warm 10k-query p95 was
 performance acceptance. Widget tests retain the real runner and wait bounded
 real event turns rather than treating fake-frame settling as worker completion.
 
+Warm explicit rebuilds reuse previously authenticated names only for the same
+node ID and exact envelope in the last complete session snapshot. Fresh complete
+listings still validate the tree and replace metadata, ancestry and membership;
+changed names are reauthenticated in bounded batches. Failed candidates never
+seed reuse. Native unlock authorization still precedes even an all-cached build.
+The canonical isolated Flutter run passed **113 tests / 4 platform skips** with
+clean analysis and real release FFI. New unit/native-loopback tests cover reduced
+decryption, fresh metadata, moves, renames, removal, malformed/substituted
+ciphertext and failed-refresh rollback. Both new unit regressions failed on the
+old always-decrypt path; weakening reuse to ID-only failed the native regression.
+The exact-envelope guard was restored before final verification. This is not
+an event-driven or durable cache and does not reduce listing/parsing costs.
+
 This is not full #80 completion: availability/sync-status filtering is absent and
 search rows explicitly say status unknown; open the folder for fresh inspection.
 Persistent encrypted offline indexing/history, incremental event updates,

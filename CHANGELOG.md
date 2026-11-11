@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Bug fixes
+
+- Explicit account-search rebuilds reuse names already authenticated in the same session only when both node ID and encrypted envelope match. Fresh complete tree listings still replace metadata, ancestry and membership atomically; changed names are authenticated again and failed refreshes retain the last complete snapshot (#80 partial). This does not add automatic event refresh or durable index persistence.
+
 ## [0.8.2] - 2026-11-10
 
 ### Bug fixes
