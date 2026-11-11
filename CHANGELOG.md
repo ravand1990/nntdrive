@@ -6,6 +6,14 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.8.10] - 2026-11-11
+
+### Bug fixes
+
+- Reissue the bounded search traversal-worker change from v0.8.9 under a fresh patch tag. The v0.8.9 Release workflow built the Windows and Android clients but failed uploading their artifacts after five service-response retries, so no GitHub release was published. The original tag is unchanged. This patch changes version metadata only; it does not claim to fix GitHub's artifact service or complete broader search scope (#80).
+
+## [0.8.9] - 2026-11-11
+
 ### Bug fixes
 
 - Account-search builds validate parent membership, within-batch duplicates, count/depth bounds and discover ordered directory IDs on worker isolates in sequential batches of at most 128, before name reuse/decryption (#80 partial). Close/drain owns validation completion and failed refreshes retain the last complete snapshot. Cross-batch/global membership checks, reuse selection, queue updates, transport collection/copying and candidate-map merging remain caller-side; this is not whole-build isolation or a speedup/installed-device performance claim.
