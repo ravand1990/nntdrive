@@ -43,6 +43,79 @@ class IsolateCheckedEntry extends SearchEntry {
 }
 
 void main() {
+  test('refresh reuses unchanged names but replaces metadata and membership',
+      () async {
+    var files = [row('keep', null), row('remove', null)];
+    final opened = <String>[];
+    final index = AccountSearch(
+      handle: 35,
+      operations: SessionOperations(),
+      list: (_) async => files,
+      decrypt: (_) => throw StateError('sync decrypt used'),
+      decryptBatch: (batch) async {
+        opened.addAll(batch.map((f) => f.id));
+        return batch.map((f) => 'name-${f.id}-${f.nameEnc}').toList();
+      },
+      authorize: () {},
+    );
+    addTearDown(index.dispose);
+    await index.rebuild();
+    opened.clear();
+    files = [
+      row('keep', null, favorite: true, size: 99),
+      RemoteFile('new', null, 'changed', false, 7, false, 2, 'revision'),
+    ];
+    await index.rebuild();
+    expect(opened, ['new']);
+    expect(index.count, 2);
+    final keep =
+        (await index.search(const SearchFilter(favoritesOnly: true))).single;
+    expect(keep.file.id, 'keep');
+    expect(keep.file.size, 99);
+    expect(await index.search(const SearchFilter(text: 'remove')), isEmpty);
+    opened.clear();
+    files = [
+      RemoteFile('keep', null, 'renamed', false, 99, false, 3, null),
+      files.last,
+    ];
+    await index.rebuild();
+    expect(opened, ['keep']);
+    expect(
+        (await index.search(const SearchFilter(text: 'renamed'))).single.name,
+        'name-keep-renamed');
+  });
+
+  test('refresh failure cannot poison authenticated name reuse', () async {
+    var envelope = 'old';
+    var fail = false;
+    var opens = 0;
+    final index = AccountSearch(
+      handle: 36,
+      operations: SessionOperations(),
+      list: (parent) async {
+        if (parent != null) throw StateError('private failing listing');
+        return [RemoteFile('a', null, envelope, fail, 0, false, 1, null)];
+      },
+      decrypt: (file) {
+        opens++;
+        return file.nameEnc;
+      },
+      authorize: () {},
+    );
+    addTearDown(index.dispose);
+    await index.rebuild();
+    envelope = 'new';
+    fail = true;
+    await expectLater(index.rebuild(), throwsA(isA<SearchUnavailable>()));
+    expect((await index.search(const SearchFilter())).single.name, 'old');
+    fail = false;
+    await index.rebuild();
+    expect(opens, 3); // Failed candidates never enter the reuse snapshot.
+    expect((await index.search(const SearchFilter())).single.name, 'new');
+    await index.rebuild();
+    expect(opens, 3);
+  });
+
   test('production scanner reads entries on a different isolate', () async {
     final entry = IsolateCheckedEntry(row('a', null), 'Match');
     expect(
@@ -63,7 +136,9 @@ void main() {
       final index = AccountSearch(
         handle: 30,
         operations: operations,
-        list: (_) async => [row('a', null)],
+        list: (_) async => [
+          RemoteFile('a', null, generation, false, 20, false, 1, null),
+        ],
         decrypt: (_) => generation,
         authorize: () {},
         queryWorker: (snapshot, filter, limit) async {
@@ -246,6 +321,10 @@ void main() {
     expect(index.count, 257);
     sizes.clear();
     fail = true;
+    // A changed envelope must actually invoke authentication again.
+    for (var i = 0; i < data.length; i++) {
+      data[i] = RemoteFile('$i', null, 'changed', false, 20, false, 2, null);
+    }
     await expectLater(
         index.rebuild(),
         throwsA(predicate((Object e) =>

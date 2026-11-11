@@ -168,17 +168,40 @@ class AccountSearch extends ChangeNotifier {
                 throw const SearchUnavailable();
               }
             }
-            // Await INSIDE operations.run: close/drain must retain the handle
-            // until the worker has finished, even if publication is cancelled.
-            final openBatch = decryptBatch;
-            final names = openBatch == null
-                ? batch.map(decrypt).toList()
-                : await openBatch(List.unmodifiable(batch));
-            _check(epoch); // Discard every late worker result after close.
-            if (names.length != batch.length) throw const SearchUnavailable();
+            // Reuse only names authenticated in this session's last complete
+            // snapshot, under the exact same node ID and ciphertext envelope.
+            // Metadata/membership still come from the fresh complete traversal.
+            final names = List<String?>.filled(batch.length, null);
+            final pending = <RemoteFile>[];
+            final positions = <int>[];
             for (var i = 0; i < batch.length; i++) {
               final file = batch[i];
-              candidate[file.id] = SearchEntry(file, names[i]);
+              final prior = _entries[file.id];
+              if (prior != null && prior.file.nameEnc == file.nameEnc) {
+                names[i] = prior.name;
+              } else {
+                pending.add(file);
+                positions.add(i);
+              }
+            }
+            // Await INSIDE operations.run: close/drain must retain the handle
+            // until the worker has finished, even if publication is cancelled.
+            if (pending.isNotEmpty) {
+              final openBatch = decryptBatch;
+              final opened = openBatch == null
+                  ? pending.map(decrypt).toList()
+                  : await openBatch(List.unmodifiable(pending));
+              _check(epoch); // Discard every late worker result after close.
+              if (opened.length != pending.length) {
+                throw const SearchUnavailable();
+              }
+              for (var i = 0; i < opened.length; i++) {
+                names[positions[i]] = opened[i];
+              }
+            }
+            for (var i = 0; i < batch.length; i++) {
+              final file = batch[i];
+              candidate[file.id] = SearchEntry(file, names[i]!);
               if (file.isDir) queue.add((id: file.id, depth: parent.depth + 1));
             }
             if (slice.elapsedMilliseconds >= 4) {

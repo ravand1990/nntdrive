@@ -12,6 +12,127 @@ import 'package:nntdrive/session_operations.dart';
 // No testWidgets binding here: exercise real HTTP and the actual native crypto.
 void main() {
   test(
+      'warm native HTTP refresh authenticates changes and never trusts cached IDs alone',
+      () async {
+    final bridge = NativeBridge.instance;
+    const password = 'refresh fixture';
+    final keys = bridge.generateAccount(password);
+    final handle =
+        bridge.unlock(jsonEncode(keys['keyfile']), password)['handle'] as int;
+    const a = '0b9e6b0e-6d3e-4c2a-9c1e-2b1c0d1e2f30';
+    const b = '1b9e6b0e-6d3e-4c2a-9c1e-2b1c0d1e2f30';
+    const f = '2b9e6b0e-6d3e-4c2a-9c1e-2b1c0d1e2f30';
+    final sealedA = bridge.sealName(handle, a, 'Private A');
+    final sealedB = bridge.sealName(handle, b, 'Private B');
+    final sealedF = bridge.sealName(handle, f, 'Private file');
+    var tree = <String?, List<Map<String, Object?>>>{
+      null: [
+        {'id': a, 'name_enc': sealedA, 'is_dir': true},
+        {'id': b, 'name_enc': sealedB, 'is_dir': true},
+      ],
+      a: [
+        {'id': f, 'parent_id': a, 'name_enc': sealedF, 'size': 1}
+      ],
+      b: [],
+    };
+    final requests = <String>[];
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final subscription = server.listen((request) async {
+      requests.add(
+          '${request.method} ${request.uri} ${await utf8.decoder.bind(request).join()}');
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(jsonEncode(
+          {'files': tree[request.uri.queryParameters['parent_id']] ?? []}));
+      await request.response.close();
+    });
+    final api = ApiClient(
+        baseUrl: 'http://127.0.0.1:${server.port}', token: 'fixture-token');
+    final batches = <List<String>>[];
+    final index = AccountSearch(
+      handle: handle,
+      operations: SessionOperations(),
+      list: (parent) => api.listFiles(parentId: parent),
+      decrypt: (_) => throw StateError('sync path used'),
+      decryptBatch: (files) {
+        batches.add(files.map((f) => f.id).toList());
+        return bridge.openNamesAsync(
+            handle, files.map((f) => (id: f.id, nameEnc: f.nameEnc)).toList());
+      },
+      authorize: () => bridge.sealName(handle, a, ''),
+    );
+    try {
+      await index.rebuild();
+      expect(batches, [
+        [a, b],
+        [f]
+      ]);
+      batches.clear();
+      // Moving a cached name must still refresh ancestry and metadata.
+      tree[a] = [];
+      tree[b] = [
+        {
+          'id': f,
+          'parent_id': b,
+          'name_enc': sealedF,
+          'size': 42,
+          'favorite': true
+        }
+      ];
+      await index.rebuild();
+      expect(batches, isEmpty);
+      final moved =
+          (await index.search(const SearchFilter(favoritesOnly: true))).single;
+      expect(index.folderPath(moved), '/Private B');
+      expect(moved.file.size, 42);
+      // A same-ID envelope replacement cannot reuse the old plaintext.
+      tree[b]!.single['name_enc'] =
+          bridge.sealName(handle, f, 'Renamed private');
+      await index.rebuild();
+      expect(batches, [
+        [f]
+      ]);
+      expect(
+          (await index.search(const SearchFilter(text: 'Renamed')))
+              .single
+              .file
+              .id,
+          f);
+      batches.clear();
+      // Substituted name AAD fails even if the ciphertext was seen for another ID.
+      tree[b]!.single['name_enc'] = sealedA;
+      await expectLater(index.rebuild(), throwsA(isA<SearchUnavailable>()));
+      expect(batches, [
+        [f]
+      ]);
+      expect(
+          (await index.search(const SearchFilter(text: 'Renamed')))
+              .single
+              .file
+              .id,
+          f);
+      tree[b]!.single['name_enc'] = 'malformed';
+      await expectLater(index.rebuild(), throwsA(isA<SearchUnavailable>()));
+      // Removing an entry must evict it, even though its cached name was valid.
+      tree[b] = [];
+      await index.rebuild();
+      expect(index.count, 2);
+      expect(await index.search(const SearchFilter(text: 'Renamed')), isEmpty);
+      final beforeLock = requests.length;
+      bridge.lock(handle);
+      await expectLater(index.rebuild(), throwsA(isA<SearchUnavailable>()));
+      expect(requests.length, beforeLock); // All-cached builds still authorize.
+      expect(index.count, 0);
+      expect(requests.join(), isNot(contains('Private')));
+      expect(requests.join(), isNot(contains('Renamed')));
+    } finally {
+      index.dispose();
+      bridge.lock(handle);
+      await server.close(force: true);
+      await subscription.cancel();
+    }
+  });
+
+  test(
       'real worker opens ordered names, yields, authenticates and bounds batches',
       () async {
     final bridge = NativeBridge.instance;
