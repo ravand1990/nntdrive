@@ -87,7 +87,8 @@ class SearchEntry {
 /// Production decryption uses sequential bounded worker batches; injected sync
 /// fixtures remain supported. Query scans/filtering/top-k run off-isolate;
 /// bounded cold entry construction/folding also run on worker isolates.
-/// HTTP parsing, traversal/validation and final map merging remain caller-side.
+/// Production Session listings bound response bytes and decode/build RemoteFile
+/// models on workers. Traversal/validation and final map merging stay caller-side.
 /// This is not a durable offline index or a content extractor.
 class AccountSearch extends ChangeNotifier {
   AccountSearch({

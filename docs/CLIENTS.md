@@ -128,10 +128,26 @@ Cold name folding, entry construction and bounded entry-map assembly also run in
 sequential worker batches of at most 128, including reused authenticated names.
 Workers never receive the whole accumulated candidate. Builds await each worker
 inside session ownership and reject late results after close before merging.
-HTTP parsing, traversal/validation, reuse selection, queue updates and final
-candidate-map merges remain on the UI isolate, with cooperative ~4 ms slice
-yields. Worker spawn/send overhead remains; this is not a fully off-isolate cold
-build or installed-device responsiveness acceptance.
+Search uses a dedicated listing API that collects at most **64 MiB (67,108,864
+bytes) per folder response** before worker dispatch. Both advertised Content-Length
+and actual streamed body bytes are checked; the latter are bytes delivered by the
+HTTP client after any automatic decompression, not a wire-size guarantee. A
+30-second header timeout and 30-second body inactivity timeout apply. UTF-8/JSON
+decoding, the per-listing **100k model** check and `RemoteFile` construction run
+in a top-level worker capturing bytes only, not the HTTP client/session/native
+handle. Listings are sequential and parsing stays inside the session-owned build;
+close discards late results while drain awaits completion before key revocation.
+Malformed/oversized responses fail closed with redacted errors, preserving the
+last complete snapshot. The byte cap is independent of the account's 100k-node
+cap: unusually wide metadata can hit it with fewer nodes. There is no pagination
+or partial-index fallback. Unrelated `listFiles` callers keep their old behavior.
+
+Transport byte collection/concatenation, worker input copying, fresh
+traversal/validation, reuse selection, queue updates and final candidate-map
+merges remain on the UI isolate, with cooperative ~4 ms slice yields in traversal.
+Worker spawn/send overhead and temporary decoded JSON/model memory remain; this
+is not a fully off-isolate cold build or installed-device responsiveness
+acceptance (#93).
 Builds reject malformed/unreadable trees and bounds above 100k
 entries/depth 256 without replacing the previous complete index. Synthetic warm
 query tests are not installed-device/cold-network performance acceptance. No
