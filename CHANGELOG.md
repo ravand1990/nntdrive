@@ -6,6 +6,12 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.8.10] - 2026-11-11
+
+### Bug fixes
+
+- Reissue the bounded search traversal-worker change from v0.8.9 under a fresh patch tag. The v0.8.9 Release workflow built the Windows and Android clients but failed uploading their artifacts after five service-response retries, so no GitHub release was published. The original tag is unchanged. This patch changes version metadata only; it does not claim to fix GitHub's artifact service or complete broader search scope (#80).
+
 ## [0.8.9] - 2026-11-11
 
 ### Bug fixes
