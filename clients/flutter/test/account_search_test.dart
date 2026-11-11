@@ -63,7 +63,268 @@ class WorkerOnlyNames extends ListBase<String?> {
       throw UnsupportedError('immutable');
 }
 
+// Direct helper fixture only: production later reads ordinary RemoteFile models.
+class WorkerOnlyTraversalFile extends RemoteFile {
+  WorkerOnlyTraversalFile()
+      : caller = Isolate.current.hashCode,
+        super('directory', null, 'opaque', true, 0, false, 1, null);
+  final int caller;
+  void checkWorker() {
+    if (Isolate.current.hashCode == caller) {
+      throw StateError('Traversal read on caller isolate');
+    }
+  }
+
+  @override
+  String? get parentId {
+    checkWorker();
+    return null;
+  }
+
+  @override
+  bool get isDir {
+    checkWorker();
+    return true;
+  }
+}
+
 void main() {
+  test('traversal validation and discovery execute on another isolate',
+      () async {
+    final result =
+        await runSearchTraversalBatch([WorkerOnlyTraversalFile()], null, 0, 1);
+    expect(result.ids, ['directory']);
+    expect(result.directoryIds, ['directory']);
+  });
+
+  test('traversal helper validates bounds, parent, duplicates and depth',
+      () async {
+    for (final (files, parent, depth, capacity)
+        in <(List<RemoteFile>, String?, int, int)>[
+      ([], null, 0, 100000),
+      (List.generate(129, (i) => row('$i', null)), null, 0, 100000),
+      ([row('a', null)], null, 0, 0),
+      ([row('a', null)], null, 0, -1),
+      ([row('a', null)], null, 257, 1),
+      ([row('a', 'wrong')], null, 0, 1),
+      ([row('a', null), row('a', null)], null, 0, 2),
+    ]) {
+      await expectLater(runSearchTraversalBatch(files, parent, depth, capacity),
+          throwsA(isA<SearchUnavailable>()));
+    }
+    final result = await runSearchTraversalBatch([
+      row('z', 'parent', dir: true),
+      row('file', 'parent'),
+      row('a', 'parent', dir: true),
+    ], 'parent', 256, 3);
+    expect(result.ids, ['z', 'file', 'a']);
+    expect(result.directoryIds, ['z', 'a']);
+    expect(
+        (await runSearchTraversalBatch(
+                List.generate(128, (i) => row('$i', null)), null, 0, 128))
+            .ids
+            .length,
+        128);
+  });
+
+  test(
+      'traversal wiring is ordered, bounded, sequential and precedes decryption',
+      () async {
+    final calls = <(String?, int, int, List<String>)>[];
+    final listed = <String?>[];
+    final phases = <String>[];
+    var active = 0;
+    final index = AccountSearch(
+      handle: 50,
+      operations: SessionOperations(),
+      list: (parent) async {
+        listed.add(parent);
+        return parent == null
+            ? List.generate(
+                257, (i) => row('$i', null, dir: i == 0 || i == 256))
+            : parent == '0'
+                ? [row('child', '0')]
+                : [];
+      },
+      traversalWorker: (files, parent, depth, remaining) async {
+        expect(++active, 1);
+        calls.add((parent, depth, remaining, files.map((f) => f.id).toList()));
+        phases.add('validate-${files.first.id}');
+        final result =
+            await runSearchTraversalBatch(files, parent, depth, remaining);
+        active--;
+        return result;
+      },
+      decrypt: (_) => throw StateError('sync path used'),
+      decryptBatch: (files) async {
+        expect(active, 0);
+        phases.add('decrypt-${files.first.id}');
+        return files.map((f) => f.id).toList();
+      },
+      authorize: () {},
+    );
+    addTearDown(index.dispose);
+    await index.rebuild();
+    expect(calls.map((c) => (c.$1, c.$2, c.$3, c.$4.length)), [
+      (null, 0, 100000, 128),
+      (null, 0, 99872, 128),
+      (null, 0, 99744, 1),
+      ('0', 1, 99743, 1),
+    ]);
+    expect(calls.take(3).expand((c) => c.$4), List.generate(257, (i) => '$i'));
+    expect(listed, [null, '0', '256']);
+    expect(phases, [
+      'validate-0',
+      'decrypt-0',
+      'validate-128',
+      'decrypt-128',
+      'validate-256',
+      'decrypt-256',
+      'validate-child',
+      'decrypt-child'
+    ]);
+    calls.clear();
+    phases.clear();
+    await index.rebuild();
+    expect(calls.length, 4); // All-cached batches still validate.
+    expect(phases.every((p) => p.startsWith('validate-')), isTrue);
+  });
+
+  test(
+      'malformed and cross-batch cached refreshes reject before decrypt and retain snapshot',
+      () async {
+    var files = List.generate(129, (i) => row('$i', null));
+    final opened = <String>[];
+    final index = AccountSearch(
+      handle: 51,
+      operations: SessionOperations(),
+      list: (_) async => files,
+      decrypt: (file) {
+        opened.add(file.id);
+        return file.id;
+      },
+      authorize: () {},
+    );
+    addTearDown(index.dispose);
+    await index.rebuild();
+    final good = List<RemoteFile>.of(files);
+    for (final bad in [
+      row('0', null), // Duplicate across worker batches, not within one batch.
+      row('128',
+          'wrong'), // Cached ciphertext must not bypass parent validation.
+      RemoteFile('0', null, 'changed', false, 0, false, 1, null),
+    ]) {
+      opened.clear();
+      files = [...good.take(128), bad];
+      await expectLater(index.rebuild(), throwsA(isA<SearchUnavailable>()));
+      expect(opened, isEmpty);
+      expect(index.failed, isTrue);
+      expect(index.count, 129);
+      expect(index.snapshotRevision, 1);
+      expect(
+          (await index.search(const SearchFilter(text: '128'))).single.file.id,
+          '128');
+    }
+  });
+
+  test(
+      'close drains suspended traversal before reuse, decrypt, merge or next listing',
+      () async {
+    final operations = SessionOperations();
+    final entered = Completer<void>();
+    final release = Completer<void>();
+    var suspend = false;
+    var opens = 0;
+    var merges = 0;
+    var listings = 0;
+    var calls = 0;
+    final index = AccountSearch(
+      handle: 52,
+      operations: operations,
+      list: (parent) async {
+        listings++;
+        return parent == null ? [row('d', null, dir: true)] : [];
+      },
+      traversalWorker: (files, parent, depth, capacity) async {
+        calls++;
+        final result =
+            await runSearchTraversalBatch(files, parent, depth, capacity);
+        if (suspend) {
+          entered.complete();
+          await release.future;
+        }
+        return result;
+      },
+      decrypt: (_) {
+        opens++;
+        return 'name';
+      },
+      entryWorker: (files, names) {
+        merges++;
+        return runSearchEntryBatch(files, names);
+      },
+      authorize: () {},
+    );
+    addTearDown(index.dispose);
+    await index.rebuild();
+    suspend = true;
+    opens = merges = listings = calls = 0;
+    final rejected =
+        expectLater(index.rebuild(), throwsA(isA<SearchUnavailable>()));
+    await entered.future.timeout(const Duration(seconds: 5));
+    expect(index.count, 1); // Previous complete snapshot while refresh waits.
+    expect(index.ready, isTrue);
+    index.close();
+    var drained = false;
+    final drain = operations.drain(52).then((_) => drained = true);
+    await Future<void>.delayed(Duration.zero);
+    expect(drained, isFalse);
+    await expectLater(index.rebuild(), throwsA(isA<SearchUnavailable>()));
+    release.complete();
+    await Future.wait([rejected, drain]);
+    expect(drained, isTrue);
+    expect((calls, listings, opens, merges), (1, 1, 0, 0));
+    expect(index.count, 0);
+    expect(index.snapshotRevision, 1);
+  });
+
+  test('empty listings preserve the existing depth boundary semantics',
+      () async {
+    for (final overflow in [false, true]) {
+      var opens = 0;
+      final depths = <int>[];
+      final index = AccountSearch(
+        handle: 53,
+        operations: SessionOperations(),
+        list: (parent) async {
+          final depth = parent == null ? 0 : int.parse(parent) + 1;
+          return depth <= (overflow ? 257 : 256)
+              ? [row('$depth', parent, dir: true)]
+              : [];
+        },
+        traversalWorker: (files, parent, depth, capacity) {
+          depths.add(depth);
+          return runSearchTraversalBatch(files, parent, depth, capacity);
+        },
+        decrypt: (_) {
+          opens++;
+          return 'name';
+        },
+        authorize: () {},
+      );
+      addTearDown(index.dispose);
+      if (overflow) {
+        await expectLater(index.rebuild(), throwsA(isA<SearchUnavailable>()));
+        expect(index.count, 0);
+        expect(depths.last, 257);
+      } else {
+        await index.rebuild();
+        expect(index.count, 257);
+        expect(depths.last, 256); // Empty listing at 257 never dispatches.
+      }
+      expect(opens, 257);
+    }
+  });
   test('snapshot revision advances only for complete successful publications',
       () async {
     var fail = false;

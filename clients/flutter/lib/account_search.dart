@@ -14,6 +14,42 @@ Future<List<String>> runSearchQuery(
 ) =>
     Isolate.run(() => _scanSearch(snapshot, filter, limit));
 
+/// Only the current bounded opaque batch and scalar traversal context cross the
+/// boundary. Global membership and the growing candidate stay with the caller.
+typedef SearchTraversalBatch = ({List<String> ids, List<String> directoryIds});
+
+Future<SearchTraversalBatch> runSearchTraversalBatch(
+  List<RemoteFile> files,
+  String? parent,
+  int depth,
+  int remainingCapacity,
+) =>
+    Isolate.run(() =>
+        _validateSearchTraversal(files, parent, depth, remainingCapacity));
+
+SearchTraversalBatch _validateSearchTraversal(
+  List<RemoteFile> files,
+  String? parent,
+  int depth,
+  int remainingCapacity,
+) {
+  if (files.isEmpty ||
+      files.length > AccountSearch.decryptBatchSize ||
+      files.length > remainingCapacity ||
+      depth > 256) {
+    throw const SearchUnavailable();
+  }
+  final ids = <String>{};
+  final directories = <String>[];
+  for (final file in files) {
+    if (file.parentId != parent || !ids.add(file.id)) {
+      throw const SearchUnavailable();
+    }
+    if (file.isDir) directories.add(file.id);
+  }
+  return (ids: ids.toList(), directoryIds: directories);
+}
+
 /// Bounded cold folding/entry-map construction. Captures only sendable RAM,
 /// never an AccountSearch, native bridge or session lifecycle object.
 Future<Map<String, SearchEntry>> runSearchEntryBatch(
@@ -88,7 +124,8 @@ class SearchEntry {
 /// fixtures remain supported. Query scans/filtering/top-k run off-isolate;
 /// bounded cold entry construction/folding also run on worker isolates.
 /// Production Session listings bound response bytes and decode/build RemoteFile
-/// models on workers. Traversal/validation and final map merging stay caller-side.
+/// models on workers. Bounded traversal validation/discovery also uses workers;
+/// global membership, reuse, queue updates and final merging stay caller-side.
 /// This is not a durable offline index or a content extractor.
 class AccountSearch extends ChangeNotifier {
   AccountSearch({
@@ -99,6 +136,7 @@ class AccountSearch extends ChangeNotifier {
     this.decryptBatch,
     this.queryWorker = runSearchQuery,
     this.entryWorker = runSearchEntryBatch,
+    this.traversalWorker = runSearchTraversalBatch,
     required this.authorize,
   });
   static const decryptBatchSize = 128;
@@ -115,6 +153,11 @@ class AccountSearch extends ChangeNotifier {
   final Future<Map<String, SearchEntry>> Function(
       List<RemoteFile>, List<String?>) entryWorker;
   final void Function() authorize;
+
+  /// Sequential bounded validation/discovery, before any reuse or decryption.
+  /// Test seam; production always uses the top-level isolate helper.
+  final Future<SearchTraversalBatch> Function(
+      List<RemoteFile>, String?, int, int) traversalWorker;
 
   /// Test seam; production always uses the top-level isolate boundary.
   final Future<List<String>> Function(
@@ -198,13 +241,12 @@ class AccountSearch extends ChangeNotifier {
             _check(epoch);
             final end = (offset + decryptBatchSize).clamp(0, files.length);
             final batch = files.sublist(offset, end);
-            final ids = <String>{};
-            for (final file in batch) {
-              if (file.parentId != parent.id ||
-                  candidate.containsKey(file.id) ||
-                  !ids.add(file.id) ||
-                  candidate.length + ids.length > 100000 ||
-                  parent.depth > 256) {
+            final traversal = await traversalWorker(
+                batch, parent.id, parent.depth, 100000 - candidate.length);
+            _check(epoch); // Discard late validation before reuse/decryption.
+            // Global membership stays local: never resend the growing snapshot.
+            for (final id in traversal.ids) {
+              if (candidate.containsKey(id)) {
                 throw const SearchUnavailable();
               }
             }
@@ -245,8 +287,8 @@ class AccountSearch extends ChangeNotifier {
             _check(
                 epoch); // Close discards results, but drain awaits the worker.
             candidate.addAll(entries);
-            for (final file in batch) {
-              if (file.isDir) queue.add((id: file.id, depth: parent.depth + 1));
+            for (final id in traversal.directoryIds) {
+              queue.add((id: id, depth: parent.depth + 1));
             }
             if (slice.elapsedMilliseconds >= 4) {
               await Future<void>.delayed(Duration.zero);
