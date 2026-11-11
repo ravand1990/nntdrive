@@ -2,6 +2,39 @@
 
 ## Account-wide encrypted-name search (#80 partial)
 
+Search now supports refresh-time **All/Unknown/Local/Cloud only/Not covered/Syncing/
+Conflict/Error** filters and badges, composed with existing filters and restored
+from session-local recent/saved combinations. The file browser supplies loaded
+sync configuration; the owned build freezes it, validates all sibling names and
+ancestor collisions with native canonical comparison, and reuses confined local
+availability checks without repeated HTTP listing per result. Only immutable
+status enums enter query snapshots. No inspector/unloaded configuration means
+unknown, never cloud-only. Failed inspection keeps the previous complete snapshot;
+close cancels publication and session drain still awaits inspection completion.
+Local is disk presence, not journal equality. Exact-path transfer/last-attempt
+error evidence retains conflict precedence. Status is explicitly observed at
+refresh, not invalidated/live-updated on sync start, and can become stale after
+sync/configuration/disk changes. Caller-side filesystem inspection/canonical
+comparisons yield cooperatively; no installed-device timing is claimed.
+
+The refresh-time status increment passed the focused canonical-wrapper run of
+`search_status_test.dart`, `search_page_test.dart`, `account_search_test.dart`,
+`account_search_native_test.dart`, `search_listing_test.dart` and
+`local_availability_test.dart`: **71 tests passed**, plus clean Flutter analysis.
+Coverage includes real filesystem presence/missing/link/traversal and canonical
+ancestor collisions, exact-path errors/conflict precedence, actual Session/native
+loopback HTTP with plaintext-free requests, suspended inspector close/drain,
+failed-build retention and widget status/clear/recent/save restoration. Temporarily
+ignoring the scanner's status predicate failed the all-status combination test;
+the predicate was restored before the passing regression run. Final parent
+verification with `bash scripts/dev-check.sh flutter` passed **143 tests / four
+Windows-only skips**, clean analysis and a real release FFI build; five wrapper
+and ten agent-policy contracts passed. Independent review found no blocker;
+test roots were canonicalized and privileged symlink assertions are omitted on Windows.
+Installed-platform acceptance remains unverified. Copying complete controller
+reports and scanning their exact-path errors per inspected entry can become costly
+on error-heavy accounts; this caller-side scaling risk remains part of #93.
+
 Typing coalesces for 40 ms before dispatching a query worker (previously 180 ms,
 which alone exceeded the ~150 ms keystroke-to-results target). Immediate query
 actions consume any pending typing timer to avoid duplicate dispatch. Widget
@@ -155,8 +188,8 @@ clean analysis and the real release FFI build; five wrapper and ten agent-policy
 contracts also passed. Independent diff review found no blocking issue.
 This is isolation evidence, not a measured speedup or installed-device acceptance.
 
-This is not full #80 completion: availability/sync-status filtering is absent and
-search rows explicitly say status unknown; open the folder for fresh inspection.
+This is not full #80 completion: search rows expose refresh-time availability,
+not verified journal/revision equality or continuously current sync state.
 Persistent encrypted offline indexing/history, incremental event updates,
 installed-device performance and full cold-build responsiveness remain unverified
 or unfinished. Query scanning/filtering and bounded top-200 ranking now run on
@@ -177,8 +210,9 @@ names remain; this is not whole-build isolation. Index builds are
 bounded to 100k entries/depth 256 and fail rather than publish a partial index;
 large-folder network/decode cost is not established by the synthetic benchmark.
 Freshness is explicit and entry/rebuild-triggered only: there is no polling, SSE
-subscription, background sync, periodic re-listing or sync-status evidence, and
-each refresh still performs a complete bounded tree listing and decryption of
+subscription, background sync or periodic re-listing; status evidence is only
+observed during an explicit successful refresh, not live. Each refresh still
+performs a complete bounded tree listing and decryption of
 changed envelopes. Opening the page therefore always costs one full rebuild even
 when nothing changed.
 Content extraction is out of scope. See [client search](CLIENTS.md#account-wide-search-80-partial).

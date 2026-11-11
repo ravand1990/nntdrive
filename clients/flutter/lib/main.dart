@@ -13,6 +13,7 @@ import 'package:uuid/uuid.dart';
 import 'api.dart';
 import 'account_search.dart';
 import 'search_page.dart';
+import 'search_status.dart';
 import 'desktop_host.dart';
 import 'desktop_instance.dart';
 import 'desktop_lifecycle.dart';
@@ -1025,7 +1026,14 @@ class _FilesPageState extends State<FilesPage> {
   Future<void> _openAccountSearch() async {
     final index = widget.session.search;
     final entry = await Navigator.of(context).push<SearchEntry>(MaterialPageRoute(
-      builder: (_) => AccountSearchPage(index: index),
+      builder: (_) => AccountSearchPage(index: index,
+        inspectStatuses: (snapshot, cancelled) async {
+          if (!_sync.loaded) return {};
+          return inspectSearchStatuses(snapshot: snapshot,
+            folders: _sync.folders,
+            comparisonKey: NativeBridge.instance.nameCollisionKey,
+            cancelled: cancelled);
+        }),
     ));
     if (entry == null || !mounted || !index.ready) return;
     final parents = index.ancestors(entry);

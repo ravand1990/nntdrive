@@ -63,7 +63,12 @@ Future<LocalAvailability> inspectLocalAvailability({
   required List<({String id, String name})> ancestry,
   required List<SyncFolderConfig> folders,
   required bool isDir,
+  bool Function()? cancelled,
 }) async {
+  void check() {
+    if (cancelled?.call() == true) throw StateError('Inspection cancelled');
+  }
+  check();
   final matches = <(SyncFolderConfig, int)>[];
   for (final folder in folders) {
     final index = ancestry.indexWhere((node) => node.id == folder.remoteRootId);
@@ -97,9 +102,11 @@ Future<LocalAvailability> inspectLocalAvailability({
     }
     var current = root;
     for (var i = 0; i < components.length; i++) {
+      check();
       current = p.join(current, components[i]);
       if (!p.isWithin(root, current)) return LocalAvailability.unknown;
       final type = await FileSystemEntity.type(current, followLinks: false);
+      check();
       if (type == FileSystemEntityType.notFound) {
         // Only a missing leaf has a validated containing directory. A missing
         // ancestor must not let cached conflict discovery bypass confinement.

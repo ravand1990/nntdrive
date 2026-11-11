@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Features
+
+- Account search combines refresh-time Unknown/Local/Cloud only/Not covered/Syncing/Conflict/Error filters with existing name, metadata and favorite filters, including session-local saved/recent combinations (#80 partial). Observations reuse confined filesystem inspection and authenticated snapshot ancestry with canonical sibling-collision checks, publish atomically inside session build ownership and never imply that disk presence is verified sync equality. Status remains explicitly stale after sync/disk changes until refreshed; no local paths or diagnostics are added to results or requests.
+
 ## [0.8.10] - 2026-11-11
 
 ### Bug fixes
