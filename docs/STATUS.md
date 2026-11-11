@@ -2,6 +2,14 @@
 
 ## Account-wide encrypted-name search (#80 partial)
 
+Typing coalesces for 40 ms before dispatching a query worker (previously 180 ms,
+which alone exceeded the ~150 ms keystroke-to-results target). Immediate query
+actions consume any pending typing timer to avoid duplicate dispatch. Widget
+regressions verify burst coalescing, dispatch within 50 ms of the final edit and
+one query after explicit submission; both fail with the original behavior.
+This bounds the UI scheduling delay only, not worker/paint latency or installed
+10k/100k-entry performance acceptance, which remains #93.
+
 The file browser's **Search all files** action builds an account/session-local
 RAM index by recursively listing opaque folder IDs and opening authenticated
 names through the existing native bridge on worker isolates, in sequential
