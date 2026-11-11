@@ -115,12 +115,17 @@ class _AccountSearchPageState extends State<AccountSearchPage> {
     _generation++;
     _debounce?.cancel();
     _debounce = Timer(
-      const Duration(milliseconds: 180),
+      // The UI delay is part of keystroke-to-results latency. Leave most of
+      // the ~150 ms target for worker dispatch, scanning and rendering.
+      const Duration(milliseconds: 40),
       () => unawaited(_run()),
     );
   }
 
   Future<void> _run({bool remember = false, bool save = false}) async {
+    // Submission/toolbar actions consume the pending typing request too.
+    _debounce?.cancel();
+    _debounce = null;
     final generation = ++_generation;
     try {
       final filter = _filter();

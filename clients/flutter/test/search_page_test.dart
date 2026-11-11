@@ -71,6 +71,49 @@ class RefreshFixture {
 }
 
 void main() {
+  testWidgets('typing coalesces bursts and dispatches within 50 ms',
+      (tester) async {
+    final f = RefreshFixture();
+    addTearDown(f.index.dispose);
+    await tester.runAsync(() => tester
+        .pumpWidget(MaterialApp(home: AccountSearchPage(index: f.index))));
+    await waitForResult(tester);
+    final before = f.queries;
+    final field = find.widgetWithText(TextField, 'Search decrypted names');
+    await tester.enterText(field, 'r');
+    await tester.pump(const Duration(milliseconds: 20));
+    await tester.enterText(field, 'report');
+    await tester.pump(const Duration(milliseconds: 30));
+    expect(f.queries, before); // The first pending timer was cancelled.
+    await tester.pump(const Duration(milliseconds: 20));
+    // Query serialization may await a future created in the real worker zone.
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    expect(f.queries, before + 1); // Leave time for worker scan/rendering.
+    await waitForResult(tester);
+    expect(find.text('Report.pdf'), findsOneWidget);
+    expect(find.text('Other.txt'), findsNothing);
+    expect(f.queries, before + 1);
+  });
+
+  testWidgets('explicit search consumes the pending typing timer',
+      (tester) async {
+    final f = RefreshFixture();
+    addTearDown(f.index.dispose);
+    await tester.runAsync(() => tester
+        .pumpWidget(MaterialApp(home: AccountSearchPage(index: f.index))));
+    await waitForResult(tester);
+    final before = f.queries;
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Search decrypted names'), 'report');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await waitForResult(tester);
+    await tester.pump(const Duration(milliseconds: 250));
+    await waitForResult(tester);
+    expect(f.queries, before + 1);
+    expect(f.index.recent.single.text, 'report');
+    expect(find.text('Report.pdf'), findsOneWidget);
+  });
+
   testWidgets('every page entry refreshes an already ready snapshot',
       (tester) async {
     final f = RefreshFixture();
