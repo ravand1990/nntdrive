@@ -6,6 +6,14 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.8.7] - 2026-11-11
+
+### Bug fixes
+
+- Reissue the bounded worker-isolate search-listing change from v0.8.6 under a fresh patch tag. The v0.8.6 Release workflow failed while loading the Android smoke test with `VmServiceDisappearedException` after APK installation and did not publish client assets; the original tag is unchanged. This patch changes version metadata only, not Android runtime behavior; hosted-runtime investigation remains #64.
+
+## [0.8.6] - 2026-11-11
+
 ### Bug fixes
 
 - Account-search listings now collect at most 64 MiB of response body bytes per folder and decode UTF-8/JSON plus construct up to 100k opaque file models on a worker isolate (#80 partial). HTTP/parser failures are redacted, unrelated listing callers are unchanged, and close/drain retains parsing until completion before key revocation. Traversal/validation, byte collection/copying and final candidate-map merges remain caller-side; status filters, encrypted persistence and installed-device acceptance (#93) remain unfinished.
