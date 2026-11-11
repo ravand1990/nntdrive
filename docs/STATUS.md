@@ -101,6 +101,28 @@ the repository's real worker runner with bounded real event turns; native
 loopback HTTP tests remain in their separate file. No HTTP path was added, so no
 new native fixture was required.
 
+The listing-decode follow-up adds a search-only streamed HTTP path with a **64
+MiB (67,108,864-byte) response body cap per folder** and at most **100k models
+per listing**, compatible with a single-folder 100k-node account within that byte
+budget. The cap checks Content-Length and actual HTTP-client-delivered bytes
+(after automatic decompression); wide metadata can exceed it below 100k nodes.
+UTF-8/JSON decode and `RemoteFile` construction run in a top-level worker that
+captures only bytes. Unrelated listing behavior is unchanged. HTTP/parser errors
+are redacted and malformed/oversized refreshes retain the last complete snapshot.
+The session owns transport and parse completion, discarding results after close
+and draining before key revocation. Canonical-wrapper targeted analysis was clean
+and **35 search unit/native tests passed**, including six new regressions in a
+separate real-loopback/native file (not a widget HTTP override). Coverage includes
+caller-isolate rejection, 100k model acceptance/overflow, malformed UTF-8/JSON/model
+rejection, exact byte-limit acceptance, Content-Length and chunked overflow,
+redacted HTTP errors, auth, actual Session recursion, failed refresh retention,
+locked admission and suspended parse close/drain. Temporarily replacing the decode
+helper's `Isolate.run` with `Future.sync` failed the execution-location regression;
+the worker was restored before the green run. Parent verification with
+`bash scripts/dev-check.sh flutter` passed **130 tests / four platform skips**,
+clean analysis and the real release FFI build; five wrapper and ten agent-policy
+contracts also passed. These are not installed-device measurements (#93).
+
 This is not full #80 completion: availability/sync-status filtering is absent and
 search rows explicitly say status unknown; open the folder for fresh inspection.
 Persistent encrypted offline indexing/history, incremental event updates,
@@ -112,11 +134,13 @@ never dispatches, and close/drain owns every queued/running workflow through
 completion. Only winning IDs return to the UI. Spawn/snapshot-copy overhead
 remains per dispatched query; running scans finish rather than being killed,
 with their RAM copies retained until then. Cold entry construction/folding and
-bounded entry-map assembly run off-isolate. HTTP response parsing, fresh tree
-traversal/validation, reuse selection, queue updates and final candidate-map
-merges remain on the caller/UI isolate (with cooperative ~4 ms slice yields).
-Worker spawn/send overhead and retained in-flight names remain; this is not
-whole-build isolation. Index builds are
+bounded entry-map assembly run off-isolate, as do search-listing UTF-8/JSON decode
+and opaque model construction. Transport byte collection/concatenation and worker
+input copying, fresh tree traversal/validation, reuse selection, queue updates
+and final candidate-map merges remain on the caller/UI isolate (with cooperative
+~4 ms traversal slice yields).
+Worker spawn/send overhead, temporary JSON/model memory and retained in-flight
+names remain; this is not whole-build isolation. Index builds are
 bounded to 100k entries/depth 256 and fail rather than publish a partial index;
 large-folder network/decode cost is not established by the synthetic benchmark.
 Freshness is explicit and entry/rebuild-triggered only: there is no polling, SSE

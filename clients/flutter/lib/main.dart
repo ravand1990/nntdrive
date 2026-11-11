@@ -66,12 +66,16 @@ class Session {
     required this.accountId,
     required this.email,
     required this.operations,
+    this.searchListingWorker = runSearchListingDecode,
   });
+  // Test seam for suspending parsing while exercising real Session drain.
+  final Future<List<RemoteFile>> Function(List<int>) searchListingWorker;
   final SessionOperations operations;
   late final AccountSearch search = AccountSearch(
     handle: handle,
     operations: operations,
-    list: (parent) => ApiClient(baseUrl: server, token: token).listFiles(parentId: parent),
+    list: (parent) => ApiClient(baseUrl: server, token: token)
+        .listFilesForSearch(parentId: parent, decode: searchListingWorker),
     decrypt: (file) => NativeBridge.instance.openName(handle, file.id, file.nameEnc),
     decryptBatch: (files) => NativeBridge.instance.openNamesAsync(handle,
         files.map((f) => (id: f.id, nameEnc: f.nameEnc)).toList()),

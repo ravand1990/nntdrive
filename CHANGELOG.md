@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Bug fixes
+
+- Account-search listings now collect at most 64 MiB of response body bytes per folder and decode UTF-8/JSON plus construct up to 100k opaque file models on a worker isolate (#80 partial). HTTP/parser failures are redacted, unrelated listing callers are unchanged, and close/drain retains parsing until completion before key revocation. Traversal/validation, byte collection/copying and final candidate-map merges remain caller-side; status filters, encrypted persistence and installed-device acceptance (#93) remain unfinished.
+
 ## [0.8.5] - 2026-11-11
 
 ### Bug fixes
