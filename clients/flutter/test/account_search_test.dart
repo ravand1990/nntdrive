@@ -64,6 +64,46 @@ class WorkerOnlyNames extends ListBase<String?> {
 }
 
 void main() {
+  test('snapshot revision advances only for complete successful publications',
+      () async {
+    var fail = false;
+    Completer<List<RemoteFile>>? pending;
+    final index = AccountSearch(
+      handle: 91,
+      operations: SessionOperations(),
+      list: (_) async {
+        if (pending != null) return pending.future;
+        if (fail) throw StateError('offline');
+        return [row('a', null)];
+      },
+      decrypt: (_) => 'name',
+      authorize: () {},
+    );
+    addTearDown(index.dispose);
+    int revision() => index.snapshotRevision;
+    expect(revision(), 0);
+    await index.rebuild();
+    expect(revision(), 1);
+    index.remember(const SearchFilter(text: 'history'));
+    await index.search(const SearchFilter());
+    expect(revision(), 1);
+    fail = true;
+    await expectLater(index.rebuild(), throwsA(isA<SearchUnavailable>()));
+    expect(revision(), 1);
+    expect(index.count, 1);
+    fail = false;
+    await index.rebuild();
+    expect(revision(), 2); // Even an unchanged complete publication is new.
+    pending = Completer<List<RemoteFile>>();
+    final build =
+        expectLater(index.rebuild(), throwsA(isA<SearchUnavailable>()));
+    index.close();
+    pending.complete([row('late', null)]);
+    await build;
+    expect(revision(), 2);
+    expect(index.count, 0);
+  });
+
   test('cold entry worker consumes and folds names on another isolate',
       () async {
     final entries =
