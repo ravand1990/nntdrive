@@ -6,6 +6,8 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-11-11
+
 ### Bug fixes
 
 - Account search now refreshes on every opening of the search page instead of showing an old snapshot until a manual rebuild, and reruns the current query/filter when a complete snapshot is published, including rebuilds started outside the page. A failed refresh keeps the last complete snapshot searchable, shows an explicit stale warning and clears it after a successful retry; history-only notifications no longer wipe results or trigger extra queries, a delayed result can no longer overwrite a newer snapshot, and closing during a refresh leaves no results behind (#80 partial). This is not continuous or event-driven freshness: there is no polling, SSE subscription, background sync or sync-status evidence, and entry/refresh still lists and parses the whole account tree.
