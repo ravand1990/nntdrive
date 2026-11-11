@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Bug fixes
+
+- Account-search builds validate parent membership, within-batch duplicates, count/depth bounds and discover ordered directory IDs on worker isolates in sequential batches of at most 128, before name reuse/decryption (#80 partial). Close/drain owns validation completion and failed refreshes retain the last complete snapshot. Cross-batch/global membership checks, reuse selection, queue updates, transport collection/copying and candidate-map merging remain caller-side; this is not whole-build isolation or a speedup/installed-device performance claim.
+
 ## [0.8.8] - 2026-11-11
 
 ### Bug fixes

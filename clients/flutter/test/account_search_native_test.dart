@@ -51,7 +51,7 @@ void main() {
     final index = AccountSearch(
       handle: handle,
       operations: SessionOperations(),
-      list: (parent) => api.listFiles(parentId: parent),
+      list: (parent) => api.listFilesForSearch(parentId: parent),
       decrypt: (_) => throw StateError('sync path used'),
       decryptBatch: (files) {
         batches.add(files.map((f) => f.id).toList());
@@ -84,6 +84,23 @@ void main() {
           (await index.search(const SearchFilter(favoritesOnly: true))).single;
       expect(index.folderPath(moved), '/Private B');
       expect(moved.file.size, 42);
+      // Even fully cached native names require fresh traversal validation.
+      final validMoved = Map<String, Object?>.of(tree[b]!.single);
+      for (final malformed in [
+        {...validMoved, 'parent_id': a},
+        {'id': a, 'parent_id': b, 'name_enc': sealedA, 'is_dir': true},
+      ]) {
+        tree[b] = [malformed];
+        await expectLater(index.rebuild(), throwsA(isA<SearchUnavailable>()));
+        expect(batches, isEmpty); // Rejected before native name opening.
+        expect(index.count, 3);
+        final retained =
+            (await index.search(const SearchFilter(favoritesOnly: true)))
+                .single;
+        expect(index.folderPath(retained), '/Private B');
+        expect(retained.file.size, 42);
+      }
+      tree[b] = [validMoved];
       // A same-ID envelope replacement cannot reuse the old plaintext.
       tree[b]!.single['name_enc'] =
           bridge.sealName(handle, f, 'Renamed private');
@@ -247,6 +264,7 @@ void main() {
         operations: SessionOperations());
     expect(session.search.decryptBatch, isNotNull);
     expect(session.search.entryWorker, same(runSearchEntryBatch));
+    expect(session.search.traversalWorker, same(runSearchTraversalBatch));
     session.search.dispose();
   });
 
@@ -302,6 +320,7 @@ void main() {
     final index = session.search;
     try {
       expect(index.entryWorker, same(runSearchEntryBatch));
+      expect(index.traversalWorker, same(runSearchTraversalBatch));
       await index.rebuild();
       expect(index.count, 2);
       await server.close(force: true);

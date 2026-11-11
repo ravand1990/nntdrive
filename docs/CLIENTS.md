@@ -142,9 +142,20 @@ last complete snapshot. The byte cap is independent of the account's 100k-node
 cap: unusually wide metadata can hit it with fewer nodes. There is no pagination
 or partial-index fallback. Unrelated `listFiles` callers keep their old behavior.
 
-Transport byte collection/concatenation, worker input copying, fresh
-traversal/validation, reuse selection, queue updates and final candidate-map
-merges remain on the UI isolate, with cooperative ~4 ms slice yields in traversal.
+Fresh traversal now validates each nonempty batch of at most 128 opaque models
+on a top-level worker, passing only that batch, expected parent, current depth
+and remaining account capacity. The worker checks parent membership, within-batch
+duplicates, count/depth limits and discovers ordered node/directory IDs. Each
+batch is awaited sequentially inside the session-owned build, including all-cached
+refreshes; close/epoch is checked immediately afterward, before reuse/decryption.
+Cross-batch/global duplicate checks still run on the caller before decryption,
+without sending the accumulated snapshot to the worker. Discovered directories
+enter the caller's queue only after the validated entry batch merges. Empty
+listings still dispatch no batch, including an empty listing beyond depth 256.
+
+Transport byte collection/concatenation, worker input copying, global membership
+checks, reuse selection, queue updates and final candidate-map merges remain on
+the UI isolate, with cooperative ~4 ms slice yields in traversal.
 Worker spawn/send overhead and temporary decoded JSON/model memory remain; this
 is not a fully off-isolate cold build or installed-device responsiveness
 acceptance (#93).

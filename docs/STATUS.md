@@ -131,6 +131,30 @@ the worker was restored before the green run. Parent verification with
 clean analysis and the real release FFI build; five wrapper and ten agent-policy
 contracts also passed. These are not installed-device measurements (#93).
 
+The bounded traversal follow-up moves per-batch parent/duplicate/count/depth
+validation and ordered directory discovery into a top-level `Isolate.run` helper.
+Only at most 128 opaque models plus expected parent, depth and remaining capacity
+are sent; the accumulated candidate is never copied into this worker. Sequential
+awaits stay inside session ownership, with an immediate epoch check before name
+reuse/decryption and directory queue updates only after entry-map merge. Fresh
+validation also runs on all-cached refreshes. Cross-batch/global membership checks
+remain caller-side before decryption. Empty listings still skip validation batches;
+nonempty listings at depth 256 remain allowed and depth 257 is rejected.
+Targeted canonical-wrapper analysis was clean and **35 search unit/native tests
+passed** against warm native artifacts. New coverage includes worker execution
+location, ordered bounded dispatch/remaining capacity, cached malformed and
+cross-batch duplicate refresh rejection before decryption, previous-snapshot
+retention, depth/empty boundaries and suspended traversal close/drain. The native
+loopback refresh also rejects cached malformed parents and cross-directory
+duplicates without name opening. Replacing this helper's `Isolate.run` with
+`Future.sync` failed the execution-location regression; the worker was restored.
+After restoration, the canonical-wrapper search unit/native/listing/page run passed
+**50 tests**, clean analysis and the changed-file formatter check. Parent verification
+with `bash scripts/dev-check.sh flutter` passed **138 tests / four Windows skips**,
+clean analysis and the real release FFI build; five wrapper and ten agent-policy
+contracts also passed. Independent diff review found no blocking issue.
+This is isolation evidence, not a measured speedup or installed-device acceptance.
+
 This is not full #80 completion: availability/sync-status filtering is absent and
 search rows explicitly say status unknown; open the folder for fresh inspection.
 Persistent encrypted offline indexing/history, incremental event updates,
@@ -143,8 +167,9 @@ completion. Only winning IDs return to the UI. Spawn/snapshot-copy overhead
 remains per dispatched query; running scans finish rather than being killed,
 with their RAM copies retained until then. Cold entry construction/folding and
 bounded entry-map assembly run off-isolate, as do search-listing UTF-8/JSON decode
-and opaque model construction. Transport byte collection/concatenation and worker
-input copying, fresh tree traversal/validation, reuse selection, queue updates
+and opaque model construction, plus bounded traversal validation/discovery.
+Transport byte collection/concatenation and worker
+input copying, global membership checks, reuse selection, queue updates
 and final candidate-map merges remain on the caller/UI isolate (with cooperative
 ~4 ms traversal slice yields).
 Worker spawn/send overhead, temporary JSON/model memory and retained in-flight
