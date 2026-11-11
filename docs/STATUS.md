@@ -80,6 +80,27 @@ with caller-side assembly failed both batch/lifecycle tests. Both mutations were
 restored. Widget fixtures now build in runAsync to receive real worker messages.
 These are not installed-device cold-build latency measurements.
 
+The entry-refresh follow-up makes opening the search page rebuild the account
+snapshot instead of only when the page happened to start without one, while the
+previous complete RAM snapshot stays visible and searchable during that build.
+Every successful complete publication (page-owned or triggered elsewhere, such
+as the index's explicit rebuild) increments a monotonic `snapshotRevision`; the
+page reruns its current text/type/extension/size/date/favorite query exactly once
+per revision change and never on history, save or busy-state notifications. A
+failed refresh keeps the last complete snapshot, shows an explicit "may be stale"
+warning and clears it after a successful retry; nothing republishes after close.
+Canonical isolated `bash scripts/dev-check.sh flutter` passed **124 tests / 4
+platform skips** with clean analysis and the real release FFI build; the
+search-only unit/widget/native run passed **36 tests**. New regressions cover
+entry refresh after a ready fixture changes, external publication refreshing the
+current filter, history not erasing results or re-querying, offline retention and
+retry recovery, a delayed old query failing to erase a newer snapshot, close
+during a pending refresh, and `snapshotRevision` advancing only on complete
+publication (including an unchanged complete rebuild). These widget tests use
+the repository's real worker runner with bounded real event turns; native
+loopback HTTP tests remain in their separate file. No HTTP path was added, so no
+new native fixture was required.
+
 This is not full #80 completion: availability/sync-status filtering is absent and
 search rows explicitly say status unknown; open the folder for fresh inspection.
 Persistent encrypted offline indexing/history, incremental event updates,
@@ -98,6 +119,11 @@ Worker spawn/send overhead and retained in-flight names remain; this is not
 whole-build isolation. Index builds are
 bounded to 100k entries/depth 256 and fail rather than publish a partial index;
 large-folder network/decode cost is not established by the synthetic benchmark.
+Freshness is explicit and entry/rebuild-triggered only: there is no polling, SSE
+subscription, background sync, periodic re-listing or sync-status evidence, and
+each refresh still performs a complete bounded tree listing and decryption of
+changed envelopes. Opening the page therefore always costs one full rebuild even
+when nothing changed.
 Content extraction is out of scope. See [client search](CLIENTS.md#account-wide-search-80-partial).
 
 ## Android folder access (#69, v0.7.0)

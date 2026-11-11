@@ -67,16 +67,20 @@ update automation are outside
 
 ## Account-wide search (#80 partial)
 
-Open **Search all files** (globe/search icon) in the file browser. First use builds
-an account-wide index of decrypted names, including nested and empty folders,
-independently of configured local sync roots. **Rebuild account index** explicitly
-refreshes the complete snapshot. A warm rebuild reuses names authenticated in
+Open **Search all files** (globe/search icon) in the file browser. Every opening
+refreshes the account-wide index of decrypted names, including nested and empty
+folders, independently of configured local sync roots; earlier results stay
+visible while that build runs. **Rebuild account index** refreshes it again on
+demand. A warm rebuild reuses names authenticated in
 this unlocked session only for the same node ID and exact encrypted envelope;
 new or changed names are opened again in bounded worker batches. Every folder is
 still freshly listed and validated: metadata, moves, renamed ancestors and
 removed entries replace the previous snapshot only after complete success.
 A failed refresh keeps the previous complete snapshot, not partially updated
-names. This reduces repeated decryption, not HTTP listing/parsing or tree assembly.
+names, and shows an explicit "may be stale" warning that clears after a
+successful retry. Any complete publication, including a rebuild started outside
+the page, reruns the page's current query and filters once. This reduces repeated
+decryption, not HTTP listing/parsing or tree assembly.
 Name queries match case-insensitively, require
 all space-separated terms and rank exact names before prefixes, word substrings
 and other substrings. Up to 200 best results show their containing folder, size
@@ -109,7 +113,9 @@ synced plaintext files/journals are separate from this index.
 
 Not complete #80: sync/availability filtering and verified result-state badges,
 durable encrypted offline persistence/history and automatic event refresh remain
-unfinished. Explicit rebuild is needed after changes; offline snapshots may be
+unfinished. Freshness is entry/rebuild-triggered only: there is no polling, SSE
+subscription or background re-listing, so edits made while the page stays open
+appear only after a rebuild or the next opening, and offline snapshots may be
 stale. Query scanning, combined filtering and bounded top-200 ranking now run in
 one worker isolate at a time, returning only winning IDs. Exact ranking ties use
 lowercased name then opaque ID. Superseded queued queries skip dispatch; late

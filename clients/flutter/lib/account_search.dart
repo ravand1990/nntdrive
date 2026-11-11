@@ -125,6 +125,10 @@ class AccountSearch extends ChangeNotifier {
   List<SearchFilter> get recent => List.unmodifiable(_recent);
   List<SearchFilter> get saved => List.unmodifiable(_saved);
   int get count => _entries.length;
+
+  /// Changes only when a complete snapshot is successfully published.
+  int get snapshotRevision => _snapshotRevision;
+  int _snapshotRevision = 0;
   bool ready = false;
   bool building = false;
   bool failed = false;
@@ -175,7 +179,6 @@ class AccountSearch extends ChangeNotifier {
   Future<void> _rebuild() async {
     final epoch = _epoch;
     building = true;
-    failed = false;
     notifyListeners();
     try {
       await operations.run(handle, () async {
@@ -255,6 +258,8 @@ class AccountSearch extends ChangeNotifier {
         _authorize();
         _query++; // Invalidate scans over the previous snapshot.
         _entries = candidate;
+        _snapshotRevision++;
+        failed = false;
         ready = true;
       });
     } catch (_) {

@@ -25,33 +25,39 @@ class _AccountSearchPageState extends State<AccountSearchPage> {
   String? _error;
   Timer? _debounce;
   int _generation = 0;
+  late int _snapshotRevision;
 
   @override
   void initState() {
     super.initState();
+    _snapshotRevision = widget.index.snapshotRevision;
     widget.index.addListener(_indexChanged);
-    if (widget.index.ready) {
-      unawaited(_run());
-    } else {
-      unawaited(_rebuild());
-    }
+    // Show the previous complete RAM snapshot while every entry refreshes it.
+    if (widget.index.ready) unawaited(_run());
+    unawaited(_rebuild());
   }
 
   void _indexChanged() {
     if (!mounted) return;
+    final index = widget.index;
+    final published = index.snapshotRevision != _snapshotRevision;
+    _snapshotRevision = index.snapshotRevision;
     setState(() {
-      // A rebuild may replace ancestry while an older query is returning.
-      // Drop view-owned results on every snapshot/history/lifecycle notification;
-      // the admitted query repopulates them after validating its generation.
-      _results = [];
-      if (widget.index.closed) {
+      if (index.closed || published) {
         _generation++;
         _debounce?.cancel();
+        // Old ancestry must not be rendered against the replacement snapshot.
+        _results = [];
+      }
+      if (index.closed) {
+        _error = null;
         for (final c in [_text, _extension, _min, _max, _after, _before]) {
           c.clear();
         }
       }
     });
+    // History/build-state notifications must never trigger another query.
+    if (published && !index.closed) unawaited(_run());
   }
 
   @override
@@ -146,14 +152,9 @@ class _AccountSearchPageState extends State<AccountSearchPage> {
   Future<void> _rebuild() async {
     try {
       await widget.index.rebuild();
-      if (mounted) await _run();
     } catch (_) {
-      if (mounted) {
-        setState(
-          () => _error =
-              'Rebuild failed. Existing indexed results remain available offline; they may be stale.',
-        );
-      }
+      // The index notifies failure without replacing the last complete snapshot.
+      // Render that state independently of query/validation errors below.
     }
   }
 
@@ -195,7 +196,7 @@ class _AccountSearchPageState extends State<AccountSearchPage> {
         title: const Text('Search all files'),
         actions: [
           IconButton(
-            onPressed: index.building ? null : _rebuild,
+            onPressed: index.building || index.closed ? null : _rebuild,
             icon: const Icon(Icons.refresh),
             tooltip: 'Rebuild account index',
           ),
@@ -291,9 +292,16 @@ class _AccountSearchPageState extends State<AccountSearchPage> {
                 const SizedBox(height: 8),
                 Text(
                   '${index.count} indexed · top 200 ranked results · session memory only. '
-                  'Rebuild to refresh; indexed names work offline until sign-out. '
+                  'Refreshes on entry; rebuild to refresh again. Indexed names work offline until sign-out. '
                   'Dates are server metadata. Sync status is not inspected here; open the folder to check.',
                 ),
+                if (index.failed && !index.closed)
+                  Text(
+                    index.ready
+                        ? 'Refresh failed. Existing indexed results remain available offline; they may be stale.'
+                        : 'Refresh failed. No complete indexed snapshot is available; retry when online.',
+                    key: const Key('search-refresh-warning'),
+                  ),
                 if (_error != null)
                   Text(_error!, key: const Key('search-error')),
               ],
