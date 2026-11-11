@@ -71,6 +71,50 @@ class RefreshFixture {
 }
 
 void main() {
+  testWidgets(
+      'status dropdown filters, clears and restores saved/recent combinations',
+      (tester) async {
+    final f = RefreshFixture();
+    addTearDown(f.index.dispose);
+    await tester.runAsync(() => tester.pumpWidget(MaterialApp(
+        home: AccountSearchPage(
+            index: f.index,
+            inspectStatuses: (snapshot, cancelled) async => {
+                  'f': SearchStatus.local,
+                  'other': SearchStatus.cloudOnly,
+                }))));
+    await waitForResult(tester);
+    expect(find.textContaining('Local (at refresh)'), findsOneWidget);
+    final dropdown = find.byKey(const Key('search-status-filter'));
+    await tester.tap(dropdown);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Local').last);
+    await tester.pump(const Duration(milliseconds: 100));
+    await waitForResult(tester);
+    expect(find.text('Other.txt'), findsNothing);
+    await tester.tap(find.text('Save filter'));
+    await waitForResult(tester, until: () => f.index.saved.isNotEmpty);
+    expect(f.index.saved.single.status, SearchStatus.local);
+    await tester.tap(find.text('Search'));
+    await waitForResult(tester, until: () => f.index.recent.isNotEmpty);
+    expect(f.index.recent.single.status, SearchStatus.local);
+    await tester.tap(find.text('Clear filters'));
+    await tester.pump(const Duration(milliseconds: 100));
+    await waitForResult(tester,
+        until: () => find.text('Other.txt').evaluate().isNotEmpty);
+    expect(tester.widget<DropdownButton<SearchStatus>>(dropdown).value,
+        SearchStatus.all);
+    expect(find.text('Other.txt'), findsOneWidget);
+    for (final chip in ['Saved: Filter', 'Recent: Filter']) {
+      await tester.tap(find.text(chip));
+      await tester.pump(const Duration(milliseconds: 100));
+      await waitForResult(tester);
+      expect(tester.widget<DropdownButton<SearchStatus>>(dropdown).value,
+          SearchStatus.local);
+      expect(find.text('Other.txt'), findsNothing);
+    }
+  });
+
   testWidgets('typing coalesces bursts and dispatches within 50 ms',
       (tester) async {
     final f = RefreshFixture();

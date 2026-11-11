@@ -88,6 +88,32 @@ class SearchUnavailable implements Exception {
 
 enum SearchKind { any, file, folder }
 
+/// Refresh-time observations only; local presence never means journal equality.
+enum SearchStatus {
+  all,
+  unknown,
+  local,
+  cloudOnly,
+  notCovered,
+  syncing,
+  conflict,
+  error;
+
+  String get label => switch (this) {
+        all => 'All statuses',
+        unknown => 'Unknown',
+        local => 'Local',
+        cloudOnly => 'Cloud only',
+        notCovered => 'Not covered',
+        syncing => 'Syncing',
+        conflict => 'Conflict',
+        error => 'Error',
+      };
+}
+
+typedef SearchStatusInspector = Future<Map<String, SearchStatus>> Function(
+    Map<String, SearchEntry> snapshot, bool Function() cancelled);
+
 @immutable
 class SearchFilter {
   const SearchFilter({
@@ -99,6 +125,7 @@ class SearchFilter {
     this.modifiedAfter,
     this.modifiedBefore,
     this.favoritesOnly = false,
+    this.status = SearchStatus.all,
   });
   final String text;
   final SearchKind kind;
@@ -108,10 +135,19 @@ class SearchFilter {
   final DateTime? modifiedAfter;
   final DateTime? modifiedBefore;
   final bool favoritesOnly;
+  final SearchStatus status;
 }
 
 class SearchEntry {
-  SearchEntry(this.file, this.name) : foldedName = name.toLowerCase();
+  SearchEntry(this.file, this.name, {this.status = SearchStatus.unknown})
+      : foldedName = name.toLowerCase();
+  SearchEntry._status(SearchEntry entry, this.status)
+      : file = entry.file,
+        name = entry.name,
+        foldedName = entry.foldedName;
+  SearchEntry withStatus(SearchStatus value) =>
+      SearchEntry._status(this, value);
+  final SearchStatus status;
   final RemoteFile file;
   final String name;
   final String foldedName;
@@ -215,12 +251,13 @@ class AccountSearch extends ChangeNotifier {
     super.dispose();
   }
 
-  Future<void> rebuild() {
+  Future<void> rebuild({SearchStatusInspector? inspectStatuses}) {
     if (_closed) return Future.error(const SearchUnavailable());
-    return _build ??= _rebuild().whenComplete(() => _build = null);
+    return _build ??=
+        _rebuild(inspectStatuses).whenComplete(() => _build = null);
   }
 
-  Future<void> _rebuild() async {
+  Future<void> _rebuild(SearchStatusInspector? inspectStatuses) async {
     final epoch = _epoch;
     building = true;
     notifyListeners();
@@ -297,6 +334,21 @@ class AccountSearch extends ChangeNotifier {
             }
           }
         }
+        if (inspectStatuses != null) {
+          final statuses = await inspectStatuses(
+              Map.unmodifiable(candidate), () => _closed || epoch != _epoch);
+          _check(epoch);
+          var processed = 0;
+          for (final id in candidate.keys) {
+            final status = statuses[id] ?? SearchStatus.unknown;
+            candidate[id] = candidate[id]!.withStatus(
+                status == SearchStatus.all ? SearchStatus.unknown : status);
+            if (++processed % 128 == 0) {
+              await Future<void>.delayed(Duration.zero);
+              _check(epoch);
+            }
+          }
+        }
         _check(epoch);
         _authorize();
         _query++; // Invalidate scans over the previous snapshot.
@@ -344,7 +396,8 @@ class AccountSearch extends ChangeNotifier {
           f.maxSize == filter.maxSize &&
           f.modifiedAfter == filter.modifiedAfter &&
           f.modifiedBefore == filter.modifiedBefore &&
-          f.favoritesOnly == filter.favoritesOnly,
+          f.favoritesOnly == filter.favoritesOnly &&
+          f.status == filter.status,
     );
     target.insert(0, filter);
     if (target.length > 10) target.removeLast();
@@ -406,6 +459,7 @@ List<String> _scanSearch(
     final name = entry.foldedName;
     final date = f.updatedAt;
     if ((filter.kind != SearchKind.file || !f.isDir) &&
+        (filter.status == SearchStatus.all || entry.status == filter.status) &&
         (filter.kind != SearchKind.folder || f.isDir) &&
         (!filter.favoritesOnly || f.favorite) &&
         (filter.minSize == null || (!f.isDir && f.size >= filter.minSize!)) &&

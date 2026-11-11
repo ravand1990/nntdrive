@@ -6,8 +6,10 @@ import 'account_search.dart';
 
 /// Search state lives only in this unlocked session, never restoration/prefs.
 class AccountSearchPage extends StatefulWidget {
-  const AccountSearchPage({super.key, required this.index});
+  const AccountSearchPage(
+      {super.key, required this.index, this.inspectStatuses});
   final AccountSearch index;
+  final SearchStatusInspector? inspectStatuses;
   @override
   State<AccountSearchPage> createState() => _AccountSearchPageState();
 }
@@ -20,6 +22,7 @@ class _AccountSearchPageState extends State<AccountSearchPage> {
   final _after = TextEditingController();
   final _before = TextEditingController();
   SearchKind _kind = SearchKind.any;
+  SearchStatus _status = SearchStatus.all;
   bool _favorites = false;
   List<SearchEntry> _results = [];
   String? _error;
@@ -108,6 +111,7 @@ class _AccountSearchPageState extends State<AccountSearchPage> {
       modifiedAfter: after,
       modifiedBefore: before,
       favoritesOnly: _favorites,
+      status: _status,
     );
   }
 
@@ -156,7 +160,7 @@ class _AccountSearchPageState extends State<AccountSearchPage> {
 
   Future<void> _rebuild() async {
     try {
-      await widget.index.rebuild();
+      await widget.index.rebuild(inspectStatuses: widget.inspectStatuses);
     } catch (_) {
       // The index notifies failure without replacing the last complete snapshot.
       // Render that state independently of query/validation errors below.
@@ -174,6 +178,7 @@ class _AccountSearchPageState extends State<AccountSearchPage> {
         filter.modifiedBefore?.toIso8601String().substring(0, 10) ?? '';
     setState(() {
       _kind = filter.kind;
+      _status = filter.status;
       _favorites = filter.favoritesOnly;
     });
     _changed();
@@ -247,6 +252,18 @@ class _AccountSearchPageState extends State<AccountSearchPage> {
                         _changed();
                       },
                     ),
+                    DropdownButton<SearchStatus>(
+                      key: const Key('search-status-filter'),
+                      value: _status,
+                      items: SearchStatus.values
+                          .map((status) => DropdownMenuItem(
+                              value: status, child: Text(status.label)))
+                          .toList(),
+                      onChanged: (status) {
+                        setState(() => _status = status!);
+                        _changed();
+                      },
+                    ),
                     _field(_extension, 'Extension', width: 95),
                     _field(_min, 'Min bytes', width: 100),
                     _field(_max, 'Max bytes', width: 100),
@@ -298,7 +315,8 @@ class _AccountSearchPageState extends State<AccountSearchPage> {
                 Text(
                   '${index.count} indexed · top 200 ranked results · session memory only. '
                   'Refreshes on entry; rebuild to refresh again. Indexed names work offline until sign-out. '
-                  'Dates are server metadata. Sync status is not inspected here; open the folder to check.',
+                  'Dates are server metadata. Status is observed at refresh, not live; '
+                  'sync or disk changes can make it stale. Local presence is not verified sync equality.',
                 ),
                 if (index.failed && !index.closed)
                   Text(
@@ -328,7 +346,7 @@ class _AccountSearchPageState extends State<AccountSearchPage> {
                               : Icons.insert_drive_file_outlined,
                         ),
                         subtitle: Text(
-                          '${index.folderPath(entry)} · ${entry.file.isDir ? 'Folder' : '${entry.file.size} bytes'} · Sync status unknown',
+                          '${index.folderPath(entry)} · ${entry.file.isDir ? 'Folder' : '${entry.file.size} bytes'} · ${entry.status == SearchStatus.unknown ? 'Sync status unknown' : '${entry.status.label} (at refresh)'}',
                         ),
                         trailing:
                             entry.file.favorite ? const Icon(Icons.star) : null,

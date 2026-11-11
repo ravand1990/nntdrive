@@ -84,12 +84,22 @@ decryption, not HTTP listing/parsing or tree assembly.
 Name queries match case-insensitively, require
 all space-separated terms and rank exact names before prefixes, word substrings
 and other substrings. Up to 200 best results show their containing folder, size
-and an honest **Sync status unknown** label. Selecting a result navigates through
+and a refresh-time local/sync observation (or **Sync status unknown** when evidence
+is unavailable). Selecting a result navigates through
 the existing browser, refreshing before offering file actions. Offline searching
 works on the existing snapshot; opening/refetching an item still needs the server.
 
 Combine file/folder type, filename extension, minimum/maximum bytes, **Favorites**,
-and modification dates. Favorites come from actual namespace listings, not inferred
+modification dates and status: **All statuses**, **Unknown**, **Local**, **Cloud only**,
+**Not covered**, **Syncing**, **Conflict**, or **Error**. Status is observed during
+the complete refresh, not continuously updated: sync, configuration and disk changes
+can make it stale until the next refresh. **Local** means confined disk presence,
+not journal/revision equality or successful sync. **Cloud only** requires a safely
+mapped missing path; unknown/ambiguous mappings never match it. The loaded sync
+configuration is copied for inspection; unavailable configuration leaves statuses
+unknown. Exact-path active transfers and last-attempt errors retain the browser's
+conflict/error precedence. No raw diagnostics or local paths enter search results.
+Favorites come from actual namespace listings, not inferred
 state. Dates use the server's namespace `updated_at` (including rename/favorite
 changes), not authenticated content timestamps; **since** is inclusive and
 **before** exclusive at UTC midnight (`YYYY-MM-DD`). Entries lacking dates do not
@@ -111,7 +121,16 @@ strings cannot promise physical memory zeroization; OS swap/crash dumps and
 device compromise are outside this in-process guarantee. Existing intentionally
 synced plaintext files/journals are separate from this index.
 
-Not complete #80: sync/availability filtering and verified result-state badges,
+Status inspection reuses the filesystem confinement checks with authenticated RAM
+ancestry and canonical collision validation for all siblings and ancestors; it
+does not re-list HTTP folders per result. Inspection runs inside the owned build
+before atomic publication, with cooperative yields and cancellation checks. Only
+immutable scalar status enums reach query workers. Filesystem inspection and native
+canonical-name comparisons remain caller-side; this is not an atomic filesystem
+snapshot or an installed-device performance claim. A failed inspection preserves
+the entire previous snapshot, including its possibly stale status observations.
+
+Not complete #80: verified journal-equality result badges,
 durable encrypted offline persistence/history and automatic event refresh remain
 unfinished. Freshness is entry/rebuild-triggered only: there is no polling, SSE
 subscription or background re-listing, so edits made while the page stays open
