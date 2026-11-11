@@ -6,6 +6,8 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.8.8] - 2026-11-11
+
 ### Bug fixes
 
 - Account search now coalesces typing with a 40 ms delay instead of 180 ms, leaving time for worker scanning and rendering within the responsiveness target. Explicit searches and other immediate query actions cancel a pending typing request rather than dispatching it again (#80 partial). This is a UI scheduling fix, not installed-device p95 performance acceptance (#93).
