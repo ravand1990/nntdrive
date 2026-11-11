@@ -37,7 +37,7 @@ void main() {
   testWidgets(
       'account result shows path size honest status and returns selection; save and recent reuse',
       (tester) async {
-    final index = await fixture();
+    final index = (await tester.runAsync(fixture))!;
     addTearDown(index.dispose);
     SearchEntry? selected;
     await tester.pumpWidget(MaterialApp(
@@ -92,7 +92,7 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    final index = await fixture();
+    final index = (await tester.runAsync(fixture))!;
     addTearDown(index.dispose);
     await tester.pumpWidget(MaterialApp(home: AccountSearchPage(index: index)));
     await tester.pumpAndSettle();

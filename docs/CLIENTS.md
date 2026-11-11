@@ -118,9 +118,14 @@ queued/running workflows remain session-owned until completion, including drain
 before key revocation. A running scan is not forcibly killed. Each dispatched
 query copies the bounded RAM snapshot to a short-lived worker; transfer/spawn
 costs are not eliminated, and names remain in worker RAM until completion.
-Snapshot assembly still yields cooperatively in ~4 ms slices. HTTP parsing,
-traversal, cold name folding and assembly remain on the UI isolate; this is not
-a fully off-isolate cold build.
+Cold name folding, entry construction and bounded entry-map assembly also run in
+sequential worker batches of at most 128, including reused authenticated names.
+Workers never receive the whole accumulated candidate. Builds await each worker
+inside session ownership and reject late results after close before merging.
+HTTP parsing, traversal/validation, reuse selection, queue updates and final
+candidate-map merges remain on the UI isolate, with cooperative ~4 ms slice
+yields. Worker spawn/send overhead remains; this is not a fully off-isolate cold
+build or installed-device responsiveness acceptance.
 Builds reject malformed/unreadable trees and bounds above 100k
 entries/depth 256 without replacing the previous complete index. Synthetic warm
 query tests are not installed-device/cold-network performance acceptance. No

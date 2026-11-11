@@ -246,6 +246,7 @@ void main() {
         email: 'fixture',
         operations: SessionOperations());
     expect(session.search.decryptBatch, isNotNull);
+    expect(session.search.entryWorker, same(runSearchEntryBatch));
     session.search.dispose();
   });
 
@@ -300,6 +301,7 @@ void main() {
     );
     final index = session.search;
     try {
+      expect(index.entryWorker, same(runSearchEntryBatch));
       await index.rebuild();
       expect(index.count, 2);
       await server.close(force: true);
@@ -317,6 +319,7 @@ void main() {
       // A tiny scan must yield too: the old cooperative scan never did here.
       expect(queryEventRan, isTrue);
       expect(found.single.name, secret);
+      expect(found.single.foldedName, secret.toLowerCase());
       expect(index.folderPath(found.single), '/Private directory');
       expect(requests, [
         'GET /api/v1/files ',
