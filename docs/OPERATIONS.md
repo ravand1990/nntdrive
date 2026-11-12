@@ -7,7 +7,7 @@
 Images are published to GHCR with semantic version tags:
 
 ```
-ghcr.io/ravand1990/nntdrive-backend:0.9.5
+ghcr.io/ravand1990/nntdrive-backend:0.9.6
 ghcr.io/ravand1990/nntdrive-backend:latest
 ghcr.io/ravand1990/nntdrive-backend:edge
 ```
@@ -22,7 +22,7 @@ echo "$GHCR_TOKEN" | docker login ghcr.io -u ravand1990 --password-stdin
 Download matching `docker-compose.release.yml`, `nntdrive-compose.py` and
 `env.release.example` files. Releases from v0.7.0 include the launcher; use the
 deployment files from the matching release (see the root README). Optionally copy the
-example to `.env` and pin `NNTDRIVE_VERSION=0.9.5`; both secret fields can stay
+example to `.env` and pin `NNTDRIVE_VERSION=0.9.6`; both secret fields can stay
 empty. On Linux/WSL with Python 3 and Compose 2.24+:
 
 ```bash
