@@ -65,6 +65,138 @@ update automation are outside
 - iOS build/signing.
 - Windows packaging/signing (build works; the FFI DLL must ship next to the exe).
 
+## Account-wide search (#80 partial)
+
+Open **Search all files** (globe/search icon) in the file browser. Every opening
+refreshes the account-wide index of decrypted names, including nested and empty
+folders, independently of configured local sync roots; earlier results stay
+visible while that build runs. **Rebuild account index** refreshes it again on
+demand. A warm rebuild reuses names authenticated in
+this unlocked session only for the same node ID and exact encrypted envelope;
+new or changed names are opened again in bounded worker batches. Every folder is
+still freshly listed and validated: metadata, moves, renamed ancestors and
+removed entries replace the previous snapshot only after complete success.
+A failed refresh keeps the previous complete snapshot, not partially updated
+names, and shows an explicit "may be stale" warning that clears after a
+successful retry. Any complete publication, including a rebuild started outside
+the page, reruns the page's current query and filters once. This reduces repeated
+decryption, not HTTP listing/parsing or tree assembly.
+Name queries match case-insensitively, require
+all space-separated terms and rank exact names before prefixes, word substrings
+and other substrings. Up to 200 best results show their containing folder, size
+and a refresh-time local/sync observation (or **Sync status unknown** when evidence
+is unavailable). Selecting a result navigates through
+the existing browser, refreshing before offering file actions. Offline searching
+works on the existing snapshot; opening/refetching an item still needs the server.
+
+Combine file/folder type, filename extension, minimum/maximum bytes, **Favorites**,
+modification dates and status: **All statuses**, **Unknown**, **Local**, **Cloud only**,
+**Not covered**, **Syncing**, **Conflict**, or **Error**. Status is observed during
+the complete refresh, not continuously updated: sync, configuration and disk changes
+can make it stale until the next refresh. **Local** means confined disk presence,
+not journal/revision equality or successful sync. **Cloud only** requires a safely
+mapped missing path; unknown/ambiguous mappings never match it. The loaded sync
+configuration is copied for inspection; unavailable configuration leaves statuses
+unknown. Exact-path active transfers and last-attempt errors retain the browser's
+conflict/error precedence. No raw diagnostics or local paths enter search results.
+Favorites come from actual namespace listings, not inferred
+state. Dates use the server's namespace `updated_at` (including rename/favorite
+changes), not authenticated content timestamps; **since** is inclusive and
+**before** exclusive at UTC midnight (`YYYY-MM-DD`). Entries lacking dates do not
+match date filters; directories do not match byte-size/extension filters.
+Press **Search**/Enter to remember a search or **Save filter** to retain the full
+combination; chips restore it. Each list retains at most ten session-local entries.
+
+Names, paths, queries and saved filters live only in unlocked-session memory,
+never the search network requests, preferences, index files, backups or logs.
+Only normal ciphertext folder listings by opaque parent IDs are requested. The
+index is closed/cleared before sign-out/Quit drains native work and locks keys;
+late listing responses are rejected before decryption. Cold-build name opening
+uses the existing authenticated native ABI on worker isolates, in sequential
+batches of at most 128 names (one batch in flight). The whole listing/build,
+including awaited worker completion, remains session-owned; close discards late
+worker results and drain waits before key revocation. Worker errors are redacted.
+A new session starts empty, and every search/build checks native unlock authority. Dart immutable
+strings cannot promise physical memory zeroization; OS swap/crash dumps and
+device compromise are outside this in-process guarantee. Existing intentionally
+synced plaintext files/journals are separate from this index.
+
+Status inspection reuses the filesystem confinement checks with authenticated RAM
+ancestry and canonical collision validation for all siblings and ancestors; it
+does not re-list HTTP folders per result. Inspection runs inside the owned build
+before atomic publication, with cooperative yields and cancellation checks. Only
+immutable scalar status enums reach query workers. Portable-name validation,
+native NFC/lowercase/NFC comparison and sibling ambiguity grouping run in one
+refresh-owned worker. It consumes sequential batches of at most 128 scalar
+ID/parent/name records, keeping the growing counts private rather than repeatedly
+copying them across isolates. The complete snapshot (at most 100k nodes) is
+considered before returning safe IDs: late invalid siblings poison their entire
+parent group, canonical aliases poison both spellings, and caller-side ancestry
+walks reject descendants of either. No native bridge object or cancellation
+closure crosses isolates; the comparison ABI needs no unlocked-key handle.
+Close stops further batches and rejects late evidence; the worker is finished and
+awaited even on producer failure/cancellation before session drain completes.
+Whole-report JSON freezing, error-index immutable-set construction, name-record
+copying, ancestry walks, conflict scans, filesystem inspection and final snapshot
+merging remain caller-side. The worker retains bounded whole-snapshot grouping
+state until completion; spawn/message/final safe-ID transfer costs remain. This
+is not full cold-build isolation, an atomic filesystem snapshot or an
+installed-device performance claim. A failed inspection preserves
+the entire previous snapshot, including its possibly stale status observations.
+
+Not complete #80: verified journal-equality result badges,
+durable encrypted offline persistence/history and automatic event refresh remain
+unfinished. Freshness is entry/rebuild-triggered only: there is no polling, SSE
+subscription or background re-listing, so edits made while the page stays open
+appear only after a rebuild or the next opening, and offline snapshots may be
+stale. Query scanning, combined filtering and bounded top-200 ranking now run in
+one worker isolate at a time, returning only winning IDs. Exact ranking ties use
+lowercased name then opaque ID. Superseded queued queries skip dispatch; late
+results after a newer query, snapshot replacement or close are discarded. Entire
+queued/running workflows remain session-owned until completion, including drain
+before key revocation. A running scan is not forcibly killed. Each dispatched
+query copies the bounded RAM snapshot to a short-lived worker; transfer/spawn
+costs are not eliminated, and names remain in worker RAM until completion.
+Cold name folding, entry construction and bounded entry-map assembly also run in
+sequential worker batches of at most 128, including reused authenticated names.
+Workers never receive the whole accumulated candidate. Builds await each worker
+inside session ownership and reject late results after close before merging.
+Search uses a dedicated listing API that collects at most **64 MiB (67,108,864
+bytes) per folder response** before worker dispatch. Both advertised Content-Length
+and actual streamed body bytes are checked; the latter are bytes delivered by the
+HTTP client after any automatic decompression, not a wire-size guarantee. A
+30-second header timeout and 30-second body inactivity timeout apply. UTF-8/JSON
+decoding, the per-listing **100k model** check and `RemoteFile` construction run
+in a top-level worker capturing bytes only, not the HTTP client/session/native
+handle. Listings are sequential and parsing stays inside the session-owned build;
+close discards late results while drain awaits completion before key revocation.
+Malformed/oversized responses fail closed with redacted errors, preserving the
+last complete snapshot. The byte cap is independent of the account's 100k-node
+cap: unusually wide metadata can hit it with fewer nodes. There is no pagination
+or partial-index fallback. Unrelated `listFiles` callers keep their old behavior.
+
+Fresh traversal now validates each nonempty batch of at most 128 opaque models
+on a top-level worker, passing only that batch, expected parent, current depth
+and remaining account capacity. The worker checks parent membership, within-batch
+duplicates, count/depth limits and discovers ordered node/directory IDs. Each
+batch is awaited sequentially inside the session-owned build, including all-cached
+refreshes; close/epoch is checked immediately afterward, before reuse/decryption.
+Cross-batch/global duplicate checks still run on the caller before decryption,
+without sending the accumulated snapshot to the worker. Discovered directories
+enter the caller's queue only after the validated entry batch merges. Empty
+listings still dispatch no batch, including an empty listing beyond depth 256.
+
+Transport byte collection/concatenation, worker input copying, global membership
+checks, reuse selection, queue updates and final candidate-map merges remain on
+the UI isolate, with cooperative ~4 ms slice yields in traversal.
+Worker spawn/send overhead and temporary decoded JSON/model memory remain; this
+is not a fully off-isolate cold build or installed-device responsiveness
+acceptance (#93).
+Builds reject malformed/unreadable trees and bounds above 100k
+entries/depth 256 without replacing the previous complete index. Synthetic warm
+query tests are not installed-device/cold-network performance acceptance. No
+content extraction or server-side plaintext search is introduced.
+
 ## What the Rust bridge exports
 
 `crates/ffi` exposes a JSON C ABI:
@@ -286,7 +418,12 @@ inaccessible feeds never prevent using the app. The updater:
 4. unpacks to a temporary directory and starts a detached helper;
 5. exits, letting the helper replace the install directory and restart the app.
 
-The helper launch is awaited before the app exits. On Windows, the helper must
+The helper launch is awaited before the app exits. Windows sends the script with
+PowerShell's UTF-16LE `-EncodedCommand`, uses ordinary process creation with a
+hidden window (not Dart's detached flags), and closes unused stdin immediately;
+startup stderr is
+retained in `helper-stderr.log`, and the app drains output without waiting for
+helper termination. On Windows, the helper must
 also acknowledge its archive-layout and directory-write preflight within 15
 seconds; a launch/preflight failure leaves the app open with an error. It waits
 at most 60 seconds for the old process to exit, then backs up overwritten payload
@@ -298,13 +435,22 @@ restart can itself fail, so this is not a durability guarantee.
 
 Windows diagnostics remain in the system temporary directory under a unique
 `nntdrive-update-handoff-*` directory: `update.log` names the failing step,
-`failed`/`complete` records the outcome, `update.ps1` retains the helper source,
+`failed`/`complete` records the outcome, `helper-pid` identifies the launched
+helper, `update.ps1` retains its source,
 and `backup/` retains overwritten files. Failed stages/backups are deliberately
 not deleted. These files contain local install paths, not update tokens or keys;
 review/redact paths before sharing a log. After confirming a working install,
 these temporary directories and the matching staged update can be removed
 manually. Installed-release version/data/journal preservation and locked-file
 manual acceptance remain #49/#28; hosted helper fixtures do not replace them.
+The Windows unit suite also compiles a disposable executable that launches the
+production helper, exits while installed at the replacement
+path, and requires a new process to write its own startup marker after replacement.
+Run `flutter test test/update_handoff_test.dart --reporter expanded` with the
+Flutter SDK (`FLUTTER_ROOT`) available. This checks helper survival, payload
+replacement and a probe restart, not the packaged Flutter app, installed release
+version or real user data. A `complete` helper marker alone means that Windows
+accepted the launch request; it does not prove the app reached a usable window.
 
 Public releases do not require a token. For a private release repository, open
 **Account → Update settings**, set the repository and a read-only token; an
@@ -508,6 +654,56 @@ The browser and sync share the same encrypted remote tree. Local synced files
 remain plaintext on disk; use BitLocker, LUKS or FileVault for local disk
 protection. Content and names sent to the backend/Usenet are encrypted locally.
 
+## Android folder access (#69)
+
+For shared storage, **Select base folder / Add another folder** opens Android's
+directory picker, then explains the access scope before asking you to enable
+**All files access** in this app's Android settings (Android 11+). Return to
+NNTDrive to finish adding/syncing the folder. On Android 6–10 the app requests
+read/write storage permission instead (legacy storage on Android 10). A granted
+OS permission survives a normal app restart; the client rechecks it before every
+sync, not a saved “granted” preference. Denial never initiates remote publication
+or native sync. Canceling leaves existing folder configuration and journals intact.
+
+This is deliberately broader than a SAF tree grant. The existing Rust sync engine
+uses ordinary filesystem paths, directory traversal, hashing, atomic rename and
+conflict-file recovery; it cannot operate on `content://` document streams. The
+current directory-picker plugin returns an on-device path, not a persisted SAF
+capability. A narrow SAF solution requires a new tree-I/O adapter throughout that
+engine; converting a URI to a path does not grant POSIX access. For the current
+sideloaded general folder-sync client we therefore explicitly request
+`MANAGE_EXTERNAL_STORAGE`, **not** pretend a tree grant suffices. No media/contact
+permissions are added. All-files access covers shared storage outside the chosen
+folder too: only configured roots are synchronized, but this is an application
+policy, not OS-enforced per-tree isolation. Public Play distribution would require
+separate permission-policy review; this does not authorize store publication.
+
+Alternatively, **Use app-private folder (no permission)** creates a sync directory
+inside app storage. This is not a user-visible Documents folder: uninstalling the
+app removes it. It does not need shared-storage access. Existing app-private or
+already-authorized paths never open settings automatically. Protected system paths,
+other apps' private data / `Android/data` and `Android/obb`, cloud document providers
+and picker-unsupported storage volumes remain unsupported; a broad grant does not
+bypass Android's restrictions.
+
+If access is revoked, **Sync now** or the next automatic round shows a folder
+error rather than successful empty synchronization. **Grant storage access and
+retry** explains the scope, reopens settings only on explicit confirmation and
+rescans the **same** configured folder after return. You may also restore access
+in Android Settings and use **Sync now**, without deleting/re-adding the folder.
+Folder checks fail closed on unlistable directories; the native scanner aborts
+the round on directory/metadata/file-read failures, including cached-hash reads,
+so missing access is not interpreted as file deletion. Intentional exclusions and
+skipped symlinks retain their existing behavior. Permissions can still disappear
+during a later operation; that operation reports an error, not guaranteed success.
+
+Names, paths and bytes remain local inputs to the existing encrypted sync engine;
+permission checks send nothing to the backend. No plaintext upload or crypto
+fallback is introduced. Focused channel/controller/widget and scanner regressions
+are distinct from Android installed-app acceptance: fresh install/restart, actual
+settings denial/revocation/regrant and shared-folder transfer on Android 11+ and a
+current version still require the follow-up runtime verification.
+
 ## Sync model on clients
 
 - One device-local SQLite journal (`nntdrive-sync`) holds the baseline.
@@ -537,8 +733,9 @@ protection. Content and names sent to the backend/Usenet are encrypted locally.
 
 - iOS cannot watch arbitrary directories; only its container and File Provider
   domains.
-- Android scoped storage prevents free filesystem access outside user-granted
-  trees (`ACTION_OPEN_DOCUMENT_TREE`).
+- Android shared-folder sync requires an explicit all-files grant for the current
+  path-based engine; SAF tree selection alone is insufficient. App-private sync
+  needs no shared-storage permission; protected paths remain unavailable.
 - Windows drive letters need WinFsp service privileges; symlinks need developer
   mode/elevation.
 - Linux FUSE mounts are per-user and may require `user_allow_other` for other

@@ -6,6 +6,8 @@
 
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
@@ -39,7 +41,7 @@ class AccountInfo {
 }
 
 class RemoteFile {
-  RemoteFile(this.id, this.parentId, this.nameEnc, this.isDir, this.size, this.favorite, this.revision, this.currentVersion);
+  RemoteFile(this.id, this.parentId, this.nameEnc, this.isDir, this.size, this.favorite, this.revision, this.currentVersion, {this.updatedAt});
   final String id;
   final String? parentId;
   final String nameEnc; // sealed bytes, base64
@@ -48,6 +50,8 @@ class RemoteFile {
   final bool favorite;
   final int revision;
   final String? currentVersion;
+  /// Server namespace modification time; not a verified content timestamp.
+  final DateTime? updatedAt;
 
   factory RemoteFile.fromJson(Map<String, dynamic> j) => RemoteFile(
         j['id'] as String,
@@ -58,6 +62,7 @@ class RemoteFile {
         j['favorite'] as bool? ?? false,
         j['revision'] as int? ?? 0,
         j['current_version'] as String?,
+        updatedAt: DateTime.tryParse(j['updated_at'] as String? ?? ''),
       );
 }
 
@@ -106,6 +111,38 @@ class SyncEvent {
         j['file_id'] as String?,
         j['revision_id'] as String?,
       );
+}
+
+/// Search-only bounds: one listing may contain the entire 100k-node account.
+/// The byte cap applies to collected (HTTP-client decoded) response bytes, not
+/// just Content-Length. This is a RAM bound, not an encrypted-format change.
+const searchListingMaxBodyBytes = 64 * 1024 * 1024;
+const searchListingMaxFiles = 100000;
+
+ApiException _searchListingError([int status = 0]) =>
+    ApiException(status, 'search_listing', 'Search listing unavailable');
+
+/// Separate lexical scope: capture bytes only, never HTTP clients, sessions,
+/// native handles or lifecycle completers. Validation and model construction
+/// are inside the worker too. Returned models contain only opaque metadata.
+Future<List<RemoteFile>> runSearchListingDecode(List<int> bytes) =>
+    Isolate.run(() => _decodeSearchListing(bytes));
+
+List<RemoteFile> _decodeSearchListing(List<int> bytes) {
+  try {
+    if (bytes.length > searchListingMaxBodyBytes) {
+      throw _searchListingError();
+    }
+    final body = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+    final files = body['files'] as List;
+    if (files.length > searchListingMaxFiles) throw _searchListingError();
+    return files
+        .map((file) => RemoteFile.fromJson(file as Map<String, dynamic>))
+        .toList();
+  } catch (_) {
+    // Decoder/type errors can embed response excerpts. Never return those.
+    throw _searchListingError();
+  }
 }
 
 class ApiClient {
@@ -245,6 +282,50 @@ class ApiClient {
         .map((d) => DeviceInfo.fromJson(d as Map<String, dynamic>))
         .toList();
     return info;
+  }
+
+  /// Search-specific bounded transport and worker parsing. Other list callers
+  /// keep listFiles' existing response/error behavior. Limits may be lowered
+  /// (e.g. for constrained callers/tests), never raised above the hard cap.
+  /// The injectable worker is a lifecycle test seam, not a production fallback.
+  Future<List<RemoteFile>> listFilesForSearch({
+    String? parentId,
+    int maxBodyBytes = searchListingMaxBodyBytes,
+    Future<List<RemoteFile>> Function(List<int>) decode = runSearchListingDecode,
+  }) async {
+    if (maxBodyBytes < 1 || maxBodyBytes > searchListingMaxBodyBytes) {
+      throw _searchListingError();
+    }
+    final client = http.Client();
+    try {
+      final request = http.Request('GET',
+          _uri('/files', parentId == null ? null : {'parent_id': parentId}))
+        ..headers.addAll(_headers);
+      final response =
+          await client.send(request).timeout(const Duration(seconds: 30));
+      if (response.statusCode >= 400) {
+        // No response diagnostics (including reason phrases) cross this API.
+        throw _searchListingError(response.statusCode);
+      }
+      if ((response.contentLength ?? 0) > maxBodyBytes) {
+        throw _searchListingError();
+      }
+      final bytes = BytesBuilder(copy: false);
+      await for (final chunk
+          in response.stream.timeout(const Duration(seconds: 30))) {
+        if (chunk.length > maxBodyBytes - bytes.length) {
+          throw _searchListingError();
+        }
+        bytes.add(chunk);
+      }
+      return await decode(bytes.takeBytes());
+    } on ApiException {
+      rethrow;
+    } catch (_) {
+      throw _searchListingError();
+    } finally {
+      client.close(); // Includes header/body bounds, timeout and parse failures.
+    }
   }
 
   Future<List<RemoteFile>> listFiles({String? parentId}) async {

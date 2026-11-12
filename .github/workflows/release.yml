@@ -164,6 +164,7 @@ jobs:
               dist/* \
               deploy/docker-compose.release.yml \
               deploy/env.release.example \
+              deploy/nntdrive-compose.py \
               deploy/README-IMAGES.md
           else
             gh release create "$TAG" \
@@ -172,5 +173,6 @@ jobs:
               dist/* \
               deploy/docker-compose.release.yml \
               deploy/env.release.example \
+              deploy/nntdrive-compose.py \
               deploy/README-IMAGES.md
           fi

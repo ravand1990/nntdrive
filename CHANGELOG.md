@@ -6,9 +6,123 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-11-12
+
 ### Bug fixes
 
 - Upgrade the NZB XML parser to quick-xml 0.41.0 while retaining duplicate-attribute checks; malformed/duplicate attributes on parsed file, segment and metadata tags now return errors. Preserve entity-containing metadata and article IDs with the newer streaming API (#16 partial).
+
+## [0.9.4] - 2026-11-12
+
+### Bug fixes
+
+- Fixed account roots (#95 partial): `POST /roots` now requires the client-chosen `node_id` that the sealed root name is bound to. A server-chosen ID left every stored root envelope unopenable, because names are sealed with the node ID as authenticated data. A missing or nil `node_id` is refused with `400` and an already-used one with `409`; repeat and second-client bootstrap still converge on the original root and envelope, which every client can open. Client bootstrap, auto-subscription and the device list UI remain unimplemented.
+
+## [0.9.3] - 2026-11-12
+
+### Features
+
+- Backend fixed account roots (#95 partial): one Global root per account and one root per registered device, created idempotently by an unlocked client with a client-sealed name. All clients converge on the same node ID and envelope, device roots require a device-bound token, roots are listed with device/stale state, and rename/move/delete of a fixed root is refused with `409`. Client auto-subscription, per-device sync destinations and cross-device move are not implemented yet.
+
+## [0.9.2] - 2026-11-12
+
+### Bug fixes
+
+- Account-search status refresh validates portable names, computes native canonical comparison keys and groups ambiguous siblings off the UI isolate (#80 partial). One refresh-owned worker consumes sequential batches of at most 128 scalar name records and finalizes safety only after the complete snapshot, preserving cross-batch collisions and ancestor rejection. Close discards late evidence and drain awaits worker completion. Report freezing/error-set construction, ancestry walks, conflict/filesystem inspection and final snapshot merging remain caller-side; this is not full cold-build isolation or installed performance acceptance (#93).
+
+## [0.9.1] - 2026-11-12
+
+### Bug fixes
+
+- Account-search refresh indexes structured sync-error paths once per frozen root rather than rescanning complete reports for every result (#80 partial). Exact-path matching, conflict/transfer precedence and refresh-only semantics are unchanged. Index construction yields and observes cancellation within reports and large path lists; whole-report copying and conflict inspection remain caller-side, and installed performance remains unverified (#93).
+
+## [0.9.0] - 2026-11-12
+
+### Features
+
+- Account search combines refresh-time Unknown/Local/Cloud only/Not covered/Syncing/Conflict/Error filters with existing name, metadata and favorite filters, including session-local saved/recent combinations (#80 partial). Observations reuse confined filesystem inspection and authenticated snapshot ancestry with canonical sibling-collision checks, publish atomically inside session build ownership and never imply that disk presence is verified sync equality. Status remains explicitly stale after sync/disk changes until refreshed; no local paths or diagnostics are added to results or requests.
+
+## [0.8.10] - 2026-11-11
+
+### Bug fixes
+
+- Reissue the bounded search traversal-worker change from v0.8.9 under a fresh patch tag. The v0.8.9 Release workflow built the Windows and Android clients but failed uploading their artifacts after five service-response retries, so no GitHub release was published. The original tag is unchanged. This patch changes version metadata only; it does not claim to fix GitHub's artifact service or complete broader search scope (#80).
+
+## [0.8.9] - 2026-11-11
+
+### Bug fixes
+
+- Account-search builds validate parent membership, within-batch duplicates, count/depth bounds and discover ordered directory IDs on worker isolates in sequential batches of at most 128, before name reuse/decryption (#80 partial). Close/drain owns validation completion and failed refreshes retain the last complete snapshot. Cross-batch/global membership checks, reuse selection, queue updates, transport collection/copying and candidate-map merging remain caller-side; this is not whole-build isolation or a speedup/installed-device performance claim.
+
+## [0.8.8] - 2026-11-11
+
+### Bug fixes
+
+- Account search now coalesces typing with a 40 ms delay instead of 180 ms, leaving time for worker scanning and rendering within the responsiveness target. Explicit searches and other immediate query actions cancel a pending typing request rather than dispatching it again (#80 partial). This is a UI scheduling fix, not installed-device p95 performance acceptance (#93).
+
+## [0.8.7] - 2026-11-11
+
+### Bug fixes
+
+- Reissue the bounded worker-isolate search-listing change from v0.8.6 under a fresh patch tag. The v0.8.6 Release workflow failed while loading the Android smoke test with `VmServiceDisappearedException` after APK installation and did not publish client assets; the original tag is unchanged. This patch changes version metadata only, not Android runtime behavior; hosted-runtime investigation remains #64.
+
+## [0.8.6] - 2026-11-11
+
+### Bug fixes
+
+- Account-search listings now collect at most 64 MiB of response body bytes per folder and decode UTF-8/JSON plus construct up to 100k opaque file models on a worker isolate (#80 partial). HTTP/parser failures are redacted, unrelated listing callers are unchanged, and close/drain retains parsing until completion before key revocation. Traversal/validation, byte collection/copying and final candidate-map merges remain caller-side; status filters, encrypted persistence and installed-device acceptance (#93) remain unfinished.
+
+## [0.8.5] - 2026-11-11
+
+### Bug fixes
+
+- Account search now refreshes on every opening of the search page instead of showing an old snapshot until a manual rebuild, and reruns the current query/filter when a complete snapshot is published, including rebuilds started outside the page. A failed refresh keeps the last complete snapshot searchable, shows an explicit stale warning and clears it after a successful retry; history-only notifications no longer wipe results or trigger extra queries, a delayed result can no longer overwrite a newer snapshot, and closing during a refresh leaves no results behind (#80 partial). This is not continuous or event-driven freshness: there is no polling, SSE subscription, background sync or sync-status evidence, and entry/refresh still lists and parses the whole account tree.
+
+## [0.8.4] - 2026-11-11
+
+### Bug fixes
+
+- Account-search builds now construct entries, lowercase names and assemble bounded entry maps on worker isolates, in sequential batches of at most 128, including reused authenticated names (#80 partial). Complete snapshots still publish atomically and session drain awaits workers before key revocation. HTTP parsing, traversal/validation and final candidate-map merging remain caller-side; this is not a fully isolated cold build or installed-device performance acceptance.
+
+## [0.8.3] - 2026-11-11
+
+### Bug fixes
+
+- Explicit account-search rebuilds reuse names already authenticated in the same session only when both node ID and encrypted envelope match. Fresh complete tree listings still replace metadata, ancestry and membership atomically; changed names are authenticated again and failed refreshes retain the last complete snapshot (#80 partial). This does not add automatic event refresh or durable index persistence.
+
+## [0.8.2] - 2026-11-10
+
+### Bug fixes
+
+- Account-search query scanning, filtering and bounded top-200 ranking run on worker isolates, with serialized dispatch, stale-result rejection and complete session drain ownership (#80 partial). Per-query snapshot-copy/spawn costs remain; HTTP parsing, cold folding/assembly, status filters, persistence and incremental refresh are not addressed.
+
+## [0.8.1] - 2026-11-10
+
+### Bug fixes
+
+- Account-search cold builds open authenticated encrypted names on worker isolates in sequential batches of at most 128, draining worker completion before session key revocation (#80 partial). HTTP parsing, snapshot assembly and ranking are not moved off the UI isolate; status filters and encrypted persistence remain unfinished.
+
+## [0.8.0] - 2026-11-10
+
+### Features
+
+- Search decrypted names across all account folders using an explicitly rebuildable, session-memory-only client index (#80 partial). Ranked results include containing folders and sizes, with combined type, extension, size, server modification-date and favorite filters; recent searches and saved filters last until sign-out. Indexed results remain searchable offline within that unlocked session. Search availability/sync-status filters and durable encrypted offline persistence remain unfinished.
+
+## [0.7.1] - 2026-11-10
+
+### Bug fixes
+
+- Windows updater launches a hidden PowerShell child with an explicit UTF-16LE encoded command instead of Dart's detached creation flags, retains startup error output and the helper PID, and exercises handoff across real parent exit with a compiled executable regression (#49). Installed-release acceptance remains separate.
+
+## [0.7.0] - 2026-11-09
+
+### Features
+
+- Fresh image-only installations can start with an absent/empty `.env` using `nntdrive-compose.py`: database and provider-encryption secrets are generated once, privately persisted, and reused. Missing/corrupt secrets with existing data fail closed; explicit credentials cannot silently rotate saved values (#62).
+
+### Bug fixes
+
+- Android folder sync requests explicit storage access with denial/retry guidance and a permission-free app-private alternative; revoked/unreadable roots no longer look like successful empty scans (#69). Shared folders use Android's all-files grant, not per-tree SAF isolation; installed-device acceptance remains separate.
 - Live sync event streams recheck the original credential and account/device status with a two-second authorization lease, closing after logout, revocation, disable or expiry (#16 partial). Already admitted/buffered frames cannot be retracted.
 
 ## [0.6.0] - 2026-11-09

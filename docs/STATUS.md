@@ -1,5 +1,325 @@
 # Project status
 
+## Account-wide encrypted-name search (#80 partial)
+
+Search now supports refresh-time **All/Unknown/Local/Cloud only/Not covered/Syncing/
+Conflict/Error** filters and badges, composed with existing filters and restored
+from session-local recent/saved combinations. The file browser supplies loaded
+sync configuration; the owned build freezes it, validates all sibling names and
+ancestor collisions with native canonical comparison, and reuses confined local
+availability checks without repeated HTTP listing per result. Only immutable
+status enums enter query snapshots. No inspector/unloaded configuration means
+unknown, never cloud-only. Failed inspection keeps the previous complete snapshot;
+close cancels publication and session drain still awaits inspection completion.
+Local is disk presence, not journal equality. Exact-path transfer/last-attempt
+error evidence retains conflict precedence. Status is explicitly observed at
+refresh, not invalidated/live-updated on sync start, and can become stale after
+sync/configuration/disk changes. Filesystem inspection and ancestry walks remain
+caller-side with cooperative yields; canonical comparison/grouping now run on a
+worker as described below. No installed-device timing is claimed.
+
+The refresh-time status increment passed the focused canonical-wrapper run of
+`search_status_test.dart`, `search_page_test.dart`, `account_search_test.dart`,
+`account_search_native_test.dart`, `search_listing_test.dart` and
+`local_availability_test.dart`: **71 tests passed**, plus clean Flutter analysis.
+Coverage includes real filesystem presence/missing/link/traversal and canonical
+ancestor collisions, exact-path errors/conflict precedence, actual Session/native
+loopback HTTP with plaintext-free requests, suspended inspector close/drain,
+failed-build retention and widget status/clear/recent/save restoration. Temporarily
+ignoring the scanner's status predicate failed the all-status combination test;
+the predicate was restored before the passing regression run. Final parent
+verification with `bash scripts/dev-check.sh flutter` passed **143 tests / four
+Windows-only skips**, clean analysis and a real release FFI build; five wrapper
+and ten agent-policy contracts passed. Independent review found no blocker;
+test roots were canonicalized and privileged symlink assertions are omitted on Windows.
+The subsequent error-path increment indexes each frozen root's structured errors
+once into an immutable exact-path set, then discards that copied report before
+per-entry inspection. Empty sets do not fall back to legacy scanning; browser
+consumers without an index retain their existing dynamic report behavior. Index
+construction yields/checks cancellation within reports and individual path lists.
+Canonical `dev-check.sh flutter` passed **147 tests / four Windows-only skips**,
+clean analysis and the release FFI build. A deterministic 500-entry fixture reads
+zero report elements during status lookup; temporarily restoring legacy scanning
+read 250,500 elements and failed, as did real-filesystem search status regressions.
+Root isolation, frozen evidence, malformed errors, exact matching and precedence
+are covered. Installed-platform acceptance remains unverified. Whole-report JSON
+copying, immutable-set construction, conflict scanning and filesystem inspection
+remain caller-side scaling risks under #93; this is not an installed timing claim.
+
+The status-name follow-up moves portable-name validation, native canonical
+comparison and complete sibling ambiguity grouping to one refresh-owned worker.
+Sequential batches contain at most 128 scalar ID/parent/name records; the worker
+retains counts privately, avoiding repeated copies of the growing snapshot.
+Only after all batches does it return safe IDs (bounded by the 100k-node account
+cap). Later invalid siblings invalidate the entire parent group; canonical
+aliases across batches invalidate both spellings and their descendants through
+unchanged caller-side ancestry checks. No bridge object, controller, cancellation
+closure or key material is transferred; the comparison ABI needs no key handle.
+The producer stops on cancellation, finishes the worker in a finally block and
+awaits completion before session drain; late evidence cannot publish.
+Canonical `dev-check.sh flutter-exec` formatting/analysis and the seven-file
+search/native/listing/page/local-availability run passed **78 tests** using the
+real warm native library. Deterministic worker-location, 128/128/1 ordering,
+cross-batch alias/invalid-parent ancestry, failed-refresh retention and suspended
+worker close/drain tests pass. The real Session/native/loopback fixture rejects
+a late root alias across the 128 boundary, then restores local presence after
+its removal, without plaintext requests. Replacing only this worker's
+`Isolate.run` with `Future.sync` failed the location test; it was restored before
+the green run. This is isolation/semantic evidence, not a speedup measurement.
+Whole-report freezing, error-index immutable-set construction, scalar input
+copying, ancestry walks, conflict/filesystem inspection and final snapshot merging
+remain caller-side; worker spawn/message/final set-transfer costs and retained
+whole-snapshot grouping RAM remain. Full cold-build isolation and installed-device
+performance are not established.
+
+Typing coalesces for 40 ms before dispatching a query worker (previously 180 ms,
+which alone exceeded the ~150 ms keystroke-to-results target). Immediate query
+actions consume any pending typing timer to avoid duplicate dispatch. Widget
+regressions verify burst coalescing, dispatch within 50 ms of the final edit and
+one query after explicit submission; both fail with the original behavior.
+This bounds the UI scheduling delay only, not worker/paint latency or installed
+10k/100k-entry performance acceptance, which remains #93.
+
+The file browser's **Search all files** action builds an account/session-local
+RAM index by recursively listing opaque folder IDs and opening authenticated
+names through the existing native bridge on worker isolates, in sequential
+batches of at most 128 (one batch in flight). The whole build awaits worker
+completion inside SessionOperations, so close discards late results and drain
+precedes key revocation. Name errors remain redacted; ciphertext formats/keys
+are unchanged and decrypted names remain client RAM only. Queries stay local. Results rank exact,
+prefix, word-substring and substring names, combine file/folder, extension, byte
+size, namespace modification-date and real API favorite filters, show containing
+folder paths/sizes, and navigate back through the existing browser. Recent and
+saved filters are RAM-only (up to ten each). Explicit rebuild atomically replaces
+the snapshot; failed/offline rebuild preserves the last complete snapshot. It may
+be stale after remote or local mutations until rebuilt. Sign-out/Quit closes the
+index before draining operations/revoking keys; delayed listings cannot decrypt
+or republish afterward. No search index/query persistence, logging or telemetry
+is added. Dart strings are garbage-collected, not guaranteed physically zeroized.
+
+The original search increment's focused isolated Flutter run passed **10 tests** and clean analysis, including
+real native encryption + loopback nested HTTP listings, no query/name/path in
+requests, revoked-key rejection, delayed-response cancellation/drain, cross-session
+clearing, atomic failure/offline reuse and widget navigation/filter reuse. A
+100k-entry synthetic fixture verified bounded top-200 results and cooperative
+yielding; 20 warm 10k-entry searches measured p95 **7750 microseconds** in that
+container run (target <150 ms). Temporarily restoring folder-only traversal failed
+the nested-listing regression; recursion was restored before the green run.
+
+The worker-decryption follow-up passed the canonical isolated
+`bash scripts/dev-check.sh flutter`: clean analysis and **104 passed / 4 skipped**
+(existing platform-specific tests). The separate search-only run passed **16 tests**.
+Coverage includes real authenticated worker decryption, ordered/bounded batches,
+wrong/locked keys, substituted name AAD, real Session/loopback HTTP wiring,
+suspended batch close/drain, redacted errors and atomic snapshot retention.
+Restoring the synchronous build path failed the async-batch regression; replacing
+`Isolate.run` with synchronous `Future.sync` failed the event-loop-yield regression.
+Both sabotages were restored before the final canonical green run. These checks
+do not establish installed-device cold-build latency or whole-build isolation.
+
+The query-worker follow-up passed canonical `bash scripts/dev-check.sh flutter`:
+clean analysis, **110 passed / 4 skipped**, real release FFI. Tests cover exact
+filter boundaries/ties, 100k bounded results with real timer progress, newer-query
+and snapshot-only invalidation, suspended close/drain and redacted failure/retry.
+A scanner-entry isolate-identity check proves execution away from the caller;
+actual Session + native/loopback HTTP search also yields a real event turn.
+Replacing the query `Isolate.run` with `Future.sync` failed both regressions;
+the worker was restored before this green run. Synthetic warm 10k-query p95 was
+**34577 microseconds** (20 queries), including spawn/copy overhead, not installed
+performance acceptance. Widget tests retain the real runner and wait bounded
+real event turns rather than treating fake-frame settling as worker completion.
+
+Warm explicit rebuilds reuse previously authenticated names only for the same
+node ID and exact envelope in the last complete session snapshot. Fresh complete
+listings still validate the tree and replace metadata, ancestry and membership;
+changed names are reauthenticated in bounded batches. Failed candidates never
+seed reuse. Native unlock authorization still precedes even an all-cached build.
+The canonical isolated Flutter run passed **113 tests / 4 platform skips** with
+clean analysis and real release FFI. New unit/native-loopback tests cover reduced
+decryption, fresh metadata, moves, renames, removal, malformed/substituted
+ciphertext and failed-refresh rollback. Both new unit regressions failed on the
+old always-decrypt path; weakening reuse to ID-only failed the native regression.
+The exact-envelope guard was restored before final verification. This is not
+an event-driven or durable cache and does not reduce listing/parsing costs.
+
+The cold-entry follow-up moves name lowercasing, SearchEntry construction and
+bounded entry-map assembly to a top-level sendable worker helper. Each build
+awaits sequential batches of at most 128, including reused names, without copying
+the whole candidate into workers. Results merge only after the close/epoch check;
+the complete candidate still publishes atomically and session drain includes the
+worker await. Canonical isolated `bash scripts/dev-check.sh flutter` passed
+**118 tests / 4 platform skips**, clean analysis and the real release FFI build.
+The search unit/native-only run passed **28 tests**. Regressions cover worker
+isolate identity and real event progress, ordered bounds, failed-entry snapshot
+retention/retry and suspended close/drain. Actual Session/native/loopback tests
+retain the default entry worker and verify folded results. Replacing its isolate
+with Future.sync failed both execution-location/event tests; bypassing dispatch
+with caller-side assembly failed both batch/lifecycle tests. Both mutations were
+restored. Widget fixtures now build in runAsync to receive real worker messages.
+These are not installed-device cold-build latency measurements.
+
+The entry-refresh follow-up makes opening the search page rebuild the account
+snapshot instead of only when the page happened to start without one, while the
+previous complete RAM snapshot stays visible and searchable during that build.
+Every successful complete publication (page-owned or triggered elsewhere, such
+as the index's explicit rebuild) increments a monotonic `snapshotRevision`; the
+page reruns its current text/type/extension/size/date/favorite query exactly once
+per revision change and never on history, save or busy-state notifications. A
+failed refresh keeps the last complete snapshot, shows an explicit "may be stale"
+warning and clears it after a successful retry; nothing republishes after close.
+Canonical isolated `bash scripts/dev-check.sh flutter` passed **124 tests / 4
+platform skips** with clean analysis and the real release FFI build; the
+search-only unit/widget/native run passed **36 tests**. New regressions cover
+entry refresh after a ready fixture changes, external publication refreshing the
+current filter, history not erasing results or re-querying, offline retention and
+retry recovery, a delayed old query failing to erase a newer snapshot, close
+during a pending refresh, and `snapshotRevision` advancing only on complete
+publication (including an unchanged complete rebuild). These widget tests use
+the repository's real worker runner with bounded real event turns; native
+loopback HTTP tests remain in their separate file. No HTTP path was added, so no
+new native fixture was required.
+
+The listing-decode follow-up adds a search-only streamed HTTP path with a **64
+MiB (67,108,864-byte) response body cap per folder** and at most **100k models
+per listing**, compatible with a single-folder 100k-node account within that byte
+budget. The cap checks Content-Length and actual HTTP-client-delivered bytes
+(after automatic decompression); wide metadata can exceed it below 100k nodes.
+UTF-8/JSON decode and `RemoteFile` construction run in a top-level worker that
+captures only bytes. Unrelated listing behavior is unchanged. HTTP/parser errors
+are redacted and malformed/oversized refreshes retain the last complete snapshot.
+The session owns transport and parse completion, discarding results after close
+and draining before key revocation. Canonical-wrapper targeted analysis was clean
+and **35 search unit/native tests passed**, including six new regressions in a
+separate real-loopback/native file (not a widget HTTP override). Coverage includes
+caller-isolate rejection, 100k model acceptance/overflow, malformed UTF-8/JSON/model
+rejection, exact byte-limit acceptance, Content-Length and chunked overflow,
+redacted HTTP errors, auth, actual Session recursion, failed refresh retention,
+locked admission and suspended parse close/drain. Temporarily replacing the decode
+helper's `Isolate.run` with `Future.sync` failed the execution-location regression;
+the worker was restored before the green run. Parent verification with
+`bash scripts/dev-check.sh flutter` passed **130 tests / four platform skips**,
+clean analysis and the real release FFI build; five wrapper and ten agent-policy
+contracts also passed. These are not installed-device measurements (#93).
+
+The bounded traversal follow-up moves per-batch parent/duplicate/count/depth
+validation and ordered directory discovery into a top-level `Isolate.run` helper.
+Only at most 128 opaque models plus expected parent, depth and remaining capacity
+are sent; the accumulated candidate is never copied into this worker. Sequential
+awaits stay inside session ownership, with an immediate epoch check before name
+reuse/decryption and directory queue updates only after entry-map merge. Fresh
+validation also runs on all-cached refreshes. Cross-batch/global membership checks
+remain caller-side before decryption. Empty listings still skip validation batches;
+nonempty listings at depth 256 remain allowed and depth 257 is rejected.
+Targeted canonical-wrapper analysis was clean and **35 search unit/native tests
+passed** against warm native artifacts. New coverage includes worker execution
+location, ordered bounded dispatch/remaining capacity, cached malformed and
+cross-batch duplicate refresh rejection before decryption, previous-snapshot
+retention, depth/empty boundaries and suspended traversal close/drain. The native
+loopback refresh also rejects cached malformed parents and cross-directory
+duplicates without name opening. Replacing this helper's `Isolate.run` with
+`Future.sync` failed the execution-location regression; the worker was restored.
+After restoration, the canonical-wrapper search unit/native/listing/page run passed
+**50 tests**, clean analysis and the changed-file formatter check. Parent verification
+with `bash scripts/dev-check.sh flutter` passed **138 tests / four Windows skips**,
+clean analysis and the real release FFI build; five wrapper and ten agent-policy
+contracts also passed. Independent diff review found no blocking issue.
+This is isolation evidence, not a measured speedup or installed-device acceptance.
+
+This is not full #80 completion: search rows expose refresh-time availability,
+not verified journal/revision equality or continuously current sync state.
+Persistent encrypted offline indexing/history, incremental event updates,
+installed-device performance and full cold-build responsiveness remain unverified
+or unfinished. Query scanning/filtering and bounded top-200 ranking now run on
+short-lived worker isolates, with at most one query worker in flight per index.
+New queries/snapshot publication invalidate old results, superseded queued work
+never dispatches, and close/drain owns every queued/running workflow through
+completion. Only winning IDs return to the UI. Spawn/snapshot-copy overhead
+remains per dispatched query; running scans finish rather than being killed,
+with their RAM copies retained until then. Cold entry construction/folding and
+bounded entry-map assembly run off-isolate, as do search-listing UTF-8/JSON decode
+and opaque model construction, plus bounded traversal validation/discovery.
+Transport byte collection/concatenation and worker
+input copying, global membership checks, reuse selection, queue updates
+and final candidate-map merges remain on the caller/UI isolate (with cooperative
+~4 ms traversal slice yields).
+Worker spawn/send overhead, temporary JSON/model memory and retained in-flight
+names remain; this is not whole-build isolation. Index builds are
+bounded to 100k entries/depth 256 and fail rather than publish a partial index;
+large-folder network/decode cost is not established by the synthetic benchmark.
+Freshness is explicit and entry/rebuild-triggered only: there is no polling, SSE
+subscription, background sync or periodic re-listing; status evidence is only
+observed during an explicit successful refresh, not live. Each refresh still
+performs a complete bounded tree listing and decryption of
+changed envelopes. Opening the page therefore always costs one full rebuild even
+when nothing changed.
+Content extraction is out of scope. See [client search](CLIENTS.md#account-wide-search-80-partial).
+
+## Account roots (#95 partial)
+
+The backend can now hold one fixed **Global** root per account and one root per
+registered device. `POST /roots` creates them idempotently from a client-sealed
+name (`kind` is `global` or `device`); the client also sends the `node_id` it
+generated, because the sealed name is bound to that ID and a server-chosen one
+would be unopenable. The second caller — another client, a retry or a reinstall —
+receives the existing node ID and envelope instead of a duplicate. A device root
+requires a device-bound token and is keyed to the registered device ID. `GET
+/roots` lists Global first, then every device root with its device name,
+platform, last-seen time and a `stale` flag; a root stays listed after its device
+goes offline or is revoked. Fixed roots refuse rename, move and delete with
+`409`; favourite changes still work.
+
+Both kinds are ordinary root-level folder nodes, so the existing browser and file
+APIs already list and browse them, but **no client bootstraps, auto-subscribes or
+auto-syncs them yet**. Per-device sync destinations, cross-device move, Global
+auto-mirroring, selective-sync interaction, offline move queuing, stale-device
+conflict handling, client/device list UI and the migration of existing accounts
+remain unimplemented. See [the root API](API.md#fixed-account-roots).
+
+## Android folder access (#69, v0.7.0)
+
+Shared-folder sync now explains and explicitly requests Android all-files access
+for the current path-based Rust engine (legacy read/write grants on Android 6–10).
+SAF URI access is not presented as POSIX access. Permission is rechecked before
+sync; denial/revocation reports an error and offers retry on the same folder.
+The app-private alternative needs no broad permission and uses a separate data
+directory outside the live sync journals. A permission return cannot resurrect
+a removed sync relationship. Names/content still use the existing encrypted path.
+
+Scanner I/O failures abort before remote snapshot/reconciliation instead of
+looking like missing/deleted local entries, including unreadable nested paths and
+cached-hash files. Focused `nntdrive-sync` checks passed **38 tests** with one
+existing ignored subprocess helper; a temporary restoration of skipped directory
+errors failed the new regression as expected. **7 Flutter storage-access tests**
+and analysis passed in the pinned isolated wrapper. Native Android path-policy
+unit tests and a real private-folder/channel smoke are wired to hosted Android
+jobs; their definitions are not execution evidence. Actual Android settings
+grant/deny/revoke/restart and shared-folder encrypted transfer acceptance remains
+unrun, tracked separately in [#75](https://github.com/ravand1990/nntdrive/issues/75).
+See [access model and limits](CLIENTS.md#android-folder-access-69).
+
+## Generate-once image deployment secrets (#62, v0.7.0)
+
+The image-only `nntdrive-compose.py` launcher supplies a persisted OS-random
+PostgreSQL password and 32-byte-base64 provider key, with independently explicit
+first-boot overrides. `.env` may be empty or absent. Secret storage is 0600/0700,
+locked, flushed and atomically published without overwrite; corrupt/insecure
+state, override conflicts and missing secrets with existing project resources
+fail closed. This is not rotation or existing-install migration; source Compose
+and bare-backend defaults are unchanged. Releases from v0.7.0 include the launcher;
+v0.6.0 assets do not. See the image guide's threat model.
+
+Focused tests cover actual filesystem persistence, concurrent processes,
+interrupted publication, explicit/empty/corrupt state, symlinks/permissions,
+existing-data guard decisions, URL encoding and secret-free failure diagnostics.
+Real Compose configuration tests cover dotenv precedence and rendering with no
+`.env`/domain, plus the real launcher's read-only Docker `ps` path with absent then
+empty `.env`. `python3 scripts/test-deployment-secrets.py` passed **13 tests**;
+**10** filesystem/process tests also passed through the approved isolated
+`dev-check.sh flutter-exec` wrapper. The absent-env rendering regression fails
+against the original release Compose file. Live image pull, fresh backend/PostgreSQL startup, provider-password
+read-back and Docker `down`/`up`/recreation acceptance have not been exercised;
+filesystem tests are not a substitute for that live-stack acceptance.
+
 ## NZB XML dependency follow-up (#16 partial, 2026-11-09)
 
 The workspace resolves quick-xml **0.41.0**, the patched range for
@@ -79,8 +399,9 @@ Linux/Android/Windows builds and Android native smoke. Exact-head CI run
 passed. NNT-017 changed only Flutter code; the 93 Rust tests above remain the
 latest recorded Rust count, not a new post-merge run.
 
-The latest published release is **v0.6.0** (2026-11-09); Cargo and Flutter
-source versions are 0.6.0 (`0.6.0+10` for Flutter). The historical
+The current release version is **v0.9.4** (2026-11-12); Cargo and Flutter
+source versions are 0.9.4 (`0.9.4+28` for Flutter). Publication must be verified
+from the tag's Release workflow and attached assets. The historical
 live-provider, desktop and release evidence below was not repeated by this
 documentation run.
 
@@ -139,7 +460,7 @@ decrypt, verify) and through the Flutter FFI sync layer.
 | Real Eweka round-trip: post via `post.eweka.nl:563`, retrieve via `news.eweka.nl:563`, decrypt, verify hash | 4 KB live upload; both articles STAT-verified |
 | Live deployment: dev Compose stack with mock NNTP; register/upload/download through the API | `crates/client/examples/smoke.rs` (verified) |
 | Docker image build, Compose stack, healthcheck, admin page, CLI bootstrap, admin API | ✅ verified locally (image built, stack started, `/healthz` 200, admin stats returned) |
-| Versioned image release: tests → GHCR push (`0.6.0`, `0.6`, `latest`, `sha-*`) → GitHub release with Compose files, checksums and Linux/Android/Windows client builds | ✅ v0.6.0 published |
+| Versioned image release: tests → GHCR push (`0.9.4`, `0.9`, `latest`, `sha-*`) → GitHub release with Compose files, checksums and Linux/Android/Windows client builds | Tag-driven workflow; verify publication for the selected tag |
 | Flutter client analyze/tests, Linux/Android/Windows release builds | ✅ clean analyze, Dart FFI tests pass; Linux/Windows bundles run, Android APK (~77 MB, debug-signed) embeds all ABIs |
 
 Run it yourself:
@@ -255,7 +576,7 @@ rename. See [client details](CLIENTS.md#rename-in-the-file-browser-51-partial).
   serialized automatic/manual checks and prompts, in-app update settings
   (repository + optional read-only token for private releases), SHA-256
   verification, detached in-place replacement and restart.
-- Tag-driven release pipeline: tests, GHCR image `0.6.0`/`0.6`/`latest`/`sha-*`,
+- Tag-driven release pipeline: tests, GHCR image `0.9.4`/`0.9`/`latest`/`sha-*`,
   and a GitHub release with the image-only Compose files, `SHA256SUMS.txt` and
   Linux, Android and Windows client builds. The image is amd64 only; arm64 needs
   native runners or a longer QEMU build. iOS requires macOS/Xcode and is not
@@ -354,8 +675,8 @@ rename. See [client details](CLIENTS.md#rename-in-the-file-browser-51-partial).
   are not whole-sweep totals; running-job crash recovery/leases remain absent.
 - `nntdrive_storage::store::platform_totals` casts aggregate sums to `bigint` because
   PostgreSQL returns `numeric`; keep casts when editing.
-- Full-text search is impossible server-side (names/content encrypted); the
-  client must cache a decrypted index.
+- Server-side plaintext search is intentionally absent. The client has a
+  session-memory name/metadata index; content/full-text extraction is absent.
 - Orphan cleanup is explicit per account with a grace period (minimum one day)
   and 1000-chunk batches. Complete references protect all retained versions;
   legacy/incomplete accounts refuse collection. Rust SDK backfill decrypts each
@@ -385,6 +706,9 @@ rename. See [client details](CLIENTS.md#rename-in-the-file-browser-51-partial).
   remains tracked in NNT-103 (#28); implementation is not proof of that acceptance.
   Issue #49 adds awaited helper launch and Windows preflight acknowledgement,
   step diagnostics, backup/hash-verified replacement and attempted rollback.
+  The hidden Windows PowerShell child uses an encoded command, closes unused
+  input and retains startup stderr/PID diagnostics; the real-parent executable fixture covers replacement
+  and a probe restart, not a packaged Flutter window or installed-release upgrade.
   Native helper fixtures are distinct from the still-required installed-build
   update/restart/version/data and locked-file manual checks.
 - Android and iOS have no in-app updater; Android requires the system package

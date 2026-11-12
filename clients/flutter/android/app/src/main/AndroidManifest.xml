@@ -1,10 +1,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Needed in release builds too; the debug manifest only adds it for tooling. -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Explicitly granted for real-path sync; modern Android uses Settings,
+         while legacy runtime permissions stop at Android 10 (API 29). -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="29"/>
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29"/>
     <application
         android:label="nntdrive"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
+        android:requestLegacyExternalStorage="true"
         android:usesCleartextTraffic="true">
         <activity
             android:name=".MainActivity"

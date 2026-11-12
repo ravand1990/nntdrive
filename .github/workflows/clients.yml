@@ -115,6 +115,8 @@ jobs:
             build --locked --release -p nntdrive-ffi
       - run: flutter pub get
       - run: flutter build apk --release
+      - name: Test Android storage path confinement
+        run: cd android && ./gradlew app:testDebugUnitTest --no-daemon
       - name: Verify APK native ABI coverage
         working-directory: .
         run: python3 scripts/check-android-apk.py clients/flutter/build/app/outputs/flutter-apk/app-release.apk

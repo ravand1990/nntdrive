@@ -9,9 +9,8 @@ Files and names are encrypted on your device before being stored on **Usenet**
 
 ### 1. What you need
 
-- A Linux x64 server with Docker Engine and the Docker Compose plugin, plus
-  `curl` and `openssl` for the commands below. No source checkout or Rust/Flutter
-  installation is needed.
+- A Linux x64 server (or WSL) with Docker Engine, Docker Compose **2.24+**,
+  `curl` and Python 3. No source checkout or Rust/Flutter installation is needed.
 - A Usenet subscription that allows **posting and reading**, with its server
   address, port, username and password. A download-only plan is not enough.
 - A Windows x64, Linux x64 or Android device. iOS is not available yet.
@@ -22,27 +21,31 @@ Files and names are encrypted on your device before being stored on **Usenet**
 ### 2. Download and configure the server
 
 In a terminal on the server, create an empty installation directory and download
-these files from [release v0.6.0](https://github.com/ravand1990/nntdrive/releases/tag/v0.6.0):
+the deployment files from the latest release. The generate-once launcher ships
+with releases from v0.7.0; do not mix it with older Compose files.
 
 ```bash
 mkdir nntdrive && cd nntdrive
-curl -fLO https://github.com/ravand1990/nntdrive/releases/download/v0.6.0/docker-compose.release.yml
-curl -fL https://github.com/ravand1990/nntdrive/releases/download/v0.6.0/env.release.example -o .env
+curl -fLO https://github.com/ravand1990/nntdrive/releases/download/v0.9.4/docker-compose.release.yml
+curl -fLO https://github.com/ravand1990/nntdrive/releases/download/v0.9.4/nntdrive-compose.py
+curl -fL https://github.com/ravand1990/nntdrive/releases/download/v0.9.4/env.release.example -o .env
 chmod 600 .env
-openssl rand -hex 24     # generate a database password
-openssl rand -base64 32  # generate the server's persistent secret
 ```
 
-Edit `.env`: paste the first generated value into `POSTGRES_PASSWORD` and the
-second into `NNTDRIVE_SECRET_KEY`; set `NNTDRIVE_VERSION=0.6.0`. Keep the other
-settings, including `NNTDRIVE_HOST_BIND=127.0.0.1`. Keep this file private and
-retain the same secret across restarts. If image downloads require a login,
-follow the [image access instructions](deploy/README-IMAGES.md#1-download-the-deployment-files).
+Edit `.env` to pin `NNTDRIVE_VERSION=0.9.4`; leave both secret fields empty.
+Keep `NNTDRIVE_HOST_BIND=127.0.0.1`. An absent or completely empty `.env` also
+works (using the image's `latest` tag). The launcher generates missing secrets
+once in `.nntdrive-secrets/secrets.json` (0600, directory 0700), not in `.env`.
+Back up this directory privately and keep it across restarts, `down`/`up` and
+container recreation. Never delete it to retry a failed start. Explicit nonempty
+secret values are adopted on first boot; later conflicting values are refused,
+not rotated. If image downloads require a login, follow the
+[image access instructions](deploy/README-IMAGES.md#1-download-the-deployment-files).
 
 ### 3. Start and check the server
 
 ```bash
-docker compose --env-file .env -f docker-compose.release.yml up -d
+python3 nntdrive-compose.py up
 curl -fsS http://127.0.0.1:8080/healthz
 ```
 
@@ -59,13 +62,13 @@ strong password of at least eight characters and save it in your password manage
 ```bash
 IFS= read -r -s -p 'New account password: ' NNTDRIVE_PASSWORD; printf '\n'
 export NNTDRIVE_PASSWORD
-docker compose --env-file .env -f docker-compose.release.yml exec -e NNTDRIVE_PASSWORD backend \
+python3 nntdrive-compose.py exec -e NNTDRIVE_PASSWORD backend \
   nntdrive bootstrap --email you@example.com \
   --keyfile-out /var/lib/nntdrive/bootstrap/admin.keyfile.json \
   --recovery-out /var/lib/nntdrive/bootstrap/admin.recovery.json
 unset NNTDRIVE_PASSWORD
 mkdir -m 700 recovery
-docker compose --env-file .env -f docker-compose.release.yml cp backend:/var/lib/nntdrive/bootstrap/. ./recovery/
+python3 nntdrive-compose.py cp backend:/var/lib/nntdrive/bootstrap/. ./recovery/
 chmod 600 recovery/*
 ```
 
@@ -84,14 +87,14 @@ uploading important data. [Account setup alternatives](docs/OPERATIONS.md#first-
 ### 5. Install and connect the client
 
 Download your client and `SHA256SUMS.txt` from the same
-[release page](https://github.com/ravand1990/nntdrive/releases/tag/v0.6.0).
+[release page](https://github.com/ravand1990/nntdrive/releases/tag/v0.9.4).
 Compare the download's SHA-256 checksum (its file fingerprint) with the matching
 entry in that file before opening it (`sha256sum FILE` on Linux or
 `Get-FileHash FILE -Algorithm SHA256` in PowerShell).
 
 | Device | Release file | Install / open |
 |---|---|---|
-| Windows x64 | `nntdrive-<version>-windows-x64.zip` (for example `nntdrive-0.6.0-windows-x64.zip`) | Extract the **whole** ZIP to a writable folder; run `nntdrive.exe` inside it. Keep the DLLs and other files alongside it. There is no signed installer yet. |
+| Windows x64 | `nntdrive-<version>-windows-x64.zip` (for example `nntdrive-0.9.4-windows-x64.zip`) | Extract the **whole** ZIP to a writable folder; run `nntdrive.exe` inside it. Keep the DLLs and other files alongside it. There is no signed installer yet. |
 | Linux x64 | `nntdrive-<version>-linux-x64.tar.gz` | Extract the **whole** archive; run `./nntdrive` from the extracted bundle. Keep its `lib` and `data` directories. |
 | Android | `nntdrive-<version>-android.apk` | Open the APK and allow installation from that source in Android settings. This test build is debug-signed, not a Play Store release. |
 

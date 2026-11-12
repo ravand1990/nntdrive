@@ -3,7 +3,7 @@ name: nntdrive
 # Image-only deployment. No repository checkout or local build required.
 #
 #   docker login ghcr.io           # only while the package is private
-#   docker compose --env-file .env -f docker-compose.release.yml up -d
+#   python3 nntdrive-compose.py up  # generate-once secrets; Linux/WSL
 #
 # Images are published by .github/workflows/release.yml as
 # ghcr.io/<owner>/nntdrive-backend:<version> plus :latest.
@@ -33,9 +33,11 @@ services:
       postgres:
         condition: service_healthy
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
-      DATABASE_URL: postgres://nntdrive:${POSTGRES_PASSWORD}@postgres:5432/nntdrive
+      NNTDRIVE_SECRET_KEY: ${NNTDRIVE_SECRET_KEY:?use python3 nntdrive-compose.py up}
+      DATABASE_URL: ${NNTDRIVE_DATABASE_URL:-postgres://nntdrive:${POSTGRES_PASSWORD}@postgres:5432/nntdrive}
       NNTDRIVE_BIND: 0.0.0.0:8080
       NNTDRIVE_CACHE_DIR: /var/lib/nntdrive/cache
     volumes:
@@ -55,7 +57,7 @@ services:
       - caddy
       - reverse-proxy
       - --from
-      - "${NNTDRIVE_DOMAIN:?set NNTDRIVE_DOMAIN}"
+      - "${NNTDRIVE_DOMAIN:-localhost}"
       - --to
       - backend:8080
     ports:

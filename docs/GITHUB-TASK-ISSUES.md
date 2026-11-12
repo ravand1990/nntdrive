@@ -22,8 +22,8 @@ IDs or rely on cached options.
 
 | Project Status | Meaning |
 |---|---|
-| Backlog | Not authorized to start; coordinator triage pending |
-| Ready | Authorized and eligible when dependencies are satisfied |
+| Backlog | Not currently scheduled; any worker may promote it when actionable |
+| Ready | Eligible when dependencies are satisfied; any worker may set this |
 | In Progress | Claimed implementation |
 | Ready For Review | Implementation/evidence handed off; not accepted |
 | Blocked | Explicit dependency, decision or environment blocker |
@@ -60,25 +60,30 @@ worker's ref. It must also handle failed claims, abandoned claims, resumption,
 and existing task branches without destructive cleanup. A scheduler must not
 start using the new protocol until **all** competing workers have migrated.
 
-The issue form deliberately offers only `Backlog` for new issues. The
-coordinator grants `Ready` explicitly after triage; an issue submitter's
-self-selected queue value is not authorization. Form options are a workflow
+The issue form deliberately offers only `Backlog` for new issues. Workers may
+promote them to `Ready` whenever the issue is actionable; an issue submitter's
+self-selected queue value is not acceptance. Form options are a workflow
 guard, not an access-control boundary; permissions must enforce policy.
 
 ## Backlog is not Ready
 
-Project Status is the sole queue and phase tracker. `Backlog` means not authorized
-to start; `Ready` means authorized and eligible once dependencies are satisfied.
-There is no separate readiness field in issue text, and status labels must not be
-recreated. Workers promote `Backlog` to `Ready` only through the end-of-run
-backlog review defined in `AGENTS.md` §3.
+Project Status is the sole queue and phase tracker. The status names are
+descriptive, not permission gates: workers may move issues between any statuses
+(`Backlog`, `Ready`, `In Progress`, `Ready For Review`, `Blocked`, `Done`) when
+the new status reflects the issue's real state. Read back every change and record
+the reason in the handoff. There is no separate readiness field in issue text, and
+status labels must not be recreated.
 
-At the end of a run, after task reconciliation, review every `Backlog` item and
-promote it when it is open, unowned, has no active claim/branch/PR, has no
-unresolved blocker, has one priority label and a bounded first slice, and its
-dependencies are closed/integrated or unnecessary for that slice. Read back each
-Status. Do not promote blocked items, unsliced epics, or issues created in the
-same run, and list promotions with a one-line reason in the handoff.
+`Backlog` means not currently scheduled; `Ready` means eligible; `In Progress`,
+`Ready For Review` and `Blocked` describe active work; `Done` requires the
+completion rules. A closed issue is never eligible for selection. Status changes
+never substitute for implementation, acceptance or evidence.
+
+Workers may promote `Backlog` items to `Ready` at any time, and should sweep the
+`Backlog` at the end of a run so the next worker has work. Prefer items that are
+open, unowned, have no active claim/branch/PR, have no unresolved blocker, have
+one priority label and a bounded first slice, and have dependencies
+closed/integrated or unnecessary for that slice. Read back each Status.
 
 `In Progress`, `Ready For Review`, `Blocked` and `Done` are not eligible for new
 selection regardless of history. A closed issue is never eligible. `Ready` still
@@ -237,9 +242,34 @@ Before each merge:
   on the PR/issue. Preserve Project phase authority and priority labels.
 
 This permission does not authorize deployment, destructive operations, branch
-or tag deletion, force pushes, or direct-main code changes. The present scoped
-policy/documentation update on main is separately user-authorized. A merged PR
+or tag deletion, force pushes, or direct-main code changes outside the routine
+release commit in the post-merge release procedure. A merged PR
 is not issue acceptance and does not automatically satisfy dependency acceptance.
+
+## Post-merge release (standing authorization)
+
+The user authorizes a release after every merge to `main`, delegated to the
+worker that merged the PR or, if it stopped, to the next run before new work.
+
+Procedure:
+
+1. Confirm the merge commit is on remote `main` and its required checks are green.
+2. Skip a release only when the merged diff touches no shipped code, deployment
+   file or client asset (pure docs/governance/CI); record that decision.
+3. Choose the bump: patch by default; minor when the merge adds a user-visible
+   feature or changes compatibility; never major automatically.
+4. Update `CHANGELOG.md` with the new `## [X.Y.Z] - YYYY-MM-DD` heading and
+   `### Features`/`### Bug fixes`; bump Rust and Flutter versions (build +1);
+   update README, image guide, operations and status version references.
+5. Commit as `release: X.Y.Z`, tag `vX.Y.Z`, push `main`, then the tag.
+6. Run the Release workflow; verify the image tags, assets, checksums and notes.
+7. If the release fails, do not delete or move the tag; fix forward with the
+   next patch and record the exact failure. Never claim a published release
+   that the workflow did not produce.
+
+One release per merge. If several PRs are merged between runs, cut one release
+covering them instead of one per PR. Do not release from a dirty tree or a red
+`main`.
 
 ## Mandatory post-merge completion transaction
 

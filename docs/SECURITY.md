@@ -92,8 +92,11 @@ No algorithm is implemented by this project.
 
 ## Deployment hardening checklist
 
-- Set a strong `POSTGRES_PASSWORD` and `NNTDRIVE_SECRET_KEY`; keep `deploy/.env`
-  out of version control (already ignored).
+- For fresh image-only installs, use the generate-once launcher and protect/back
+  up `.nntdrive-secrets/`. For other installs, explicitly set a strong
+  `POSTGRES_PASSWORD` and stable `NNTDRIVE_SECRET_KEY`; keep `.env` private.
+  Do not delete/replace saved secrets to retry startup or automatically rotate
+  keys over existing data. See [deployment threat model](../deploy/README-IMAGES.md#threat-model-and-interrupted-initialization).
 - Keep `NNTDRIVE_ALLOW_REGISTRATION=false` unless onboarding.
 - Put the backend behind a TLS reverse proxy; expose only 80/443.
 - Restrict the admin UI to trusted networks or add SSO/reverse-proxy auth.

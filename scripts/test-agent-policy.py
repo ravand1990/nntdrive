@@ -35,14 +35,22 @@ class AgentPolicyTests(unittest.TestCase):
         self.assertNotIn("and the user approves", text)
         self.assertNotIn("use the **same github pat**", text)
 
-    def test_end_of_run_backlog_promotion(self):
+    def test_worker_status_authority(self):
         text = self.read("AGENTS.md").lower()
-        self.assertIn("end-of-run backlog review", text)
-        self.assertIn("promote to `ready`", text)
-        self.assertIn("created in the current", text)
+        self.assertIn("workers may move issues between any statuses", text)
+        self.assertIn("status changes never substitute", text)
+        self.assertIn("end-of-run backlog sweep", text)
         other = self.read("docs/GITHUB-TASK-ISSUES.md").lower()
-        self.assertIn("end of a run", other)
-        self.assertIn("promote", other)
+        self.assertIn("not permission gates", other)
+        self.assertIn("requires the completion rules", " ".join(other.split()))
+
+    def test_release_after_merge(self):
+        text = self.read("AGENTS.md").lower()
+        self.assertIn("release after every merge", text)
+        self.assertIn("never retag", text)
+        other = self.read("docs/GITHUB-TASK-ISSUES.md").lower()
+        self.assertIn("post-merge release", other)
+        self.assertIn("one release per merge", other)
 
     def test_agent_comment_format(self):
         text = self.read("AGENTS.md")

@@ -7,7 +7,7 @@
 Images are published to GHCR with semantic version tags:
 
 ```
-ghcr.io/ravand1990/nntdrive-backend:0.6.0
+ghcr.io/ravand1990/nntdrive-backend:0.9.4
 ghcr.io/ravand1990/nntdrive-backend:latest
 ghcr.io/ravand1990/nntdrive-backend:edge
 ```
@@ -19,15 +19,29 @@ use a token with `read:packages`:
 echo "$GHCR_TOKEN" | docker login ghcr.io -u ravand1990 --password-stdin
 ```
 
-Download `docker-compose.release.yml`, `env.release.example` and
-`README-IMAGES.md` from the GitHub release, configure `.env` (database password,
-`NNTDRIVE_SECRET_KEY`, pinned `NNTDRIVE_VERSION`), then:
+Download matching `docker-compose.release.yml`, `nntdrive-compose.py` and
+`env.release.example` files. Releases from v0.7.0 include the launcher; use the
+deployment files from the matching release (see the root README). Optionally copy the
+example to `.env` and pin `NNTDRIVE_VERSION=0.9.4`; both secret fields can stay
+empty. On Linux/WSL with Python 3 and Compose 2.24+:
 
 ```bash
-docker compose --env-file .env -f docker-compose.release.yml up -d
+python3 nntdrive-compose.py up
 ```
 
-This needs no repository checkout. Full details: `deploy/README-IMAGES.md`.
+The launcher securely generates missing deployment credentials once, independently
+honors either explicit override, and saves them in `.nntdrive-secrets/secrets.json`
+(0600, containing directory 0700). `.env` is never rewritten. Use this same launcher
+for `restart`, `down`, `up`, `--force-recreate up`, `pull`, `exec` and `cp` so the
+saved values reach both PostgreSQL and the backend. Back up the secret directory
+privately off-host; losing it with existing volumes causes a deliberate refusal,
+not fresh credentials. Corrupt/insecure files or changed explicit credentials also
+fail closed without overwrite. Restore the original backup, never delete state
+to retry. There is no rotation or automatic migration of existing deployments.
+
+This needs no repository checkout or local image build. The backend image remains
+unchanged. Concurrency, interruption, project-identity and host-admin limits:
+[image deployment guide](../deploy/README-IMAGES.md#persistence-and-fail-closed-recovery).
 
 ### Docker Compose from source (recommended for development)
 
@@ -53,7 +67,7 @@ Tagging `vX.Y.Z` runs `.github/workflows/release.yml`:
    image-only Compose files attached.
 
 Before tagging, choose a new version; **0.4.2 below is an example, not a
-published release**. Do not reuse the existing v0.6.0 tag.
+published release**. Do not reuse the v0.8.10 release tag.
 
 ```bash
 # 1. bump the workspace version in Cargo.toml and client version in
@@ -108,7 +122,7 @@ WantedBy=multi-user.target
 | `NNTDRIVE_CACHE_DIR` | `./cache` | Encrypted shard cache |
 | `NNTDRIVE_CACHE_LIMIT_BYTES` | 10 GiB | Cache eviction threshold (LRU) |
 | `NNTDRIVE_ALLOW_REGISTRATION` | `false` | Open sign-up (first account is admin) |
-| `NNTDRIVE_SECRET_KEY` | random per boot | Base64 32 bytes; encrypts provider passwords |
+| `NNTDRIVE_SECRET_KEY` | image launcher: generated once and persisted; bare process: random per boot | Base64 32 bytes; encrypts provider passwords; supply a stable value outside the launcher |
 | `NNTDRIVE_DEFAULT_QUOTA_BYTES` | unlimited | Initial per-user quota |
 | `NNTDRIVE_NNTP_PROVIDERS` | — | JSON array of providers (seed if DB has none) |
 | `NNTDRIVE_STORAGE_CONFIG` | defaults | JSON `StorageConfig` (redundancy, shard size, chunk sizes, verification) |
