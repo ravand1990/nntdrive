@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Bug fixes
+
+- Account-search refresh indexes structured sync-error paths once per frozen root rather than rescanning complete reports for every result (#80 partial). Exact-path matching, conflict/transfer precedence and refresh-only semantics are unchanged. Index construction yields and observes cancellation within reports and large path lists; whole-report copying and conflict inspection remain caller-side, and installed performance remains unverified (#93).
+
 ## [0.9.0] - 2026-11-12
 
 ### Features
