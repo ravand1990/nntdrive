@@ -125,9 +125,23 @@ Status inspection reuses the filesystem confinement checks with authenticated RA
 ancestry and canonical collision validation for all siblings and ancestors; it
 does not re-list HTTP folders per result. Inspection runs inside the owned build
 before atomic publication, with cooperative yields and cancellation checks. Only
-immutable scalar status enums reach query workers. Filesystem inspection and native
-canonical-name comparisons remain caller-side; this is not an atomic filesystem
-snapshot or an installed-device performance claim. A failed inspection preserves
+immutable scalar status enums reach query workers. Portable-name validation,
+native NFC/lowercase/NFC comparison and sibling ambiguity grouping run in one
+refresh-owned worker. It consumes sequential batches of at most 128 scalar
+ID/parent/name records, keeping the growing counts private rather than repeatedly
+copying them across isolates. The complete snapshot (at most 100k nodes) is
+considered before returning safe IDs: late invalid siblings poison their entire
+parent group, canonical aliases poison both spellings, and caller-side ancestry
+walks reject descendants of either. No native bridge object or cancellation
+closure crosses isolates; the comparison ABI needs no unlocked-key handle.
+Close stops further batches and rejects late evidence; the worker is finished and
+awaited even on producer failure/cancellation before session drain completes.
+Whole-report JSON freezing, error-index immutable-set construction, name-record
+copying, ancestry walks, conflict scans, filesystem inspection and final snapshot
+merging remain caller-side. The worker retains bounded whole-snapshot grouping
+state until completion; spawn/message/final safe-ID transfer costs remain. This
+is not full cold-build isolation, an atomic filesystem snapshot or an
+installed-device performance claim. A failed inspection preserves
 the entire previous snapshot, including its possibly stale status observations.
 
 Not complete #80: verified journal-equality result badges,

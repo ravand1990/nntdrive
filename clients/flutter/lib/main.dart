@@ -1031,7 +1031,6 @@ class _FilesPageState extends State<FilesPage> {
           if (!_sync.loaded) return {};
           return inspectSearchStatuses(snapshot: snapshot,
             folders: _sync.folders,
-            comparisonKey: NativeBridge.instance.nameCollisionKey,
             cancelled: cancelled);
         }),
     ));

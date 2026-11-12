@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'account_search.dart';
-import 'file_rename.dart';
+import 'search_status_names.dart';
 import 'local_availability.dart';
 import 'sync_controller.dart';
 
@@ -11,7 +11,8 @@ import 'sync_controller.dart';
 Future<Map<String, SearchStatus>> inspectSearchStatuses({
   required Map<String, SearchEntry> snapshot,
   required List<SyncFolderConfig> folders,
-  required String Function(String) comparisonKey,
+  Future<Set<String>> Function(Stream<List<SearchStatusName>>) groupNames =
+      groupSearchStatusNames,
   required bool Function() cancelled,
 }) async {
   void check() {
@@ -40,26 +41,24 @@ Future<Map<String, SearchStatus>> inspectSearchStatuses({
     // Inspection must use the indexed snapshot, not retain or rescan reports.
     root.lastReport = null;
   }
-  final keys = <String, String>{};
-  final counts = <String?, Map<String, int>>{};
-  final invalidParents = <String?>{};
-  var processed = 0;
-  for (final entry in snapshot.values) {
-    check();
-    final parent = entry.file.parentId;
-    if (renameValidationError(entry.name) != null) {
-      invalidParents.add(parent);
-    } else {
-      final key = comparisonKey(entry.name);
-      keys[entry.file.id] = key;
-      final siblings = counts.putIfAbsent(parent, () => {});
-      siblings[key] = (siblings[key] ?? 0) + 1;
-    }
-    if (++processed % 128 == 0) {
-      await Future<void>.delayed(Duration.zero);
+  Stream<List<SearchStatusName>> nameBatches() async* {
+    var batch = <SearchStatusName>[];
+    for (final entry in snapshot.values) {
       check();
+      batch.add(
+          (id: entry.file.id, parent: entry.file.parentId, name: entry.name));
+      if (batch.length == AccountSearch.decryptBatchSize) {
+        yield batch;
+        check();
+        batch = <SearchStatusName>[];
+      }
     }
+    if (batch.isNotEmpty) yield batch;
   }
+
+  final safeIds = await groupNames(nameBatches());
+  check();
+  var processed = 0;
   final result = <String, SearchStatus>{};
   for (final entry in snapshot.values) {
     check();
@@ -68,9 +67,7 @@ Future<Map<String, SearchStatus>> inspectSearchStatuses({
     var safe = true;
     while (node != null) {
       final parent = node.file.parentId;
-      if (ancestry.length > 256 ||
-          invalidParents.contains(parent) ||
-          counts[parent]?[keys[node.file.id]] != 1) {
+      if (ancestry.length > 256 || !safeIds.contains(node.file.id)) {
         safe = false;
         break;
       }
