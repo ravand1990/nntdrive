@@ -15,6 +15,67 @@ SearchEntry entry(String id, String? parent, String name, {bool dir = false}) =>
     SearchEntry(RemoteFile(id, parent, name, dir, 42, true, 1, null), name);
 
 void main() {
+  test('report indexes remain refresh-frozen and isolated per covering root',
+      () async {
+    final temporary = await Directory.systemTemp.createTemp('search-errors-');
+    final root = Directory(await temporary.resolveSymbolicLinks());
+    addTearDown(() => root.delete(recursive: true));
+    final first = SyncFolderConfig(
+        id: 'a',
+        name: 'a',
+        localPath: root.path,
+        remoteRootId: 'a',
+        lastReport: {
+          'item_errors': [
+            for (var i = 0; i < 300; i++)
+              {
+                'operation': 'download',
+                'code': 'io',
+                'paths': ['other-$i']
+              },
+            {
+              'operation': 'move',
+              'code': 'io',
+              'paths': ['Failed.pdf', 'Old.pdf']
+            },
+          ]
+        });
+    final second = SyncFolderConfig(
+        id: 'b', name: 'b', localPath: root.path, remoteRootId: 'b');
+    final tree = <String, SearchEntry>{
+      'a': entry('a', null, 'A', dir: true),
+      'b': entry('b', null, 'B', dir: true),
+      'failed': entry('failed', 'a', 'Failed.pdf'),
+      'old': entry('old', 'a', 'Old.pdf'),
+      'clean': entry('clean', 'a', 'Clean.pdf'),
+      'other-root': entry('other-root', 'b', 'Failed.pdf'),
+    };
+    final inspection = inspectSearchStatuses(
+        snapshot: tree,
+        folders: [first, second],
+        comparisonKey: (name) => name.toLowerCase(),
+        cancelled: () => false);
+    // The report indexing yields before it reaches the matching entry. Mutating
+    // live controller evidence must neither erase nor introduce refresh errors.
+    await Future<void>.delayed(Duration.zero);
+    first.lastReport!.clear();
+    first.running = true;
+    second.lastReport = {
+      'item_errors': [
+        {
+          'operation': 'download',
+          'code': 'io',
+          'paths': ['Failed.pdf']
+        }
+      ]
+    };
+    final statuses = await inspection;
+    expect(statuses['failed'], SearchStatus.error);
+    expect(statuses['old'], SearchStatus.error);
+    expect(statuses['clean'], SearchStatus.cloudOnly);
+    expect(statuses['other-root'], SearchStatus.cloudOnly);
+  });
+
   test(
       'all status filters combine off-isolate and history distinguishes status',
       () async {

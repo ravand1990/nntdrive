@@ -6,12 +6,55 @@ import 'api.dart';
 import 'file_rename.dart';
 import 'sync_controller.dart';
 
+/// Refresh-owned exact-path evidence, never raw diagnostic text. Walk each
+/// report once, yielding even when one error contains a large paths list.
+Future<Set<String>> indexSyncErrorPaths(Iterable<dynamic> errors,
+    {required bool Function() cancelled}) async {
+  void check() {
+    if (cancelled()) throw StateError('Inspection cancelled');
+  }
+
+  check();
+  final paths = <String>{};
+  var processed = 0;
+  bool shouldYield() {
+    check();
+    return ++processed % 128 == 0;
+  }
+
+  for (final error in errors) {
+    if (shouldYield()) {
+      await Future<void>.delayed(Duration.zero);
+      check();
+    }
+    if (error is! Map ||
+        error['operation'] is! String ||
+        error['code'] is! String ||
+        error['paths'] is! List) {
+      continue;
+    }
+    for (final path in error['paths'] as List) {
+      if (shouldYield()) {
+        await Future<void>.delayed(Duration.zero);
+        check();
+      }
+      if (path is String) paths.add(path);
+    }
+  }
+  check();
+  return Set.unmodifiable(paths);
+}
+
 /// Presence is not a journal/content-integrity claim. Folder-wide activity and
 /// errors are explicitly identified as such rather than attributed to one file.
 class LocalAvailability {
   const LocalAvailability(this.label, this.explanation,
-      {this.path, this.folder, this.relativePath, this.isDirectory = false,
-      this.verifiedAtRefresh = false});
+      {this.path,
+      this.folder,
+      this.relativePath,
+      this.isDirectory = false,
+      this.verifiedAtRefresh = false,
+      this.failedPaths});
 
   final String label;
   final String explanation;
@@ -21,9 +64,16 @@ class LocalAvailability {
   final bool isDirectory;
   final bool verifiedAtRefresh;
 
+  /// Null keeps the live browser behavior; an empty set means an indexed
+  /// refresh positively observed no structured errors. Never fall back then.
+  final Set<String>? failedPaths;
+
   LocalAvailability withoutEquality() => LocalAvailability(label, explanation,
-      path: path, folder: folder, relativePath: relativePath,
-      isDirectory: isDirectory);
+      path: path,
+      folder: folder,
+      relativePath: relativePath,
+      isDirectory: isDirectory,
+      failedPaths: failedPaths);
 
   static const unknown = LocalAvailability(
       'Unknown', 'Cannot safely map this entry to a configured sync folder.');
@@ -36,13 +86,20 @@ class LocalAvailability {
       folder?.progress?['complete'] == false;
 
   bool get _failed {
-    if (folder?.running != false || relativePath == null || label == 'Conflict') {
+    if (folder?.running != false ||
+        relativePath == null ||
+        label == 'Conflict') {
       return false;
     }
+    if (failedPaths != null) return failedPaths!.contains(relativePath);
     final errors = folder?.lastReport?['item_errors'];
-    return errors is List && errors.any((error) =>
-        error is Map && error['operation'] is String && error['code'] is String &&
-        error['paths'] is List && (error['paths'] as List).contains(relativePath));
+    return errors is List &&
+        errors.any((error) =>
+            error is Map &&
+            error['operation'] is String &&
+            error['code'] is String &&
+            error['paths'] is List &&
+            (error['paths'] as List).contains(relativePath));
   }
 
   String get displayLabel => _transferring ? 'Syncing' : _failed ? 'Error' : label;
@@ -64,10 +121,12 @@ Future<LocalAvailability> inspectLocalAvailability({
   required List<SyncFolderConfig> folders,
   required bool isDir,
   bool Function()? cancelled,
+  Map<SyncFolderConfig, Set<String>>? failedPathsByFolder,
 }) async {
   void check() {
     if (cancelled?.call() == true) throw StateError('Inspection cancelled');
   }
+
   check();
   final matches = <(SyncFolderConfig, int)>[];
   for (final folder in folders) {
@@ -80,6 +139,7 @@ Future<LocalAvailability> inspectLocalAvailability({
   }
   if (matches.length != 1) return LocalAvailability.unknown;
   final (folder, index) = matches.single;
+  final failedPaths = failedPathsByFolder?[folder];
   final components = ancestry.skip(index + 1).map((node) => node.name).toList();
   if (components.isEmpty && !isDir) return LocalAvailability.unknown;
   if (components.any((name) => renameValidationError(name) != null)) {
@@ -112,11 +172,15 @@ Future<LocalAvailability> inspectLocalAvailability({
         // ancestor must not let cached conflict discovery bypass confinement.
         final conflict = !isDir && i == components.length - 1 &&
             await _hasSafeConflictCopy(folder, relative, current);
-        return LocalAvailability(conflict ? 'Conflict' : 'Cloud only',
+        return LocalAvailability(
+            conflict ? 'Conflict' : 'Cloud only',
             conflict
                 ? 'The original is missing, but a preserved conflict copy exists in its containing directory; review revalidates the pair.'
                 : 'No copy exists at the expected synced path.',
-            folder: folder, relativePath: relative, isDirectory: isDir);
+            folder: folder,
+            relativePath: relative,
+            isDirectory: isDir,
+            failedPaths: failedPaths);
       }
       final expected = i == components.length - 1 && !isDir
           ? FileSystemEntityType.file
@@ -135,11 +199,16 @@ Future<LocalAvailability> inspectLocalAvailability({
     if (!isDir && !conflict) {
       conflict = await _hasSafeConflictCopy(folder, relative, current);
     }
-    return LocalAvailability(conflict ? 'Conflict' : 'Local',
+    return LocalAvailability(
+        conflict ? 'Conflict' : 'Local',
         conflict
             ? 'A preserved conflict copy was discovered for this file; review revalidates the pair.'
             : 'Present at the expected synced path; content equality is not verified.',
-        path: current, folder: folder, relativePath: relative, isDirectory: isDir);
+        path: current,
+        folder: folder,
+        relativePath: relative,
+        isDirectory: isDir,
+        failedPaths: failedPaths);
   } on FileSystemException {
     return const LocalAvailability(
         'Error', 'The expected synced path could not be inspected.');

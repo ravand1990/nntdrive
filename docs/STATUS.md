@@ -31,9 +31,19 @@ verification with `bash scripts/dev-check.sh flutter` passed **143 tests / four
 Windows-only skips**, clean analysis and a real release FFI build; five wrapper
 and ten agent-policy contracts passed. Independent review found no blocker;
 test roots were canonicalized and privileged symlink assertions are omitted on Windows.
-Installed-platform acceptance remains unverified. Copying complete controller
-reports and scanning their exact-path errors per inspected entry can become costly
-on error-heavy accounts; this caller-side scaling risk remains part of #93.
+The subsequent error-path increment indexes each frozen root's structured errors
+once into an immutable exact-path set, then discards that copied report before
+per-entry inspection. Empty sets do not fall back to legacy scanning; browser
+consumers without an index retain their existing dynamic report behavior. Index
+construction yields/checks cancellation within reports and individual path lists.
+Canonical `dev-check.sh flutter` passed **147 tests / four Windows-only skips**,
+clean analysis and the release FFI build. A deterministic 500-entry fixture reads
+zero report elements during status lookup; temporarily restoring legacy scanning
+read 250,500 elements and failed, as did real-filesystem search status regressions.
+Root isolation, frozen evidence, malformed errors, exact matching and precedence
+are covered. Installed-platform acceptance remains unverified. Whole-report JSON
+copying, immutable-set construction, conflict scanning and filesystem inspection
+remain caller-side scaling risks under #93; this is not an installed timing claim.
 
 Typing coalesces for 40 ms before dispatching a query worker (previously 180 ms,
 which alone exceeded the ~150 ms keystroke-to-results target). Immediate query

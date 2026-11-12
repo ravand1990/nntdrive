@@ -30,6 +30,16 @@ Future<Map<String, SearchStatus>> inspectSearchStatuses({
     copy.progress = folder.progress == null ? null : Map.of(folder.progress!);
     return copy;
   }).toList();
+  final failedPathsByFolder = <SyncFolderConfig, Set<String>>{};
+  for (final root in roots) {
+    final errors = root.lastReport?['item_errors'];
+    failedPathsByFolder[root] = await indexSyncErrorPaths(
+        errors is List ? errors : const [],
+        cancelled: cancelled);
+    check();
+    // Inspection must use the indexed snapshot, not retain or rescan reports.
+    root.lastReport = null;
+  }
   final keys = <String, String>{};
   final counts = <String?, Map<String, int>>{};
   final invalidParents = <String?>{};
@@ -77,6 +87,7 @@ Future<Map<String, SearchStatus>> inspectSearchStatuses({
       final availability = await inspectLocalAvailability(
           ancestry: ancestry.reversed.toList(),
           folders: roots,
+          failedPathsByFolder: failedPathsByFolder,
           isDir: entry.file.isDir,
           cancelled: cancelled);
       check();
