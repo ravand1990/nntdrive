@@ -6,6 +6,8 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-11-12
+
 ### Bug fixes
 
 - Account-search status refresh validates portable names, computes native canonical comparison keys and groups ambiguous siblings off the UI isolate (#80 partial). One refresh-owned worker consumes sequential batches of at most 128 scalar name records and finalizes safety only after the complete snapshot, preserving cross-batch collisions and ancestor rejection. Close discards late evidence and drain awaits worker completion. Report freezing/error-set construction, ancestry walks, conflict/filesystem inspection and final snapshot merging remain caller-side; this is not full cold-build isolation or installed performance acceptance (#93).
