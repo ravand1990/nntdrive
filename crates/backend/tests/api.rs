@@ -2072,13 +2072,24 @@ async fn bootstrap_root(
     kind: &str,
     name: &str,
 ) -> (StatusCode, Value) {
+    let node_id = Uuid::new_v4();
+    bootstrap_root_at(state, token, kind, node_id, &sealed(name)).await
+}
+
+async fn bootstrap_root_at(
+    state: &AppState,
+    token: &str,
+    kind: &str,
+    node_id: Uuid,
+    name_enc: &str,
+) -> (StatusCode, Value) {
     call(
         state,
         req(
             "POST",
             "/api/v1/roots",
             Some(token),
-            Some(json!({ "kind": kind, "name_enc": sealed(name) })),
+            Some(json!({ "kind": kind, "node_id": node_id, "name_enc": name_enc })),
         ),
     )
     .await
@@ -2184,6 +2195,113 @@ async fn global_root_bootstraps_once_and_is_tenant_scoped() {
     // The endpoint requires authentication.
     let (status, _) = call(&env.state, req("GET", "/api/v1/roots", None, None)).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+/// Root names are sealed with the node ID as authenticated data, so the client
+/// must choose the node ID before sealing. A real envelope for the chosen ID has
+/// to stay openable after bootstrap, and a second client has to converge on that
+/// same openable envelope instead of creating its own unopenable root.
+#[tokio::test]
+async fn client_sealed_root_names_stay_openable() {
+    use base64::Engine;
+    let Some(env) = env().await else { return };
+    let alice = register(&env.state, "roots-sealed@example.com").await;
+    let engine = base64::engine::general_purpose::STANDARD;
+
+    let global_node = Uuid::new_v4();
+    let global_sealed = alice
+        .master
+        .seal_name(global_node, "Global")
+        .unwrap()
+        .to_bytes();
+    let (status, created) = bootstrap_root_at(
+        &env.state,
+        &alice.token,
+        "global",
+        global_node,
+        &base64_key(&global_sealed),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+
+    // The listed envelope must open with the node ID the server reports, which
+    // is what every later client uses; a server-chosen ID would fail here.
+    let listed = listed_roots(&env.state, &alice.token).await;
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    let listed_node = Uuid::parse_str(listed[0]["node_id"].as_str().unwrap()).unwrap();
+    let stored = engine
+        .decode(listed[0]["name_enc"].as_str().unwrap())
+        .unwrap();
+    let envelope = nntdrive_crypto::Envelope::from_bytes(&stored).unwrap();
+    assert_eq!(
+        alice.master.open_name(listed_node, &envelope).unwrap(),
+        "Global"
+    );
+    assert_eq!(listed_node, global_node);
+
+    // A second device seals its own candidate first, then converges on the
+    // original root; the returned envelope is still openable there.
+    let (_device_two, token_two) = login_with_device(
+        &env.state,
+        "roots-sealed@example.com",
+        &alice.verifier,
+        "second",
+    )
+    .await;
+    let candidate = Uuid::new_v4();
+    let candidate_sealed = alice
+        .master
+        .seal_name(candidate, "Global candidate")
+        .unwrap()
+        .to_bytes();
+    let (status, converged) = bootstrap_root_at(
+        &env.state,
+        &token_two,
+        "global",
+        candidate,
+        &base64_key(&candidate_sealed),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{converged}");
+    assert_eq!(
+        converged["node_id"].as_str().unwrap(),
+        global_node.to_string()
+    );
+    assert_eq!(converged["name_enc"], listed[0]["name_enc"]);
+    let stored = engine
+        .decode(converged["name_enc"].as_str().unwrap())
+        .unwrap();
+    let envelope = nntdrive_crypto::Envelope::from_bytes(&stored).unwrap();
+    assert_eq!(
+        alice.master.open_name(global_node, &envelope).unwrap(),
+        "Global"
+    );
+
+    // A missing or nil node ID is refused instead of storing an unopenable name.
+    for node in [json!(null), json!(Uuid::nil())] {
+        let (status, body) = call(
+            &env.state,
+            req(
+                "POST",
+                "/api/v1/roots",
+                Some(&alice.token),
+                Some(json!({ "kind": "device", "node_id": node, "name_enc": sealed("x") })),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    }
+
+    // Reusing an existing node ID is a conflict, not a second root.
+    let (status, body) = bootstrap_root_at(
+        &env.state,
+        &alice.token,
+        "device",
+        global_node,
+        &sealed("duplicate"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
 }
 
 #[tokio::test]

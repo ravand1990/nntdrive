@@ -258,13 +258,15 @@ Content extraction is out of scope. See [client search](CLIENTS.md#account-wide-
 
 The backend can now hold one fixed **Global** root per account and one root per
 registered device. `POST /roots` creates them idempotently from a client-sealed
-name (`kind` is `global` or `device`), and the second caller — another client,
-a retry or a reinstall — receives the existing node ID and envelope instead of a
-duplicate. A device root requires a device-bound token and is keyed to the
-registered device ID. `GET /roots` lists Global first, then every device root
-with its device name, platform, last-seen time and a `stale` flag; a root stays
-listed after its device goes offline or is revoked. Fixed roots refuse rename,
-move and delete with `409`; favourite changes still work.
+name (`kind` is `global` or `device`); the client also sends the `node_id` it
+generated, because the sealed name is bound to that ID and a server-chosen one
+would be unopenable. The second caller — another client, a retry or a reinstall —
+receives the existing node ID and envelope instead of a duplicate. A device root
+requires a device-bound token and is keyed to the registered device ID. `GET
+/roots` lists Global first, then every device root with its device name,
+platform, last-seen time and a `stale` flag; a root stays listed after its device
+goes offline or is revoked. Fixed roots refuse rename, move and delete with
+`409`; favourite changes still work.
 
 Both kinds are ordinary root-level folder nodes, so the existing browser and file
 APIs already list and browse them, but **no client bootstraps, auto-subscribes or
