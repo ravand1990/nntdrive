@@ -14,8 +14,9 @@ close cancels publication and session drain still awaits inspection completion.
 Local is disk presence, not journal equality. Exact-path transfer/last-attempt
 error evidence retains conflict precedence. Status is explicitly observed at
 refresh, not invalidated/live-updated on sync start, and can become stale after
-sync/configuration/disk changes. Caller-side filesystem inspection/canonical
-comparisons yield cooperatively; no installed-device timing is claimed.
+sync/configuration/disk changes. Filesystem inspection and ancestry walks remain
+caller-side with cooperative yields; canonical comparison/grouping now run on a
+worker as described below. No installed-device timing is claimed.
 
 The refresh-time status increment passed the focused canonical-wrapper run of
 `search_status_test.dart`, `search_page_test.dart`, `account_search_test.dart`,
@@ -44,6 +45,32 @@ Root isolation, frozen evidence, malformed errors, exact matching and precedence
 are covered. Installed-platform acceptance remains unverified. Whole-report JSON
 copying, immutable-set construction, conflict scanning and filesystem inspection
 remain caller-side scaling risks under #93; this is not an installed timing claim.
+
+The status-name follow-up moves portable-name validation, native canonical
+comparison and complete sibling ambiguity grouping to one refresh-owned worker.
+Sequential batches contain at most 128 scalar ID/parent/name records; the worker
+retains counts privately, avoiding repeated copies of the growing snapshot.
+Only after all batches does it return safe IDs (bounded by the 100k-node account
+cap). Later invalid siblings invalidate the entire parent group; canonical
+aliases across batches invalidate both spellings and their descendants through
+unchanged caller-side ancestry checks. No bridge object, controller, cancellation
+closure or key material is transferred; the comparison ABI needs no key handle.
+The producer stops on cancellation, finishes the worker in a finally block and
+awaits completion before session drain; late evidence cannot publish.
+Canonical `dev-check.sh flutter-exec` formatting/analysis and the seven-file
+search/native/listing/page/local-availability run passed **78 tests** using the
+real warm native library. Deterministic worker-location, 128/128/1 ordering,
+cross-batch alias/invalid-parent ancestry, failed-refresh retention and suspended
+worker close/drain tests pass. The real Session/native/loopback fixture rejects
+a late root alias across the 128 boundary, then restores local presence after
+its removal, without plaintext requests. Replacing only this worker's
+`Isolate.run` with `Future.sync` failed the location test; it was restored before
+the green run. This is isolation/semantic evidence, not a speedup measurement.
+Whole-report freezing, error-index immutable-set construction, scalar input
+copying, ancestry walks, conflict/filesystem inspection and final snapshot merging
+remain caller-side; worker spawn/message/final set-transfer costs and retained
+whole-snapshot grouping RAM remain. Full cold-build isolation and installed-device
+performance are not established.
 
 Typing coalesces for 40 ms before dispatching a query worker (previously 180 ms,
 which alone exceeded the ~150 ms keystroke-to-results target). Immediate query
