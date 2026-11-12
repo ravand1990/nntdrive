@@ -4,6 +4,13 @@
 //! root exactly like any other folder; the server stores it opaquely and keeps
 //! only fixed node IDs. Bootstrap is idempotent so two clients (or two fresh
 //! installs) converge on the same root instead of creating duplicates.
+//!
+//! Names are sealed with the node ID as authenticated data, so the caller must
+//! choose the node ID before it can seal the name: a server-chosen ID would
+//! leave the stored envelope unopenable by every client. The client therefore
+//! generates the node UUID, seals the name for it, and the server only records
+//! that ID. A repeat call for an existing root returns the original ID and
+//! envelope, which every client can open with the account name key.
 
 use crate::api::{append_event, lock_namespace};
 use crate::auth::Auth;
@@ -31,6 +38,8 @@ const DEVICE_ONLINE_WINDOW_SECS: i64 = 86_400;
 #[derive(Deserialize)]
 pub struct BootstrapRoot {
     pub kind: String,
+    /// Client-generated node ID. Required: the sealed name is bound to it.
+    pub node_id: Option<Uuid>,
     pub name_enc: String,
 }
 
@@ -51,6 +60,17 @@ pub async fn bootstrap_root(
             "name_enc must be 1..{MAX_NAME_ENC} bytes"
         )));
     }
+    // The name envelope is bound to the node ID, so only the client can pick it.
+    let node_id = body.node_id.ok_or_else(|| {
+        ApiError::BadRequest(
+            "node_id is required: seal the root name for the node ID you create".into(),
+        )
+    })?;
+    if node_id.is_nil() {
+        return Err(ApiError::BadRequest(
+            "node_id must not be the nil UUID".into(),
+        ));
+    }
     let device_id = match body.kind.as_str() {
         "global" => None,
         "device" => Some(auth.device_id.ok_or_else(|| {
@@ -67,7 +87,6 @@ pub async fn bootstrap_root(
     }
 
     let root_id = Uuid::new_v4();
-    let node_id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO files (id, account_id, parent_id, name_enc, is_dir)
          VALUES ($1, $2, NULL, $3, TRUE)",
@@ -76,7 +95,13 @@ pub async fn bootstrap_root(
     .bind(auth.account_id)
     .bind(&name_enc)
     .execute(&mut *tx)
-    .await?;
+    .await
+    .map_err(|e| match e.as_database_error() {
+        Some(db) if db.is_unique_violation() => {
+            ApiError::Conflict("node_id already exists; generate a new one".into())
+        }
+        _ => ApiError::Db(e),
+    })?;
     sqlx::query(
         "INSERT INTO account_roots (id, account_id, kind, device_id, node_id)
          VALUES ($1, $2, $3, $4, $5)",

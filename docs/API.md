@@ -48,13 +48,19 @@ exists; afterwards registration is disabled unless `NNTDRIVE_ALLOW_REGISTRATION=
 
 | Method | Path | Body | Purpose |
 |---|---|---|---|
-| POST | `/roots` | `{kind:"global"\|"device", name_enc}` | create the account's Global root or the current device's root, once |
+| POST | `/roots` | `{kind:"global"\|"device", node_id, name_enc}` | create the account's Global root or the current device's root, once |
 | GET | `/roots` | — | every fixed root of the account, Global first |
 
 `/roots` is inert until a client bootstraps: the backend never seals a name, so
 the first unlocked client sends the sealed `name_enc` exactly like any other
 folder. Both kinds are ordinary top-level (root-level) folder nodes, so existing
 clients already list and browse them; the mapping row only marks them fixed.
+
+`node_id` is required and must be chosen by the client. Sealed names are bound to
+the node ID as authenticated data, so the server cannot pick the ID: it would
+store an envelope no client could open. The client generates the UUID, seals the
+name for it, and the server records that ID. A missing or nil `node_id` is `400`;
+an ID already used by any file is `409`.
 
 Bootstrap is idempotent. A repeat from the same client, a second client or a
 reinstall returns `200` with the original `node_id` and sealed `name_enc`, so all
