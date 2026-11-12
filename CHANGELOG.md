@@ -6,6 +6,12 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-11-12
+
+### Bug fixes
+
+- Upgrade the NZB XML parser to quick-xml 0.41.0 while retaining duplicate-attribute checks; malformed/duplicate attributes on parsed file, segment and metadata tags now return errors. Preserve entity-containing metadata and article IDs with the newer streaming API (#16 partial).
+
 ## [0.9.4] - 2026-11-12
 
 ### Bug fixes

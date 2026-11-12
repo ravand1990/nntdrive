@@ -320,6 +320,25 @@ against the original release Compose file. Live image pull, fresh backend/Postgr
 read-back and Docker `down`/`up`/recreation acceptance have not been exercised;
 filesystem tests are not a substitute for that live-stack acceptance.
 
+## NZB XML dependency follow-up (#16 partial, 2026-11-09)
+
+The workspace resolves quick-xml **0.41.0**, the patched range for
+[RUSTSEC-2026-0194](https://rustsec.org/advisories/RUSTSEC-2026-0194.html).
+Duplicate-attribute checking stays enabled; attribute iterator errors on parsed
+file, segment and metadata tags now propagate rather than being discarded.
+Entity-reference events are accumulated with adjacent text to preserve metadata,
+whitespace and normalized article IDs across the streaming API upgrade.
+Five public-API integration tests cover generated/foreign NZBs, numeric and
+predefined entities, multiple articles, malformed XML/attributes, and duplicate
+attributes including fixed lists of 1, 16 and 128 extra attributes. Against the
+original parser and quick-xml 0.37.5, both compatibility tests passed and three
+validation tests failed. These are not a timing reproduction of the advisory:
+the dependency remediation is established by the advisory and resolved version.
+Canonical `bash scripts/dev-check.sh rust` passed formatting, workspace check,
+Clippy (`-D warnings`) and **154 Rust tests**, with one existing ignored subprocess
+helper and no PostgreSQL skips (isolated PostgreSQL 16.15). This bounded increment
+is not full NZB schema validation, a performance benchmark or deployed acceptance.
+
 ## Live SSE authorization follow-up (#16 partial, 2026-11-09)
 
 Live event streams revalidate the original hashed credential and tenant/device

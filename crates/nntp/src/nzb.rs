@@ -97,14 +97,16 @@ impl Nzb {
 
     pub fn parse(xml: &str) -> Result<Self, String> {
         let mut reader = Reader::from_str(xml);
-        reader.config_mut().trim_text(true);
+        // Since quick-xml 0.38, entity references arrive as separate events.
+        // Trim completed values instead, so whitespace beside a reference survives.
+        reader.config_mut().trim_text(false);
         let mut nzb = Nzb {
             meta: Vec::new(),
             files: Vec::new(),
         };
         let mut current: Option<NzbFile> = None;
         let mut current_segment: Option<(u64, u32, String)> = None;
-        let mut meta_type: Option<String> = None;
+        let mut current_meta: Option<(String, String)> = None;
         let mut buf = Vec::new();
 
         loop {
@@ -120,7 +122,8 @@ impl Nzb {
                                 groups: Vec::new(),
                                 segments: Vec::new(),
                             };
-                            for a in e.attributes().flatten() {
+                            for a in e.attributes() {
+                                let a = a.map_err(|e| format!("malformed NZB attribute: {e}"))?;
                                 let val = String::from_utf8_lossy(&a.value).to_string();
                                 match a.key.as_ref() {
                                     b"poster" => file.poster = val,
@@ -134,7 +137,8 @@ impl Nzb {
                         b"segment" => {
                             let mut bytes = 0u64;
                             let mut number = 0u32;
-                            for a in e.attributes().flatten() {
+                            for a in e.attributes() {
+                                let a = a.map_err(|e| format!("malformed NZB attribute: {e}"))?;
                                 let val = String::from_utf8_lossy(&a.value).to_string();
                                 match a.key.as_ref() {
                                     b"bytes" => bytes = val.parse().unwrap_or(0),
@@ -145,9 +149,13 @@ impl Nzb {
                             current_segment = Some((bytes, number, String::new()));
                         }
                         b"meta" => {
-                            for a in e.attributes().flatten() {
+                            for a in e.attributes() {
+                                let a = a.map_err(|e| format!("malformed NZB attribute: {e}"))?;
                                 if a.key.as_ref() == b"type" {
-                                    meta_type = Some(String::from_utf8_lossy(&a.value).to_string());
+                                    current_meta = Some((
+                                        String::from_utf8_lossy(&a.value).to_string(),
+                                        String::new(),
+                                    ));
                                 }
                             }
                         }
@@ -155,17 +163,29 @@ impl Nzb {
                     }
                 }
                 Ok(Event::Text(t)) => {
-                    let raw = String::from_utf8_lossy(t.as_ref());
-                    let text = quick_xml::escape::unescape(&raw)
-                        .map_err(|e| e.to_string())?
-                        .to_string();
+                    let text = t.decode().map_err(|e| e.to_string())?;
                     if let Some(seg) = current_segment.as_mut() {
                         seg.2.push_str(&text);
-                    } else if let Some(kind) = meta_type.take() {
-                        nzb.meta.push((kind, text));
+                    } else if let Some((_, value)) = current_meta.as_mut() {
+                        value.push_str(&text);
+                    }
+                }
+                Ok(Event::GeneralRef(reference)) => {
+                    // Resolve only XML's predefined and numeric references, never a DTD.
+                    let raw = format!("&{};", reference.decode().map_err(|e| e.to_string())?);
+                    let text = quick_xml::escape::unescape(&raw).map_err(|e| e.to_string())?;
+                    if let Some(seg) = current_segment.as_mut() {
+                        seg.2.push_str(&text);
+                    } else if let Some((_, value)) = current_meta.as_mut() {
+                        value.push_str(&text);
                     }
                 }
                 Ok(Event::End(e)) => match e.name().as_ref() {
+                    b"meta" => {
+                        if let Some((kind, value)) = current_meta.take() {
+                            nzb.meta.push((kind, value.trim().to_string()));
+                        }
+                    }
                     b"segment" => {
                         if let (Some((bytes, number, id)), Some(file)) =
                             (current_segment.take(), current.as_mut())
