@@ -6,6 +6,7 @@ pub mod api;
 pub mod auth;
 pub mod error;
 pub mod jobs;
+pub mod roots;
 pub mod state;
 
 use axum::routing::{delete, get, patch, post};
@@ -30,6 +31,7 @@ pub fn app(state: state::AppState) -> Router {
         .route("/me", get(auth::me))
         .route("/devices", get(auth::list_devices))
         .route("/devices/{id}", delete(auth::revoke_device))
+        .route("/roots", get(roots::list_roots).post(roots::bootstrap_root))
         .route("/files", get(api::list_files).post(api::create_file))
         .route("/files/{id}", patch(api::patch_file))
         .route(
