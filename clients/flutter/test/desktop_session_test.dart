@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nntdrive/account_roots.dart';
 import 'package:nntdrive/api.dart';
 import 'package:nntdrive/desktop_instance.dart';
 import 'package:nntdrive/sync_controller.dart';
@@ -11,7 +12,8 @@ void main() {
   testWidgets('session controller announces completed load and stops equality admission', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final sync = SyncController(server: 'http://unused', token: '', handle: 0,
-      api: ApiClient(baseUrl: 'http://unused'));
+      api: ApiClient(baseUrl: 'http://unused'),
+      rootsLoader: () async => const AccountRootsResult([]));
     addTearDown(sync.dispose);
     final loadedNotifications = <bool>[];
     sync.addListener(() => loadedNotifications.add(sync.loaded));
@@ -34,7 +36,8 @@ void main() {
         server: 'http://127.0.0.1:1',
         token: '',
         handle: 0,
-        api: ApiClient(baseUrl: 'http://127.0.0.1:1'));
+        api: ApiClient(baseUrl: 'http://127.0.0.1:1'),
+        rootsLoader: () async => const AccountRootsResult([]));
     var notifications = 0;
     sync.addListener(() => notifications++);
     sync.start();

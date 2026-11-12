@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Features
+
+- Client account spaces (#95 partial): after unlock the app now bootstraps the fixed Global space and this device's space, sealing each root name for a client-chosen node ID, and lists every account space in a new **Account spaces** overview on the sync page. The overview names the device behind each space and marks offline or revoked devices instead of hiding them; failures are reported with a retry and never block folder sync. Global auto-mirroring, device auto-subscription, per-device sync destinations, cross-device move and existing-account migration remain unimplemented.
+
 ## [0.9.5] - 2026-11-12
 
 ### Bug fixes

@@ -83,6 +83,57 @@ class DeviceInfo {
       );
 }
 
+/// A fixed account root: the account-wide Global space or one device space.
+///
+/// The backend stores only the node ID and the sealed name; this model carries
+/// opaque ciphertext plus device presence metadata. `stale` is a coarse marker
+/// computed server-side from revocation or a device that has not signed in for
+/// a day; it is informative and never hides or deletes the root.
+class AccountRoot {
+  AccountRoot({
+    required this.rootId,
+    required this.kind,
+    required this.nodeId,
+    required this.nameEnc,
+    this.createdAt,
+    this.deviceId,
+    this.deviceName,
+    this.devicePlatform,
+    this.deviceLastSeenAt,
+    this.deviceRevoked = false,
+    this.stale = false,
+  });
+
+  final String rootId;
+  final String kind; // "global" or "device"
+  final String nodeId;
+  final String nameEnc; // sealed bytes, base64
+  final DateTime? createdAt;
+  final String? deviceId;
+  final String? deviceName;
+  final String? devicePlatform;
+  final DateTime? deviceLastSeenAt;
+  final bool deviceRevoked;
+  final bool stale;
+
+  bool get isGlobal => kind == 'global';
+
+  factory AccountRoot.fromJson(Map<String, dynamic> j) => AccountRoot(
+        rootId: j['root_id'] as String,
+        kind: j['kind'] as String? ?? '',
+        nodeId: j['node_id'] as String,
+        nameEnc: j['name_enc'] as String? ?? '',
+        createdAt: DateTime.tryParse(j['created_at'] as String? ?? ''),
+        deviceId: j['device_id'] as String?,
+        deviceName: j['device_name'] as String?,
+        devicePlatform: j['device_platform'] as String?,
+        deviceLastSeenAt:
+            DateTime.tryParse(j['device_last_seen_at'] as String? ?? ''),
+        deviceRevoked: j['device_revoked'] as bool? ?? false,
+        stale: j['stale'] as bool? ?? false,
+      );
+}
+
 class VersionInfo {
   VersionInfo(this.revisionId, this.parentRevision, this.size, this.createdAt);
   final String revisionId;
@@ -248,6 +299,30 @@ class ApiClient {
         'name_enc': nameEnc,
         'is_dir': isDir,
       });
+
+  /// Create the fixed Global or this-device root once.
+  ///
+  /// The client must choose `nodeId` before sealing the name, because the
+  /// sealed envelope is bound to that ID. A repeat call (retry, reinstall,
+  /// second client) returns the existing root instead of creating a duplicate.
+  Future<void> bootstrapRoot({
+    required String kind,
+    required String nodeId,
+    required String nameEnc,
+  }) =>
+      _send('POST', '/roots', body: {
+        'kind': kind,
+        'node_id': nodeId,
+        'name_enc': nameEnc,
+      });
+
+  /// Every fixed root of the account, Global first, including stale devices.
+  Future<List<AccountRoot>> listRoots() async {
+    final j = await _send('GET', '/roots');
+    return (j['roots'] as List? ?? [])
+        .map((r) => AccountRoot.fromJson(r as Map<String, dynamic>))
+        .toList();
+  }
 
   Future<void> deleteFile(String id) =>
       _send('PATCH', '/files/$id', body: {'deleted': true});
