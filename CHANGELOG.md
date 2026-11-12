@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Features
+
+- Backend fixed account roots (#95 partial): one Global root per account and one root per registered device, created idempotently by an unlocked client with a client-sealed name. All clients converge on the same node ID and envelope, device roots require a device-bound token, roots are listed with device/stale state, and rename/move/delete of a fixed root is refused with `409`. Client auto-subscription, per-device sync destinations and cross-device move are not implemented yet.
+
 ## [0.9.2] - 2026-11-12
 
 ### Bug fixes

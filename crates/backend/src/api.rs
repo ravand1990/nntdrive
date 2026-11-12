@@ -173,6 +173,7 @@ async fn move_impl(
     if !exists {
         return Err(ApiError::NotFound);
     }
+    ensure_not_fixed_root(&mut tx, auth.account_id, id).await?;
     if let Some(guard) = guard {
         if guard.siblings.len() > 4096 {
             return Err(ApiError::BadRequest(
@@ -277,7 +278,7 @@ async fn move_impl(
 
 // All namespace writers take the account row lock before reading or changing
 // names/membership. This also serializes older unconditional API writers.
-async fn lock_namespace(
+pub(crate) async fn lock_namespace(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     account_id: Uuid,
 ) -> ApiResult<()> {
@@ -293,6 +294,27 @@ async fn lock_namespace(
         .fetch_one(&mut **tx)
         .await?;
     Ok(())
+}
+
+/// Fixed account roots are structural: no client may rename, move or delete
+/// them through the normal file APIs. Favourite changes stay allowed.
+async fn ensure_not_fixed_root(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    account_id: Uuid,
+    id: Uuid,
+) -> ApiResult<()> {
+    let root: Option<String> =
+        sqlx::query_scalar("SELECT kind FROM account_roots WHERE account_id = $1 AND node_id = $2")
+            .bind(account_id)
+            .bind(id)
+            .fetch_optional(&mut **tx)
+            .await?;
+    match root {
+        Some(_) => Err(ApiError::Conflict(
+            "fixed account root cannot be renamed, moved or deleted".into(),
+        )),
+        None => Ok(()),
+    }
 }
 
 #[derive(Deserialize)]
@@ -346,6 +368,7 @@ pub async fn rename_file(
     .fetch_optional(&mut *tx)
     .await?;
     let parent = parent.ok_or(ApiError::NotFound)?;
+    ensure_not_fixed_root(&mut tx, auth.account_id, id).await?;
     if parent != body.parent_id {
         return Err(ApiError::Conflict(
             "folder changed; refresh and retry".into(),
@@ -426,6 +449,9 @@ pub async fn patch_file(
     .await?;
     if !exists {
         return Err(ApiError::NotFound);
+    }
+    if name_enc.is_some() || body.deleted == Some(true) {
+        ensure_not_fixed_root(&mut tx, auth.account_id, id).await?;
     }
     if let Some(name) = &name_enc {
         sqlx::query(
@@ -919,7 +945,7 @@ async fn fetch_events(
         .collect())
 }
 
-async fn append_event(
+pub(crate) async fn append_event(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     account_id: Uuid,
     device_id: Option<Uuid>,

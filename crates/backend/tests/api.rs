@@ -2060,3 +2060,373 @@ async fn in_flight_storage_upload_keeps_one_provider_snapshot() {
         .unwrap();
     assert!(second.store.article_count().await > 0);
 }
+
+// Fixed account roots (#95): one Global space and one root per device.
+fn sealed(name: &str) -> String {
+    base64_key(name.as_bytes())
+}
+
+async fn bootstrap_root(
+    state: &AppState,
+    token: &str,
+    kind: &str,
+    name: &str,
+) -> (StatusCode, Value) {
+    call(
+        state,
+        req(
+            "POST",
+            "/api/v1/roots",
+            Some(token),
+            Some(json!({ "kind": kind, "name_enc": sealed(name) })),
+        ),
+    )
+    .await
+}
+
+async fn listed_roots(state: &AppState, token: &str) -> Vec<Value> {
+    let (status, body) = call(state, req("GET", "/api/v1/roots", Some(token), None)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body["roots"].as_array().cloned().unwrap_or_default()
+}
+
+async fn login_with_device(
+    state: &AppState,
+    email: &str,
+    verifier: &str,
+    name: &str,
+) -> (Uuid, String) {
+    let device_id = Uuid::new_v4();
+    let device_key = nntdrive_crypto::DeviceKeypair::generate();
+    let (status, body) = call(
+        state,
+        req(
+            "POST",
+            "/api/v1/auth/login",
+            None,
+            Some(json!({
+                "email": email,
+                "verifier": verifier,
+                "device": {
+                    "id": device_id,
+                    "name": name,
+                    "platform": "linux",
+                    "public_key": base64_key(&device_key.public().0)
+                }
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    (device_id, body["token"].as_str().unwrap().to_string())
+}
+
+#[tokio::test]
+async fn global_root_bootstraps_once_and_is_tenant_scoped() {
+    let Some(env) = env().await else { return };
+    let alice = register(&env.state, "roots-global@example.com").await;
+    let (status, first) = bootstrap_root(&env.state, &alice.token, "global", "Global").await;
+    assert_eq!(status, StatusCode::CREATED, "{first}");
+    let node = first["node_id"].as_str().unwrap().to_string();
+
+    // A retry or another client converges on the same root and envelope.
+    let (status, again) = bootstrap_root(&env.state, &alice.token, "global", "Different").await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(again["node_id"], node);
+    assert_eq!(again["name_enc"], first["name_enc"]);
+
+    let listed = listed_roots(&env.state, &alice.token).await;
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    assert_eq!(listed[0]["kind"], "global");
+    assert_eq!(listed[0]["node_id"].as_str().unwrap(), node);
+    assert_eq!(listed[0]["name_enc"], sealed("Global"));
+    assert_eq!(listed[0]["stale"], false);
+    assert!(listed[0]["device_id"].is_null(), "{listed:?}");
+
+    // The root is an ordinary top-level folder for existing clients.
+    let (status, body) = call(
+        &env.state,
+        req("GET", "/api/v1/files", Some(&alice.token), None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let top = body["files"].as_array().unwrap();
+    assert_eq!(top.len(), 1, "{top:?}");
+    assert_eq!(top[0]["id"].as_str().unwrap(), node);
+    assert_eq!(top[0]["is_dir"], true);
+
+    // Only opaque ciphertext is stored, and exactly one root row exists.
+    let stored: Vec<u8> =
+        sqlx::query_scalar("SELECT name_enc FROM files WHERE account_id = $1 AND id = $2")
+            .bind(alice.account_id)
+            .bind(Uuid::parse_str(&node).unwrap())
+            .fetch_one(&env.state.pool)
+            .await
+            .unwrap();
+    assert_eq!(stored, "Global".as_bytes());
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM account_roots WHERE account_id = $1")
+        .bind(alice.account_id)
+        .fetch_one(&env.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
+
+    // Tenant isolation: another account starts empty and gets its own root.
+    let bob = register(&env.state, "roots-other@example.com").await;
+    assert!(listed_roots(&env.state, &bob.token).await.is_empty());
+    let (status, bob_root) = bootstrap_root(&env.state, &bob.token, "global", "Global").await;
+    assert_eq!(status, StatusCode::CREATED, "{bob_root}");
+    assert_ne!(bob_root["node_id"].as_str().unwrap(), node);
+    let visible = listed_roots(&env.state, &bob.token).await;
+    assert_eq!(visible.len(), 1);
+    assert_eq!(visible[0]["node_id"], bob_root["node_id"]);
+
+    // The endpoint requires authentication.
+    let (status, _) = call(&env.state, req("GET", "/api/v1/roots", None, None)).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn device_roots_are_per_device_and_need_a_device_token() {
+    let Some(env) = env().await else { return };
+    let alice = register(&env.state, "roots-device@example.com").await;
+    let (status, first) = bootstrap_root(&env.state, &alice.token, "device", "This device").await;
+    assert_eq!(status, StatusCode::CREATED, "{first}");
+    assert_eq!(
+        first["device_id"].as_str().unwrap(),
+        alice.device_id.to_string()
+    );
+    let (status, again) = bootstrap_root(&env.state, &alice.token, "device", "Again").await;
+    assert_eq!(status, StatusCode::OK, "{again}");
+    assert_eq!(again["node_id"], first["node_id"]);
+
+    // A token that is not bound to a device cannot own a device root.
+    let (status, body) = call(
+        &env.state,
+        req(
+            "POST",
+            "/api/v1/auth/login",
+            None,
+            Some(json!({
+                "email": "roots-device@example.com",
+                "verifier": alice.verifier
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let device_less = body["token"].as_str().unwrap().to_string();
+    let (status, body) = bootstrap_root(&env.state, &device_less, "device", "No device").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+    // A second device gets its own root; every client sees both.
+    let (device_two, token_two) = login_with_device(
+        &env.state,
+        "roots-device@example.com",
+        &alice.verifier,
+        "second",
+    )
+    .await;
+    let (status, second) = bootstrap_root(&env.state, &token_two, "device", "This device").await;
+    assert_eq!(status, StatusCode::CREATED, "{second}");
+    assert_eq!(
+        second["device_id"].as_str().unwrap(),
+        device_two.to_string()
+    );
+    assert_ne!(second["node_id"], first["node_id"]);
+
+    let listed = listed_roots(&env.state, &alice.token).await;
+    assert_eq!(listed.len(), 2, "{listed:?}");
+    assert!(
+        listed
+            .iter()
+            .all(|r| r["kind"] == "device" && r["stale"] == false),
+        "{listed:?}"
+    );
+    let names: Vec<String> = listed
+        .iter()
+        .map(|r| r["device_name"].as_str().unwrap_or_default().to_string())
+        .collect();
+    assert!(names.contains(&"test".to_string()), "{names:?}");
+    assert!(names.contains(&"second".to_string()), "{names:?}");
+
+    // Revoking a device keeps its root listed, marked stale.
+    let (status, body) = call(
+        &env.state,
+        req(
+            "DELETE",
+            &format!("/api/v1/devices/{device_two}"),
+            Some(&alice.token),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let listed = listed_roots(&env.state, &alice.token).await;
+    assert_eq!(listed.len(), 2, "{listed:?}");
+    assert!(
+        listed.iter().any(|r| {
+            r["device_id"].as_str() == Some(device_two.to_string().as_str())
+                && r["device_revoked"] == true
+                && r["stale"] == true
+        }),
+        "{listed:?}"
+    );
+}
+
+#[tokio::test]
+async fn fixed_roots_reject_rename_move_and_delete() {
+    let Some(env) = env().await else { return };
+    let alice = register(&env.state, "roots-fixed@example.com").await;
+    let (status, global) = bootstrap_root(&env.state, &alice.token, "global", "Global").await;
+    assert_eq!(status, StatusCode::CREATED, "{global}");
+    let root_node = global["node_id"].as_str().unwrap().to_string();
+
+    // An ordinary folder next to the root, used as a move destination.
+    let folder = Uuid::new_v4();
+    let (status, body) = call(
+        &env.state,
+        req(
+            "POST",
+            "/api/v1/files",
+            Some(&alice.token),
+            Some(json!({
+                "id": folder,
+                "parent_id": null,
+                "name_enc": sealed("Folder"),
+                "is_dir": true
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+
+    // Rename with the exact current root-level snapshot still refuses the root.
+    let siblings = vec![
+        json!({ "id": root_node, "name_enc": sealed("Global") }),
+        json!({ "id": folder, "name_enc": sealed("Folder") }),
+    ];
+    let (status, body) = call(
+        &env.state,
+        req(
+            "POST",
+            &format!("/api/v1/files/{root_node}/rename"),
+            Some(&alice.token),
+            Some(json!({
+                "parent_id": null,
+                "name_enc": sealed("Renamed"),
+                "siblings": siblings
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("fixed account root"),
+        "{body}"
+    );
+
+    // Moving into a folder and a no-op move are both refused.
+    for target in [json!(folder), Value::Null] {
+        let (status, body) = call(
+            &env.state,
+            req(
+                "POST",
+                &format!("/api/v1/files/{root_node}/move"),
+                Some(&alice.token),
+                Some(json!({ "parent_id": target })),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    }
+
+    // Delete and rename through the generic patch endpoint are refused too.
+    let (status, body) = call(
+        &env.state,
+        req(
+            "PATCH",
+            &format!("/api/v1/files/{root_node}"),
+            Some(&alice.token),
+            Some(json!({ "deleted": true })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    let (status, body) = call(
+        &env.state,
+        req(
+            "PATCH",
+            &format!("/api/v1/files/{root_node}"),
+            Some(&alice.token),
+            Some(json!({ "name_enc": sealed("Nope") })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+
+    // Favourite is not structural and stays allowed.
+    let (status, body) = call(
+        &env.state,
+        req(
+            "PATCH",
+            &format!("/api/v1/files/{root_node}"),
+            Some(&alice.token),
+            Some(json!({ "favorite": true })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // Ordinary folders keep the normal behaviour.
+    let (status, body) = call(
+        &env.state,
+        req(
+            "PATCH",
+            &format!("/api/v1/files/{folder}"),
+            Some(&alice.token),
+            Some(json!({ "deleted": true })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let root_alive: bool =
+        sqlx::query_scalar("SELECT NOT deleted FROM files WHERE account_id = $1 AND id = $2")
+            .bind(alice.account_id)
+            .bind(Uuid::parse_str(&root_node).unwrap())
+            .fetch_one(&env.state.pool)
+            .await
+            .unwrap();
+    assert!(root_alive);
+}
+
+#[tokio::test]
+async fn concurrent_bootstrap_creates_one_global_root() {
+    let Some(env) = env().await else { return };
+    let alice = register(&env.state, "roots-race@example.com").await;
+    let (a, b) = tokio::join!(
+        bootstrap_root(&env.state, &alice.token, "global", "First"),
+        bootstrap_root(&env.state, &alice.token, "global", "Second")
+    );
+    assert!(
+        a.0 == StatusCode::CREATED || a.0 == StatusCode::OK,
+        "{:?}",
+        a.1
+    );
+    assert!(
+        b.0 == StatusCode::CREATED || b.0 == StatusCode::OK,
+        "{:?}",
+        b.1
+    );
+    assert_eq!(a.1["node_id"], b.1["node_id"]);
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM account_roots WHERE account_id = $1")
+        .bind(alice.account_id)
+        .fetch_one(&env.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
+    assert_eq!(listed_roots(&env.state, &alice.token).await.len(), 1);
+}

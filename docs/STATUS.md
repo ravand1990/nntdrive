@@ -254,6 +254,25 @@ changed envelopes. Opening the page therefore always costs one full rebuild even
 when nothing changed.
 Content extraction is out of scope. See [client search](CLIENTS.md#account-wide-search-80-partial).
 
+## Account roots (#95 partial)
+
+The backend can now hold one fixed **Global** root per account and one root per
+registered device. `POST /roots` creates them idempotently from a client-sealed
+name (`kind` is `global` or `device`), and the second caller — another client,
+a retry or a reinstall — receives the existing node ID and envelope instead of a
+duplicate. A device root requires a device-bound token and is keyed to the
+registered device ID. `GET /roots` lists Global first, then every device root
+with its device name, platform, last-seen time and a `stale` flag; a root stays
+listed after its device goes offline or is revoked. Fixed roots refuse rename,
+move and delete with `409`; favourite changes still work.
+
+Both kinds are ordinary root-level folder nodes, so the existing browser and file
+APIs already list and browse them, but **no client bootstraps, auto-subscribes or
+auto-syncs them yet**. Per-device sync destinations, cross-device move, Global
+auto-mirroring, selective-sync interaction, offline move queuing, stale-device
+conflict handling, client/device list UI and the migration of existing accounts
+remain unimplemented. See [the root API](API.md#fixed-account-roots).
+
 ## Android folder access (#69, v0.7.0)
 
 Shared-folder sync now explains and explicitly requests Android all-files access

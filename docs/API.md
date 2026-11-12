@@ -44,6 +44,38 @@ success, legacy fallback or automatic retry for either protocol.
 never sent. The first registered account becomes administrator if no account
 exists; afterwards registration is disabled unless `NNTDRIVE_ALLOW_REGISTRATION=1`.
 
+## Fixed account roots
+
+| Method | Path | Body | Purpose |
+|---|---|---|---|
+| POST | `/roots` | `{kind:"global"\|"device", name_enc}` | create the account's Global root or the current device's root, once |
+| GET | `/roots` | — | every fixed root of the account, Global first |
+
+`/roots` is inert until a client bootstraps: the backend never seals a name, so
+the first unlocked client sends the sealed `name_enc` exactly like any other
+folder. Both kinds are ordinary top-level (root-level) folder nodes, so existing
+clients already list and browse them; the mapping row only marks them fixed.
+
+Bootstrap is idempotent. A repeat from the same client, a second client or a
+reinstall returns `200` with the original `node_id` and sealed `name_enc`, so all
+clients converge on one envelope; only the first caller gets `201`. A `device`
+root requires a device-bound token (`400` otherwise) and is keyed to the
+registered device ID, not a hostname. Concurrent callers serialize on the
+account namespace lock and one Global row / one root per device are enforced by
+partial unique indexes.
+
+Listed roots include `root_id`, `kind`, `node_id`, `name_enc`, `created_at`,
+`device_id`, `device_name`, `device_platform`, `device_last_seen_at`,
+`device_revoked` and `stale`. A device root stays listed after its device goes
+offline or is revoked; `stale` is a coarse marker computed from a revoked device
+or a `last_seen_at` older than 24 hours, which only advances on login/enrollment
+(not per request), and is informative only.
+
+Fixed roots cannot be renamed, moved or deleted through the normal file APIs:
+`POST /files/{id}/rename`, `POST /files/{id}/move` and
+`PATCH /files/{id}` with `name_enc` or `deleted` return `409`. Favourite changes
+remain allowed. Copying into a root is normal folder behaviour.
+
 ## Files
 
 | Method | Path | Purpose |
