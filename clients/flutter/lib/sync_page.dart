@@ -4,6 +4,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
+import 'account_roots.dart';
 import 'sync_controller.dart';
 import 'sync_widgets.dart';
 
@@ -458,7 +459,84 @@ class _SyncPageState extends State<SyncPage> {
               ],
             ),
           ],
+          const SizedBox(height: 12),
+          _accountSpacesCard(theme),
         ],
+      ),
+    );
+  }
+
+  /// Global and per-device spaces. They are ordinary folders in the encrypted
+  /// library, but the fixed roots add device presence that the file listing
+  /// does not carry: which device each space belongs to and whether it is
+  /// currently offline or revoked. Stale spaces stay usable.
+  Widget _accountSpacesCard(ThemeData theme) {
+    final roots = c.accountRoots;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.public, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text('Account spaces',
+                      style: theme.textTheme.titleMedium),
+                ),
+                if (c.rootsLoading)
+                  const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else
+                  IconButton(
+                    tooltip: 'Refresh account spaces',
+                    onPressed: () => c.refreshAccountRoots(),
+                    icon: const Icon(Icons.refresh),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'The Global space is visible on every device of this account. '
+              'Each device also has its own space; other devices can browse it on demand. '
+              'Both are ordinary folders in your encrypted library.',
+            ),
+            if (c.rootsError != null) ...[
+              const SizedBox(height: 8),
+              Text(c.rootsError!, style: theme.textTheme.bodySmall),
+              TextButton(
+                onPressed: () => c.refreshAccountRoots(),
+                child: const Text('Retry'),
+              ),
+            ],
+            if (c.rootsWarning != null) ...[
+              const SizedBox(height: 8),
+              Text(c.rootsWarning!, style: theme.textTheme.bodySmall),
+            ],
+            for (final root in roots)
+              ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(root.isGlobal
+                    ? Icons.public
+                    : Icons.devices_outlined),
+                title: Text(accountRootLabel(root)),
+                subtitle: Text(accountRootStatus(root)),
+              ),
+            if (roots.isEmpty && !c.rootsLoading && c.rootsError == null) ...[
+              const SizedBox(height: 6),
+              Text(
+                'No spaces yet. They are created automatically the next time this client signs in.',
+                style: theme.textTheme.bodySmall,
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

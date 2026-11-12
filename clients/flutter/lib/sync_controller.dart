@@ -13,6 +13,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
+import 'account_roots.dart';
 import 'api.dart';
 import 'native.dart';
 import 'session_operations.dart';
@@ -22,6 +23,9 @@ typedef SyncRunner = Future<Map<String, dynamic>> Function(
     int handle,
     Map<String, dynamic> request,
     void Function(Map<String, dynamic>) onProgress);
+
+/// Bootstraps and lists the fixed account roots. Injected for tests.
+typedef AccountRootsLoader = Future<AccountRootsResult> Function();
 
 Future<Map<String, dynamic>> _runNativeSync(
         int handle,
@@ -101,7 +105,13 @@ class SyncController extends ChangeNotifier {
     required this.api,
     this.storageAccess = const StorageAccess(),
     this.syncRunner = _runNativeSync,
-  });
+    AccountRootsLoader? rootsLoader,
+  }) : rootsLoader = rootsLoader ??
+            (() => AccountRootsService(
+                  api: api,
+                  sealName: (nodeId, name) =>
+                      NativeBridge.instance.sealName(handle, nodeId, name),
+                ).ensure());
 
   final String server;
   final String token;
@@ -109,8 +119,15 @@ class SyncController extends ChangeNotifier {
   final ApiClient api;
   final StorageAccess storageAccess;
   final SyncRunner syncRunner;
+  final AccountRootsLoader rootsLoader;
 
   final List<SyncFolderConfig> folders = [];
+
+  /// Fixed account roots: Global first, then every device space.
+  final List<AccountRoot> accountRoots = [];
+  String? rootsWarning;
+  String? rootsError;
+  bool rootsLoading = false;
   bool paused = false;
   bool syncing = false;
   String? lastStatus;
@@ -146,9 +163,54 @@ class SyncController extends ChangeNotifier {
       }
     }
     notifyListeners();
+    await _refreshAccountRoots();
     await scanConflicts();
     _loaded = true;
     notifyListeners();
+  }
+
+  /// Re-read (and, on first unlock, bootstrap) the fixed account spaces.
+  ///
+  /// Failures stay in [rootsError] and never block folder sync: the spaces are
+  /// an addition to the existing per-folder setup.
+  Future<void> refreshAccountRoots() {
+    if (_stopped) return Future.value();
+    return _operations.run(0, _refreshAccountRoots);
+  }
+
+  Future<void> _refreshAccountRoots() async {
+    rootsLoading = true;
+    rootsError = null;
+    notifyListeners();
+    try {
+      final result = await rootsLoader();
+      if (_stopped) return;
+      accountRoots
+        ..clear()
+        ..addAll(result.roots);
+      rootsWarning = result.warning;
+    } catch (e) {
+      rootsError = _rootsErrorText(e);
+    } finally {
+      rootsLoading = false;
+      if (!_stopped) notifyListeners();
+    }
+  }
+
+  String _rootsErrorText(Object e) {
+    if (e is ApiException) {
+      if (e.status == 0) {
+        return 'Could not reach the server to set up account spaces.';
+      }
+      if (e.status == 401 || e.status == 403) {
+        return 'Sign in again to set up account spaces.';
+      }
+      return 'Could not set up account spaces. Retry when the server is reachable.';
+    }
+    if (e is NativeException) {
+      return 'Unlock the app, then set up account spaces.';
+    }
+    return 'Could not set up account spaces. Retry.';
   }
 
   Future<void> _save() async {

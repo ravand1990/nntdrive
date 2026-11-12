@@ -269,11 +269,17 @@ goes offline or is revoked. Fixed roots refuse rename, move and delete with
 `409`; favourite changes still work.
 
 Both kinds are ordinary root-level folder nodes, so the existing browser and file
-APIs already list and browse them, but **no client bootstraps, auto-subscribes or
-auto-syncs them yet**. Per-device sync destinations, cross-device move, Global
-auto-mirroring, selective-sync interaction, offline move queuing, stale-device
-conflict handling, client/device list UI and the migration of existing accounts
-remain unimplemented. See [the root API](API.md#fixed-account-roots).
+APIs already list and browse them. A signed-in client now **bootstraps them on
+unlock**: it generates the node IDs, seals the root names for those IDs through
+the native core, converges on existing roots, and lists them in an **Account
+spaces** overview on the sync page. The overview marks each space as Global,
+this device or another device, and shows offline or revoked devices instead of
+hiding them; the spaces remain browsable folders in the library. Global is not
+auto-mirrored and device spaces are not auto-subscribed yet. Per-device sync
+destinations, cross-device move, Global auto-mirroring, selective-sync
+interaction, offline move queuing, stale-device conflict handling and the
+migration of existing accounts remain unimplemented. See
+[the root API](API.md#fixed-account-roots).
 
 ## Android folder access (#69, v0.7.0)
 
