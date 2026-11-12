@@ -6,6 +6,12 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-11-12
+
+### Bug fixes
+
+- Fixed account roots (#95 partial): `POST /roots` now requires the client-chosen `node_id` that the sealed root name is bound to. A server-chosen ID left every stored root envelope unopenable, because names are sealed with the node ID as authenticated data. A missing or nil `node_id` is refused with `400` and an already-used one with `409`; repeat and second-client bootstrap still converge on the original root and envelope, which every client can open. Client bootstrap, auto-subscription and the device list UI remain unimplemented.
+
 ## [0.9.3] - 2026-11-12
 
 ### Features
