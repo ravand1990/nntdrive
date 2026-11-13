@@ -6,6 +6,8 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-13
+
 ### Features
 
 - Space subscriptions (#95 partial): the account-wide **Global** space is now mirrored automatically on every device at `<documents>/NNTDrive/Global`, so a new client receives it without the user adding a folder; any other space can be subscribed on demand from the Account spaces overview and stopped again without deleting files. A removed Global subscription stays opted out across restarts, unsafe device names cannot escape the spaces directory, and a subscription error is reported without dropping the entry.
