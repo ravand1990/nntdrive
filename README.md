@@ -26,13 +26,13 @@ with releases from v0.7.0; do not mix it with older Compose files.
 
 ```bash
 mkdir nntdrive && cd nntdrive
-curl -fLO https://github.com/ravand1990/nntdrive/releases/download/v0.10.4/docker-compose.release.yml
-curl -fLO https://github.com/ravand1990/nntdrive/releases/download/v0.10.4/nntdrive-compose.py
-curl -fL https://github.com/ravand1990/nntdrive/releases/download/v0.10.4/env.release.example -o .env
+curl -fLO https://github.com/ravand1990/nntdrive/releases/download/v0.10.5/docker-compose.release.yml
+curl -fLO https://github.com/ravand1990/nntdrive/releases/download/v0.10.5/nntdrive-compose.py
+curl -fL https://github.com/ravand1990/nntdrive/releases/download/v0.10.5/env.release.example -o .env
 chmod 600 .env
 ```
 
-Edit `.env` to pin `NNTDRIVE_VERSION=0.10.4`; leave both secret fields empty.
+Edit `.env` to pin `NNTDRIVE_VERSION=0.10.5`; leave both secret fields empty.
 Keep `NNTDRIVE_HOST_BIND=127.0.0.1`. An absent or completely empty `.env` also
 works (using the image's `latest` tag). The launcher generates missing secrets
 once in `.nntdrive-secrets/secrets.json` (0600, directory 0700), not in `.env`.
@@ -87,14 +87,14 @@ uploading important data. [Account setup alternatives](docs/OPERATIONS.md#first-
 ### 5. Install and connect the client
 
 Download your client and `SHA256SUMS.txt` from the same
-[release page](https://github.com/ravand1990/nntdrive/releases/tag/v0.10.4).
+[release page](https://github.com/ravand1990/nntdrive/releases/tag/v0.10.5).
 Compare the download's SHA-256 checksum (its file fingerprint) with the matching
 entry in that file before opening it (`sha256sum FILE` on Linux or
 `Get-FileHash FILE -Algorithm SHA256` in PowerShell).
 
 | Device | Release file | Install / open |
 |---|---|---|
-| Windows x64 | `nntdrive-<version>-windows-x64.zip` (for example `nntdrive-0.10.4-windows-x64.zip`) | Extract the **whole** ZIP to a writable folder; run `nntdrive.exe` inside it. Keep the DLLs and other files alongside it. There is no signed installer yet. |
+| Windows x64 | `nntdrive-<version>-windows-x64.zip` (for example `nntdrive-0.10.5-windows-x64.zip`) | Extract the **whole** ZIP to a writable folder; run `nntdrive.exe` inside it. Keep the DLLs and other files alongside it. There is no signed installer yet. |
 | Linux x64 | `nntdrive-<version>-linux-x64.tar.gz` | Extract the **whole** archive; run `./nntdrive` from the extracted bundle. Keep its `lib` and `data` directories. |
 | Android | `nntdrive-<version>-android.apk` | Open the APK and allow installation from that source in Android settings. This test build is debug-signed, not a Play Store release. |
 
