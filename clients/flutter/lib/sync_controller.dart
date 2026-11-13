@@ -17,6 +17,7 @@ import 'account_roots.dart';
 import 'api.dart';
 import 'native.dart';
 import 'session_operations.dart';
+import 'space_subscription.dart';
 import 'storage_access.dart';
 
 typedef SyncRunner = Future<Map<String, dynamic>> Function(
@@ -153,6 +154,11 @@ class SyncController extends ChangeNotifier {
 
   static const _prefsKey = 'syncFolders';
   static const _pausedKey = 'syncPaused';
+  static const _spaceOptOutKey = 'spacesNotAutoSynced';
+
+  /// Spaces the user stopped syncing on this device. Global stays opted out
+  /// until it is subscribed again, so a restart cannot silently re-mirror it.
+  final Set<String> _spaceOptOut = {};
   static const autoSyncInterval = Duration(minutes: 5);
 
   Future<void> load() => _stopped ? Future.value() : _operations.run(0, _load);
@@ -160,6 +166,9 @@ class SyncController extends ChangeNotifier {
   Future<void> _load() async {
     final prefs = await SharedPreferences.getInstance();
     paused = prefs.getBool(_pausedKey) ?? false;
+    _spaceOptOut
+      ..clear()
+      ..addAll(prefs.getStringList(_spaceOptOutKey) ?? const []);
     final raw = prefs.getString(_prefsKey);
     if (raw != null) {
       try {
@@ -200,6 +209,11 @@ class SyncController extends ChangeNotifier {
         ..addAll(result.roots);
       deviceRootNodeId = result.deviceRootNodeId;
       rootsWarning = result.warning;
+      try {
+        await _autoSubscribeGlobal();
+      } catch (_) {
+        // A subscription problem must not hide the space list.
+      }
     } catch (e) {
       rootsError = _rootsErrorText(e);
     } finally {
@@ -224,11 +238,128 @@ class SyncController extends ChangeNotifier {
     return 'Could not set up account spaces. Retry.';
   }
 
+  /// The sync entry that already mirrors [nodeId] on this device, if any.
+  SyncFolderConfig? folderForSpace(String nodeId) {
+    for (final folder in folders) {
+      if (folder.remoteRootId == nodeId) return folder;
+    }
+    return null;
+  }
+
+  bool spaceSubscribed(AccountRoot root) => folderForSpace(root.nodeId) != null;
+
+  /// Mirror an account space on this device: create its local folder, record a
+  /// sync entry bound to the space node and run the existing sync engine.
+  Future<bool> subscribeSpace(AccountRoot root) {
+    if (_stopped) return Future.value(false);
+    return _operations.run(0, () => _subscribeSpace(root));
+  }
+
+  /// Stop mirroring an account space here. The remote space, its files and the
+  /// local journal are kept, so subscribing again does not re-download the tree.
+  Future<void> unsubscribeSpace(AccountRoot root) {
+    if (_stopped) return Future.value();
+    return _operations.run(0, () async {
+      final folder = folderForSpace(root.nodeId);
+      if (folder != null && (folder.running || syncing)) {
+        throw StateError('Wait for sync to finish');
+      }
+      _spaceOptOut.add(root.nodeId);
+      await _save();
+      if (folder != null) {
+        await _removeFolder(folder, deleteJournal: false);
+      }
+      lastStatus =
+          '${accountRootLabel(root)} is no longer synchronized on this device.';
+      notifyListeners();
+    });
+  }
+
+  /// Every client mirrors Global without the user adding a folder. A user who
+  /// stopped it stays opted out; nothing is created when roots are unavailable.
+  Future<void> _autoSubscribeGlobal() async {
+    if (_stopped) return;
+    AccountRoot? global;
+    for (final root in accountRoots) {
+      if (root.isGlobal) {
+        global = root;
+        break;
+      }
+    }
+    if (global == null) return;
+    if (folderForSpace(global.nodeId) != null) return;
+    if (_spaceOptOut.contains(global.nodeId)) return;
+    await _subscribeSpace(global);
+  }
+
+  Future<bool> _subscribeSpace(AccountRoot root) async {
+    if (_stopped) return false;
+    if (folderForSpace(root.nodeId) != null) return true;
+    final label = accountRootLabel(root);
+    final Directory spaces;
+    try {
+      final documents = await getApplicationDocumentsDirectory();
+      spaces = Directory(p.join(documents.path, spacesDirectoryName));
+      if (!spaces.existsSync()) spaces.createSync(recursive: true);
+    } catch (_) {
+      lastStatus =
+          'Could not create the local folder for $label on this device.';
+      notifyListeners();
+      return false;
+    }
+    final name = uniqueSpaceFolderName(
+        label, folders.map((folder) => p.basename(folder.localPath)));
+    String? path;
+    if (name != null) {
+      try {
+        path = spaceDirectoryPath(spaces.path, name);
+      } on ArgumentError {
+        path = null;
+      }
+    }
+    if (path == null) {
+      lastStatus = 'Could not name a local folder for $label.';
+      notifyListeners();
+      return false;
+    }
+    try {
+      await Directory(path).create(recursive: true);
+    } catch (_) {
+      lastStatus =
+          'Could not create the local folder for $label on this device.';
+      notifyListeners();
+      return false;
+    }
+    final config = SyncFolderConfig(
+      id: const Uuid().v4(),
+      name: label,
+      localPath: path,
+      remoteRootId: root.nodeId,
+    );
+    folders.add(config);
+    _spaceOptOut.remove(root.nodeId);
+    await _save();
+    final report = await syncFolder(config, silent: true);
+    if (_stopped) return true;
+    if (paused) {
+      lastStatus = 'Subscribed $label. Sync is paused.';
+    } else if (report == null) {
+      lastStatus = 'Subscribed $label. Select Sync all to start it.';
+    } else if (config.hasErrors) {
+      lastStatus = 'Subscribed $label, but sync needs attention.';
+    } else {
+      lastStatus = 'Subscribed $label and synchronized it.';
+    }
+    notifyListeners();
+    return true;
+  }
+
   Future<void> _save() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(
         _prefsKey, jsonEncode(folders.map((f) => f.toJson()).toList()));
     await prefs.setBool(_pausedKey, paused);
+    await prefs.setStringList(_spaceOptOutKey, _spaceOptOut.toList());
     notifyListeners();
   }
 

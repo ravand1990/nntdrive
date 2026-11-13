@@ -279,10 +279,18 @@ added on a device is now created **inside that device's own space** rather than
 at the account root, so two devices adding a folder with the same name no longer
 share one remote path; when the account has no usable device space (a token that
 cannot create one, or no current-device identity) the folder stays at the account
-root and the app says so. Global is not auto-mirrored and device spaces are not
-auto-subscribed yet. Cross-device move, Global auto-mirroring, selective-sync
-interaction, offline move queuing, stale-device conflict handling and the
-migration of existing accounts remain unimplemented. See
+root and the app says so. The **Global** space is now subscribed automatically on
+every client: it is mirrored into `<documents>/NNTDrive/Global`, so a new device
+receives the account-wide space without the user adding a folder, and the space
+is browsable as an ordinary folder in the library. Any other space can be
+subscribed on demand from the spaces overview ("Sync to this device"), which
+mirrors its tree into `<documents>/NNTDrive/<space name>`; "Stop syncing" removes
+only the sync relationship and keeps the files, the remote space and the local
+journal. Names are reduced to one safe directory component, so a device name
+cannot escape the spaces directory, and a removed Global subscription stays
+opted out across restarts until it is subscribed again. Cross-device move,
+selective-sync interaction, offline move queuing, stale-device conflict handling
+and the migration of existing accounts remain unimplemented. See
 [the root API](API.md#fixed-account-roots).
 
 ## Android folder access (#69, v0.7.0)
