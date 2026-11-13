@@ -20,7 +20,7 @@ echo "$GHCR_TOKEN" | docker login ghcr.io -u ravand1990 --password-stdin
 ## 2. Configure
 
 Optionally rename `env.release.example` to `.env`, protect it with `chmod 600
-.env`, and set `NNTDRIVE_VERSION=0.10.5`. Leave `POSTGRES_PASSWORD` and
+.env`, and set `NNTDRIVE_VERSION=0.10.6`. Leave `POSTGRES_PASSWORD` and
 `NNTDRIVE_SECRET_KEY` empty. An absent or completely empty `.env` also works,
 using the default image `latest`, loopback binding and port 8080. No manual
 OpenSSL command, host SDK or local image build is needed.

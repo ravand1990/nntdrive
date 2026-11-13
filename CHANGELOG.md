@@ -6,6 +6,8 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.10.6] - 2026-11-13
+
 ### Features
 
 - Cross-device conflict handling for offline spaces (#95 partial): while the library is inside a space whose device is offline or revoked, a banner now says that the space stays usable, that changes made there are kept, and that a device reconnecting with its own unsynced change to the same file keeps both versions as a conflict copy — nothing is overwritten. Revoked spaces say that nothing on that device syncs the files again. Nothing is blocked, deleted or moved automatically, and the notice never guesses: a private folder or an unreadable space list shows no banner. Existing-account migration remains unimplemented.
