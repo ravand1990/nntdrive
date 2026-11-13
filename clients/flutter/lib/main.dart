@@ -1125,6 +1125,11 @@ class _FilesPageState extends State<FilesPage> {
 
   String _name(RemoteFile f) => _names[f.id] ?? (f.isDir ? 'Encrypted folder' : 'Encrypted file');
 
+  /// The fixed account space this view is inside, or null at the account root.
+  /// The folder trail starts at a top-level entry, which is how a space is
+  /// entered, so its first element identifies the space when it is one.
+  String? get _sourceSpaceRootId => _path.isEmpty ? null : _path.first.id;
+
   bool _renaming = false;
 
   Future<void> _copy(RemoteFile file) async {
@@ -1133,7 +1138,8 @@ class _FilesPageState extends State<FilesPage> {
     try {
       final destination = await showDialog<MoveDestination>(context: context,
         builder: (_) => MoveDialog(api: _api, handle: widget.session.handle,
-          operations: widget.operations, source: file, copy: true));
+          operations: widget.operations, source: file, copy: true,
+          sourceSpaceRootId: _sourceSpaceRootId));
       if (destination == null || !mounted) return;
       final attempted = await showDialog<bool>(context: context,
         barrierDismissible: false,
@@ -1155,7 +1161,8 @@ class _FilesPageState extends State<FilesPage> {
     try {
       final destination = await showDialog<MoveDestination>(context: context,
         builder: (_) => MoveDialog(api: _api, handle: widget.session.handle,
-          operations: widget.operations, source: file));
+          operations: widget.operations, source: file,
+          sourceSpaceRootId: _sourceSpaceRootId));
       if (destination == null || !mounted) return;
       await widget.operations.run(widget.session.handle, () =>
         moveRemoteEntry(api: _api, handle: widget.session.handle,
