@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Features
+
+- Pre-spaces sync folder migration (#95 partial): a sync folder created before account spaces existed keeps its remote folder at the account root, and the spaces overview now lists those folders under **Folders outside your spaces**. Moving one into this device's space uses the same guarded move as the file manager, so the node, its sealed name, every version and its subtree stay unchanged and the local sync entry keeps working because it tracks the root node ID rather than a path. A destination name collision, a changed source or an unreachable server stops without overwriting or deleting anything, the destination is never Global or another device's space, and nothing moves automatically. Stale-device conflict handling remains unimplemented.
+
 ## [0.10.4] - 2026-11-13
 
 ### Features

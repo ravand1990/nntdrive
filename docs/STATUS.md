@@ -300,8 +300,14 @@ longer fully shared, and the folder card shows a "Not fully shared" marker.
 Excluded paths stop synchronizing in both directions, so the other devices no
 longer receive their changes and their remote changes are not applied here;
 nothing is deleted, and a device space or an unreadable space list is never
-assumed to be Global. Cross-device move, stale-device conflict handling and the
-migration of existing accounts remain unimplemented. See
+assumed to be Global. Cross-device moves are available from the move and copy
+picker, which labels each space and confirms a move out of Global. A sync folder
+created before account spaces existed still has its remote folder at the account
+root, so the spaces overview lists it under **Folders outside your spaces** and
+offers one explicit move into this device's space: the guarded move keeps the
+node, sealed name, versions and subtree, stops on a destination collision, and
+never targets Global or another device's space. Stale-device conflict handling
+remains unimplemented. See
 [the root API](API.md#fixed-account-roots).
 
 ## Android folder access (#69, v0.7.0)

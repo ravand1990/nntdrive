@@ -260,4 +260,64 @@ void main() {
     expect(find.textContaining('Global is shared with every device'),
         findsNothing);
   });
+
+  testWidgets('a synced folder outside every space is listed for migration',
+      (tester) async {
+    final sync = _controller();
+    addTearDown(sync.dispose);
+    sync.accountRoots.addAll([
+      AccountRoot(rootId: 'r1', kind: 'global', nodeId: 'n1', nameEnc: 'x'),
+      AccountRoot(
+          rootId: 'r2',
+          kind: 'device',
+          nodeId: 'n2',
+          nameEnc: 'x',
+          deviceName: 'Workstation'),
+    ]);
+    sync.deviceRootNodeId = 'n2';
+    sync.legacySpaceFolders = [
+      RemoteFile('legacy-node', null, 'ciphertext', true, 0, false, 1, null),
+    ];
+
+    await _pumpPage(tester, sync);
+
+    expect(find.text('Folders outside your spaces'), findsOneWidget);
+    // The sealed name cannot be opened without the native unlock in this test.
+    expect(find.text('Synced folder'), findsOneWidget);
+    expect(find.text('Move into device space'), findsOneWidget);
+    expect(find.text('Account root · outside every space'), findsOneWidget);
+  });
+
+  testWidgets('no migration section is shown when every folder has a space',
+      (tester) async {
+    final sync = _controller();
+    addTearDown(sync.dispose);
+    sync.accountRoots.addAll([
+      AccountRoot(rootId: 'r1', kind: 'global', nodeId: 'n1', nameEnc: 'x'),
+    ]);
+
+    await _pumpPage(tester, sync);
+
+    expect(find.text('Folders outside your spaces'), findsNothing);
+    expect(find.text('Move into device space'), findsNothing);
+  });
+
+  testWidgets('moving a folder without a device space says nothing changed',
+      (tester) async {
+    final sync = _controller();
+    addTearDown(sync.dispose);
+    sync.accountRoots.addAll([
+      AccountRoot(rootId: 'r1', kind: 'global', nodeId: 'n1', nameEnc: 'x'),
+    ]);
+    sync.legacySpaceFolders = [
+      RemoteFile('legacy-node', null, 'ciphertext', true, 0, false, 1, null),
+    ];
+
+    await _pumpPage(tester, sync);
+    await tester.tap(find.text('Move into device space'));
+    await tester.pumpAndSettle();
+
+    // No destination exists, so the action reports that it changed nothing.
+    expect(find.textContaining('no device space'), findsWidgets);
+  });
 }
