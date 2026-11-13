@@ -214,3 +214,32 @@ String? globalExclusionMarker({
   if (excluded.isEmpty || !remoteRootIsGlobal(remoteRootId, roots)) return null;
   return 'Not fully shared: ${_excludedFolders(excluded.length)}';
 }
+
+/// The fixed space whose node is [nodeId], or null when that node is not a
+/// fixed space of this account — a normal folder, or roots that are not loaded.
+AccountRoot? accountRootForNodeId(String nodeId, List<AccountRoot> roots) {
+  for (final root in roots) {
+    if (root.nodeId == nodeId) return root;
+  }
+  return null;
+}
+
+/// What writing into [root] means while its own device cannot sync it.
+///
+/// A stale or revoked device space stays browsable and writable from every
+/// client, but that device may still hold an unsynced local copy. The sync
+/// engine reconciles by revision, so a reconnecting device with its own change
+/// to the same file keeps both versions as a conflict copy; nothing is
+/// overwritten. Global and live device spaces need no notice, so this is null.
+String? staleSpaceWriteNotice(AccountRoot? root) {
+  if (root == null || root.isGlobal) return null;
+  final name = accountRootLabel(root);
+  if (root.deviceRevoked) {
+    return '$name was revoked, so nothing on it syncs these files again. '
+        'Changes you make here stay on the server.';
+  }
+  if (!root.stale) return null;
+  return '$name is offline. Changes you make here are kept, and if that device '
+      'has its own unsynced change to the same file, both versions are kept as '
+      'a conflict copy when it reconnects. Nothing is overwritten.';
+}

@@ -290,4 +290,55 @@ void main() {
           isNull);
     });
   });
+
+  group('stale-space write notice', () {
+    AccountRoot global() =>
+        AccountRoot(rootId: 'r1', kind: 'global', nodeId: 'n1', nameEnc: 'x');
+    AccountRoot device({String? name, bool stale = false, bool revoked = false}) =>
+        AccountRoot(
+            rootId: 'r2',
+            kind: 'device',
+            nodeId: 'n2',
+            nameEnc: 'x',
+            deviceId: 'd1',
+            deviceName: name,
+            stale: stale,
+            deviceRevoked: revoked);
+
+    test('only a fixed space is matched from a browser path', () {
+      final roots = [global(), device(name: 'Workstation', stale: true)];
+      expect(accountRootForNodeId('n1', roots)?.isGlobal, isTrue);
+      expect(accountRootForNodeId('n2', roots)?.deviceName, 'Workstation');
+      expect(accountRootForNodeId('n3', roots), isNull);
+      expect(accountRootForNodeId('n2', const []), isNull);
+    });
+
+    test('Global and a live device space need no notice', () {
+      expect(staleSpaceWriteNotice(null), isNull);
+      expect(staleSpaceWriteNotice(global()), isNull);
+      expect(staleSpaceWriteNotice(device(name: 'Workstation')), isNull);
+    });
+
+    test('an offline space says both versions are kept as a conflict copy', () {
+      final notice =
+          staleSpaceWriteNotice(device(name: 'Workstation', stale: true))!;
+      expect(notice, contains('Workstation is offline.'));
+      expect(notice, contains('conflict copy'));
+      expect(notice, contains('Nothing is overwritten.'));
+    });
+
+    test('a revoked space says nothing on that device syncs the files again', () {
+      final notice = staleSpaceWriteNotice(
+          device(name: 'Old tablet', revoked: true, stale: true))!;
+      expect(notice, contains('Old tablet was revoked'));
+      expect(notice, contains('stay on the server'));
+      expect(notice, isNot(contains('conflict copy')));
+    });
+
+    test('an unnamed device falls back to a readable label, never an ID', () {
+      final notice = staleSpaceWriteNotice(device(stale: true))!;
+      expect(notice, startsWith(deviceRootFallbackName));
+      expect(notice, isNot(contains('n2')));
+    });
+  });
 }

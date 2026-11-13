@@ -11,6 +11,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 
 import 'api.dart';
+import 'account_roots.dart';
+import 'space_notice.dart';
 import 'account_search.dart';
 import 'search_page.dart';
 import 'search_status.dart';
@@ -955,6 +957,13 @@ class _FilesPageState extends State<FilesPage> {
   Map<String, LocalAvailability> _availability = {};
   int _refreshGeneration = 0;
 
+  /// The fixed space this path starts in, when it starts in one. A write inside
+  /// a space whose own device is offline stays allowed, but the user is told
+  /// what happens to the other device's unsynced copy.
+  AccountRoot? get _currentSpace => _path.isEmpty
+      ? null
+      : accountRootForNodeId(_path.first.id, _sync.accountRoots);
+
   Future<Map<String, LocalAvailability>> _inspectAvailability(
       List<String> parentIds) async {
     try {
@@ -1843,6 +1852,8 @@ class _FilesPageState extends State<FilesPage> {
     final filtered = _search.isEmpty
         ? _files
         : _files.where((f) => _name(f).toLowerCase().contains(_search.toLowerCase())).toList();
+    final space = _currentSpace;
+    final spaceNotice = staleSpaceWriteNotice(space);
     return Scaffold(
       appBar: AppBar(
         leading: _path.isEmpty
@@ -1901,13 +1912,19 @@ class _FilesPageState extends State<FilesPage> {
           ),
         ),
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _error != null
-              ? _ErrorView(error: _error!, onRetry: _refresh)
-              : filtered.isEmpty
-                  ? const _EmptyView()
-                  : RefreshIndicator(
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (space != null && spaceNotice != null)
+            SpaceWriteNotice(root: space, message: spaceNotice),
+          Expanded(
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _error != null
+                    ? _ErrorView(error: _error!, onRetry: _refresh)
+                    : filtered.isEmpty
+                        ? const _EmptyView()
+                        : RefreshIndicator(
                       onRefresh: _refresh,
                       child: ListView.separated(
                         itemCount: filtered.length,
@@ -1949,7 +1966,10 @@ class _FilesPageState extends State<FilesPage> {
                           );
                         },
                       ),
-                    ),
+              ),
+          ),
+        ],
+      ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => showModalBottomSheet<void>(
           context: context,
