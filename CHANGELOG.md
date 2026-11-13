@@ -6,6 +6,12 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-11-13
+
+### Features
+
+- Space-aware move destinations (#95 partial): the move and copy picker now labels each fixed account space (`Global space · synced on every device`, `Device space · on demand on this device`, plus offline and revoked markers), and moving an item out of **Global** into a device space asks for confirmation first, because that item stops syncing automatically to the other devices. Copies and moves that stay inside Global are not confirmed. Space metadata is advisory: when the spaces cannot be read, the picker moves files exactly as before. Offline move queuing, selective-sync interaction and stale-device conflict handling remain unimplemented.
+
 ## [0.10.0] - 2026-11-13
 
 ### Features
