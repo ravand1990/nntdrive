@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 
 import 'account_roots.dart';
 import 'api.dart';
+import 'native.dart';
 import 'sync_controller.dart';
 import 'sync_widgets.dart';
 
@@ -140,6 +141,29 @@ class _SyncPageState extends State<SyncPage> {
     await c.syncAll();
     if (!mounted) return;
     _toast(c.lastStatus ?? 'Sync finished.');
+  }
+
+  /// Decrypted label for a pre-spaces folder. A name that cannot be opened is
+  /// described generically rather than showing ciphertext.
+  String _legacyFolderName(RemoteFile folder) {
+    try {
+      return NativeBridge.instance.openName(c.handle, folder.id, folder.nameEnc);
+    } catch (_) {
+      return 'Synced folder';
+    }
+  }
+
+  Future<void> _moveLegacyFolder(RemoteFile folder) async {
+    setState(() => _spaceWorking = folder.id);
+    try {
+      final message = await c.moveLegacyFolderIntoDeviceSpace(folder);
+      if (!mounted) return;
+      _toast(message);
+    } catch (_) {
+      if (mounted) _toast('Could not move this folder. Nothing was changed.');
+    } finally {
+      if (mounted) setState(() => _spaceWorking = null);
+    }
   }
 
   Future<void> _applyQueuedMoves() async {
@@ -661,6 +685,39 @@ class _SyncPageState extends State<SyncPage> {
                 'No spaces yet. They are created automatically the next time this client signs in.',
                 style: theme.textTheme.bodySmall,
               ),
+            ],
+            if (c.legacySpaceFolders.isNotEmpty) ...[
+              const Divider(height: 20),
+              Text('Folders outside your spaces',
+                  style: theme.textTheme.titleSmall),
+              const SizedBox(height: 4),
+              Text(
+                'These synced folders were created before account spaces existed, '
+                'so their remote folders still sit at the account root. Moving one '
+                "into this device's space keeps its files, versions and local sync; "
+                'nothing is deleted.',
+                style: theme.textTheme.bodySmall,
+              ),
+              for (final folder in c.legacySpaceFolders)
+                ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.folder_copy_outlined),
+                  title: Text(_legacyFolderName(folder)),
+                  subtitle: const Text('Account root · outside every space'),
+                  trailing: _spaceWorking == folder.id
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : TextButton(
+                          onPressed: _spaceWorking == null
+                              ? () => _moveLegacyFolder(folder)
+                              : null,
+                          child: const Text('Move into device space'),
+                        ),
+                ),
             ],
           ],
         ),

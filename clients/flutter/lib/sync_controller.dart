@@ -18,6 +18,7 @@ import 'api.dart';
 import 'native.dart';
 import 'pending_moves.dart';
 import 'session_operations.dart';
+import 'space_migration.dart';
 import 'space_subscription.dart';
 import 'storage_access.dart';
 
@@ -148,6 +149,11 @@ class SyncController extends ChangeNotifier {
   String? rootsWarning;
   String? rootsError;
   bool rootsLoading = false;
+
+  /// Sync folders whose remote folder still sits at the account root because it
+  /// was created before account spaces existed. Advisory: these are ordinary
+  /// synced folders, listed so they can be moved into this device's space.
+  List<RemoteFile> legacySpaceFolders = const [];
   bool paused = false;
   bool syncing = false;
   String? lastStatus;
@@ -231,6 +237,7 @@ class SyncController extends ChangeNotifier {
       } catch (_) {
         // A subscription problem must not hide the space list.
       }
+      await _refreshLegacyFolders();
     } catch (e) {
       rootsError = _rootsErrorText(e);
     } finally {
@@ -253,6 +260,60 @@ class SyncController extends ChangeNotifier {
       return 'Unlock the app, then set up account spaces.';
     }
     return 'Could not set up account spaces. Retry.';
+  }
+
+  /// Re-detect synced folders whose remote folder still sits at the account
+  /// root. Read-only and advisory: a listing failure clears the notice rather
+  /// than listing folders that may already have been moved.
+  Future<void> refreshLegacyFolders() {
+    if (_stopped) return Future.value();
+    return _operations.run(0, _refreshLegacyFolders);
+  }
+
+  Future<void> _refreshLegacyFolders() async {
+    if (accountRoots.isEmpty || folders.isEmpty) {
+      legacySpaceFolders = const [];
+      return;
+    }
+    try {
+      final topLevel = await api.listFiles();
+      if (_stopped) return;
+      legacySpaceFolders = foldersOutsideSpaces(
+        accountTopLevel: topLevel,
+        roots: accountRoots,
+        syncRootIds: folders.map((folder) => folder.remoteRootId),
+      );
+    } catch (_) {
+      legacySpaceFolders = const [];
+    }
+    if (!_stopped) notifyListeners();
+  }
+
+  /// Move one pre-spaces sync folder into this device's space.
+  ///
+  /// The guarded move keeps the node, its sealed name, every version and its
+  /// subtree, and the local sync entry keeps working because it tracks the
+  /// remote root node ID rather than a path. Returns user-facing text; an
+  /// expected failure changes nothing.
+  Future<String> moveLegacyFolderIntoDeviceSpace(RemoteFile folder) {
+    if (_stopped) {
+      return Future.value('The app is closing. Try this again after reopening it.');
+    }
+    return _operations.run(0, () async {
+      final message = await moveFolderIntoDeviceSpace(
+        api: api,
+        handle: handle,
+        folder: folder,
+        roots: accountRoots,
+        deviceRootNodeId: deviceRootNodeId,
+      );
+      await _refreshLegacyFolders();
+      if (!_stopped) {
+        lastStatus = message;
+        notifyListeners();
+      }
+      return message;
+    });
   }
 
   /// Queue a move that could not reach the server. The returned message is
