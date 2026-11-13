@@ -142,6 +142,17 @@ class _SyncPageState extends State<SyncPage> {
     _toast(c.lastStatus ?? 'Sync finished.');
   }
 
+  Future<void> _applyQueuedMoves() async {
+    await c.applyPendingMoves();
+    if (!mounted) return;
+    _toast(c.lastStatus ?? 'Queued moves checked.');
+  }
+
+  Future<void> _discardQueuedMoves() async {
+    await c.discardPendingMoves();
+    if (mounted) _toast(c.lastStatus ?? 'Queued moves were discarded.');
+  }
+
   Future<void> _remove(SyncFolderConfig folder) async {
     final ok = await showDialog<bool>(
       context: context,
@@ -406,6 +417,34 @@ class _SyncPageState extends State<SyncPage> {
             ),
           ),
           const SizedBox(height: 12),
+          if (c.pendingMoveCount > 0) ...[
+            Card(
+              color: c.pendingMoveAttention > 0
+                  ? theme.colorScheme.errorContainer
+                  : theme.colorScheme.surfaceContainerHighest,
+              child: ListTile(
+                leading: const Icon(Icons.swap_horiz),
+                title: Text(c.pendingMoveCount == 1
+                    ? '1 queued move waiting'
+                    : '${c.pendingMoveCount} queued moves waiting'),
+                subtitle: Text(
+                  c.pendingMoveAttention > 0
+                      ? 'A queued move could not be applied because the item or its destination changed on another device. Nothing was overwritten.'
+                      : 'Saved on this device when the server was unreachable. They are applied automatically after the next unlock or sync.',
+                ),
+                trailing: c.pendingMoveAttention > 0
+                    ? TextButton(
+                        onPressed: c.syncing ? null : _discardQueuedMoves,
+                        child: const Text('Discard'),
+                      )
+                    : TextButton(
+                        onPressed: c.syncing ? null : _applyQueuedMoves,
+                        child: const Text('Apply now'),
+                      ),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
           if (c.conflictCount > 0) ...[
             Card(
               color: theme.colorScheme.errorContainer,
