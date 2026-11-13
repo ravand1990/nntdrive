@@ -6,6 +6,8 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.9.7] - 2026-11-13
+
 ### Features
 
 - Per-device sync destinations (#95 partial): a sync folder added on a device is now created inside that device's own fixed account space instead of at the account root, so two devices adding a folder with the same local name no longer share one remote path. When the account has no usable device space (a sign-in that cannot create one, or no current-device identity) the folder stays at the account root and the status line says so; the sealed name stays bound to the node ID that was sent. Cross-device move, Global auto-mirroring and existing-account migration remain unimplemented.
