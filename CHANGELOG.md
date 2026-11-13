@@ -6,6 +6,8 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-11-13
+
 ### Features
 
 - Offline move queuing (#95 partial): a move chosen while the server cannot be reached is now saved on this device instead of failing, and applied automatically on the next unlock or sync. Only opaque node IDs and the sealed name ciphertext are stored; replay re-runs the same guarded move, so a destination collision, a source moved or renamed by another device, or a lost reply is detected instead of overwriting anything. An unacknowledged attempt that already landed is recognised from the destination listing and not applied twice. Entries stop retrying after a conflict and are listed on the sync page with a discard action; an unreachable server keeps the queue in order. The queue is bounded, and copies, renames and deletes are not queued. Selective-sync interaction, stale-device conflict handling and existing-account migration remain unimplemented.
