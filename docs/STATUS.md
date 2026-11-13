@@ -306,8 +306,15 @@ created before account spaces existed still has its remote folder at the account
 root, so the spaces overview lists it under **Folders outside your spaces** and
 offers one explicit move into this device's space: the guarded move keeps the
 node, sealed name, versions and subtree, stops on a destination collision, and
-never targets Global or another device's space. Stale-device conflict handling
-remains unimplemented. See
+never targets Global or another device's space. Cross-device conflict handling
+is now explicit: while the library shows a space whose device is offline or
+revoked, a banner says that the space stays usable, that changes made here are
+kept, and that a reconnecting device with its own unsynced change to the same
+file keeps both versions as a conflict copy — nothing is overwritten. The sync
+engine already reconciles by revision, and
+`two_devices_roundtrip_create_modify_delete_and_conflict` in `crates/sync`
+proves the concurrent offline-edit case; the banner is disclosure, it blocks
+nothing. Existing-account migration remains unimplemented. See
 [the root API](API.md#fixed-account-roots).
 
 ## Android folder access (#69, v0.7.0)
