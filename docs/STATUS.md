@@ -1,5 +1,40 @@
 # Project status
 
+## Unsynced-items overview (#79 partial)
+
+The sync page now opens a device-local **Not synced** view. For every enabled
+sync folder it asks the Rust sync engine for a read-only plan — the same
+three-way reconciliation a real sync would apply — and lists each item with a
+text status and a plain-language reason: **Cloud only**, **Local only**,
+**Pending** (queued deletion, move, rename or revision adoption), **Failed**
+(the exact path failed in the last completed attempt, with its coded reason),
+**Conflict**, **Skipped** (selective-sync exclusion or engine skip) and
+**Blocked** (storage access, or two names that differ only by letter case).
+Counts per status and per folder drive filter chips and a folder filter; the
+list is virtualised, refreshed explicitly, and an empty result states that
+nothing is waiting to sync. A folder that cannot be compared right now, a
+first-ever folder without a completed sync, and a pending folder move are shown
+as notices instead of being reported as in sync. Every row offers a folder
+sync, and blocked storage offers an access grant; conflict rows link to the
+existing Sync review.
+
+The inspection never uploads, downloads, deletes or writes the journal; it only
+reads an existing journal read-only and may refresh the device-local remote-hash
+cache. A pending or identity-based folder move yields the move notice and no
+per-file items, because a plain path comparison would misreport a rename. Names,
+paths and reasons stay on the device; the backend only serves the opaque listing
+it already serves. The overview covers one device; cross-device presence and
+automatic refresh after sync are not implemented, and no installed-device timing
+is claimed.
+
+Focused verification: `cargo test -p nntdrive-sync inspect` passed four new
+engine regressions (plan without writes, clean result after a real sync, pending
+folder move, deep conflict). `flutter test test/sync_overview_test.dart
+test/sync_overview_page_test.dart` passed 13 tests with clean analysis; those
+cover every status mapping, exact-path failure attribution, excluded/skipped
+entries, case-collision blocking, storage-blocked folders, inspection failure,
+counts/filtering/truncation and the widget list/filter/empty/retry states.
+
 ## Account-wide encrypted-name search (#80 partial)
 
 Search now supports refresh-time **All/Unknown/Local/Cloud only/Not covered/Syncing/

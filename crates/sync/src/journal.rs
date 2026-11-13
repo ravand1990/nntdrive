@@ -207,6 +207,80 @@ impl Journal {
             operation_pool,
         })
     }
+}
+
+/// Read-only view used by the unsynchronised-items overview. It never creates,
+/// migrates or locks the journal: a missing file means "nothing synced yet".
+#[derive(Debug, Default, Clone)]
+pub struct JournalSnapshot {
+    pub baseline: HashMap<String, BaselineEntry>,
+    pub directory_ids: HashMap<String, uuid::Uuid>,
+    pub pending_move: Option<(String, String)>,
+}
+
+impl Journal {
+    /// Opens an existing journal read-only. Returns `None` when the file does
+    /// not exist; a concurrent writer only yields a stale-but-consistent view.
+    pub async fn inspect_read_only(
+        path: impl AsRef<std::path::Path>,
+    ) -> Result<Option<JournalSnapshot>, JournalError> {
+        let path = path.as_ref();
+        if !path.is_file() {
+            return Ok(None);
+        }
+        let options = SqliteConnectOptions::new().filename(path).read_only(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await?;
+        let result = async {
+            let rows = sqlx::query(
+                "SELECT path, is_dir, size, content_hash, revision, deleted FROM baseline",
+            )
+            .fetch_all(&pool)
+            .await?;
+            let mut baseline = HashMap::new();
+            for row in rows {
+                let mut entry = BaselineEntry {
+                    path: row.get("path"),
+                    is_dir: row.get::<i64, _>("is_dir") != 0,
+                    size: row.get::<i64, _>("size") as u64,
+                    content_hash: row.get("content_hash"),
+                    revision: row
+                        .get::<Option<String>, _>("revision")
+                        .and_then(|s| s.parse().ok()),
+                    deleted: row.get::<i64, _>("deleted") != 0,
+                };
+                if entry.deleted {
+                    entry.content_hash = None;
+                }
+                baseline.insert(entry.path.clone(), entry);
+            }
+            let rows = sqlx::query("SELECT path, node_id FROM directory_ids")
+                .fetch_all(&pool)
+                .await?;
+            let directory_ids = rows
+                .into_iter()
+                .filter_map(|row| {
+                    let id: String = row.get("node_id");
+                    id.parse().ok().map(|id| (row.get("path"), id))
+                })
+                .collect();
+            let pending_move =
+                sqlx::query("SELECT source, destination FROM pending_move WHERE singleton = 1")
+                    .fetch_optional(&pool)
+                    .await?
+                    .map(|row| (row.get("source"), row.get("destination")));
+            Ok(JournalSnapshot {
+                baseline,
+                directory_ids,
+                pending_move,
+            })
+        }
+        .await;
+        pool.close().await;
+        result.map(Some)
+    }
 
     pub async fn load(&self) -> Result<HashMap<String, BaselineEntry>, JournalError> {
         let rows =

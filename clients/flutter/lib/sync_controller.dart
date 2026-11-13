@@ -27,6 +27,10 @@ typedef SyncRunner = Future<Map<String, dynamic>> Function(
     Map<String, dynamic> request,
     void Function(Map<String, dynamic>) onProgress);
 
+/// Read-only plan used by the unsynchronised overview. Injected for tests.
+typedef SyncInspector = Future<Map<String, dynamic>> Function(
+    int handle, Map<String, dynamic> request);
+
 /// Bootstraps and lists the fixed account roots. Injected for tests.
 typedef AccountRootsLoader = Future<AccountRootsResult> Function();
 
@@ -36,6 +40,10 @@ Future<Map<String, dynamic>> _runNativeSync(
         void Function(Map<String, dynamic>) progress) =>
     NativeBridge.instance
         .syncRequestAsync(handle, request, onProgress: progress);
+
+Future<Map<String, dynamic>> _runNativeInspect(
+        int handle, Map<String, dynamic> request) =>
+    NativeBridge.instance.syncInspectAsync(handle, request);
 
 class SyncFolderConfig {
   SyncFolderConfig({
@@ -108,6 +116,7 @@ class SyncController extends ChangeNotifier {
     required this.api,
     this.storageAccess = const StorageAccess(),
     this.syncRunner = _runNativeSync,
+    this.inspectRunner = _runNativeInspect,
     PendingMoveQueue? pendingMoves,
     this.pendingMoveFlusher = flushPendingMoves,
     RootNameSealer? nameSealer,
@@ -130,6 +139,7 @@ class SyncController extends ChangeNotifier {
   final ApiClient api;
   final StorageAccess storageAccess;
   final SyncRunner syncRunner;
+  final SyncInspector inspectRunner;
   final RootNameSealer nameSealer;
   final AccountRootsLoader rootsLoader;
 
@@ -796,10 +806,7 @@ class SyncController extends ChangeNotifier {
     try {
       await storageAccess.check(folder.localPath);
       folder.storageAccessRequired = false;
-      final support = await getApplicationSupportDirectory();
-      final syncDir = Directory(p.join(support.path, 'sync'));
-      if (!syncDir.existsSync()) syncDir.createSync(recursive: true);
-      final journal = p.join(syncDir.path, '${folder.id}.sqlite');
+      final journal = await _journalPath(folder);
       final report = await syncRunner(handle, {
         'baseUrl': server,
         'token': token,
@@ -838,6 +845,38 @@ class SyncController extends ChangeNotifier {
       await _save();
       await scanConflicts();
     }
+  }
+
+  /// One journal per selected folder, in the app-support directory.
+  Future<String> _journalPath(SyncFolderConfig folder) async {
+    final support = await getApplicationSupportDirectory();
+    final syncDir = Directory(p.join(support.path, 'sync'));
+    if (!syncDir.existsSync()) syncDir.createSync(recursive: true);
+    return p.join(syncDir.path, '${folder.id}.sqlite');
+  }
+
+  /// Read-only plan for one folder: the same comparison a real sync applies,
+  /// without uploading, downloading, journal writes or remote changes.
+  Future<Map<String, dynamic>> inspectFolder(SyncFolderConfig folder) =>
+      _stopped
+          ? Future.value(const {})
+          : _operations.run(0, () => _inspectFolder(folder));
+
+  Future<Map<String, dynamic>> _inspectFolder(
+      SyncFolderConfig folder) async {
+    if (!folders.contains(folder)) {
+      throw StateError('Folder was removed');
+    }
+    await storageAccess.check(folder.localPath);
+    return inspectRunner(handle, {
+      'baseUrl': server,
+      'token': token,
+      'remoteRootId': folder.remoteRootId,
+      'localPath': folder.localPath,
+      'journalPath': await _journalPath(folder),
+      'deviceName': Platform.localHostname,
+      'excluded': folder.excluded,
+    });
   }
 
   /// An explicit UI attempt; no scheduler can broaden storage permissions.

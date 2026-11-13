@@ -438,6 +438,56 @@ pub unsafe extern "C" fn nntdrive_sync_run(
     })
 }
 
+/// Read-only comparison of one sync folder with the account.
+///
+/// Returns the plan a real sync would apply (uploads, downloads, deletes,
+/// moves, conflicts and revisions) without writing local files, the journal or
+/// remote state. A pending folder move is reported as `folder_moves_pending`
+/// instead of a misleading per-file plan. The transport may refresh its own
+/// local content-hash cache, exactly as a real sync run does.
+///
+/// # Safety
+/// `request` must be NUL-terminated UTF-8 JSON. Free the result exactly once
+/// with `nntdrive_string_free`. Invoke off the UI thread.
+#[no_mangle]
+pub unsafe extern "C" fn nntdrive_sync_inspect(handle: u64, request: *const c_char) -> *mut c_char {
+    guard(|| {
+        let config: serde_json::Value =
+            serde_json::from_str(&arg(request)?).map_err(|e| e.to_string())?;
+        let text = |name: &str| {
+            config[name]
+                .as_str()
+                .ok_or_else(|| format!("missing {name}"))
+        };
+        let master = key(handle)?;
+        let root_id = text("remoteRootId")?
+            .parse()
+            .map_err(|_| "invalid remote root id")?;
+        let local = text("localPath")?;
+        let journal_path = text("journalPath")?;
+        if !Path::new(local).is_dir() {
+            return Err("sync folder is missing".into());
+        }
+        let mut api = ApiClient::new(text("baseUrl")?).map_err(|e| e.to_string())?;
+        api.set_token(text("token")?);
+        let mut remote = nntdrive_client::HttpRemote::with_cache(
+            api,
+            master,
+            root_id,
+            format!("{journal_path}.remote-hashes.json"),
+        );
+        let excluded: Vec<String> =
+            serde_json::from_value(config.get("excluded").cloned().unwrap_or(json!([])))
+                .map_err(|e| e.to_string())?;
+        let engine = nntdrive_sync::SyncEngine::new(text("deviceName")?).with_exclusions(excluded);
+        let now = chrono::Utc::now().format("%Y-%m-%dT%H%M%SZ").to_string();
+        let inspection = runtime()
+            .block_on(engine.inspect(&mut remote, Path::new(local), Path::new(journal_path), &now))
+            .map_err(|e| e.to_string())?;
+        serde_json::to_value(inspection).map_err(|e| e.to_string())
+    })
+}
+
 /// Sync variant with selective-sync exclusions (JSON array of relative paths).
 ///
 /// # Safety

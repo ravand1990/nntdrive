@@ -221,6 +221,18 @@ contain path, direction, logical bytes/total and commit/verification completion.
 `tool/sync_smoke.dart` verifies two-folder progress and all conflict choices
 against a real HTTP backend and mock NNTP fixture (see Development).
 
+`nntdrive_sync_inspect(handle, request_json)` is the read-only counterpart used
+by the "Not synced" overview. It opens an existing journal without creating or
+locking it, scans the folder, walks the encrypted remote tree and returns the
+plan a real sync would apply (`upload`, `download`, `create_local_dir`,
+`create_remote_dir`, `delete_local`, `delete_remote`, `rename_local`,
+`move_remote`, `adopt_revision`, `conflict`) with relative paths, sizes and the
+skipped/case-collision lists. It uploads, downloads, deletes and writes nothing;
+the HTTP transport may only refresh its own device-local content-hash cache.
+A pending interrupted or identity-based folder move returns
+`folder_moves_pending` and no items, because a plain comparison would misreport
+it as a delete/download pair. The call runs off the UI thread and is bounded.
+
 ## Desktop window lifecycle (partial #6)
 
 Windows/Linux close-to-tray keeps the **same unlocked process** syncing. Tray

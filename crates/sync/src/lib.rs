@@ -12,8 +12,10 @@ pub mod journal;
 pub mod reconcile;
 pub mod scanner;
 
-pub use engine::{Remote, SyncEngine, SyncError, SyncReport};
-pub use journal::{Journal, JournalError};
+pub use engine::{
+    InspectItem, Remote, SyncEngine, SyncError, SyncInspection, SyncReport, INSPECT_ITEM_LIMIT,
+};
+pub use journal::{Journal, JournalError, JournalSnapshot};
 pub use reconcile::{
     conflict_copy_name, detect_local, detect_remote, reconcile, Action, BaselineEntry, LocalChange,
     RemoteChange, RemoteEntry,
