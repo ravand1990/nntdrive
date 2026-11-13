@@ -274,9 +274,13 @@ unlock**: it generates the node IDs, seals the root names for those IDs through
 the native core, converges on existing roots, and lists them in an **Account
 spaces** overview on the sync page. The overview marks each space as Global,
 this device or another device, and shows offline or revoked devices instead of
-hiding them; the spaces remain browsable folders in the library. Global is not
-auto-mirrored and device spaces are not auto-subscribed yet. Per-device sync
-destinations, cross-device move, Global auto-mirroring, selective-sync
+hiding them; the spaces remain browsable folders in the library. A sync folder
+added on a device is now created **inside that device's own space** rather than
+at the account root, so two devices adding a folder with the same name no longer
+share one remote path; when the account has no usable device space (a token that
+cannot create one, or no current-device identity) the folder stays at the account
+root and the app says so. Global is not auto-mirrored and device spaces are not
+auto-subscribed yet. Cross-device move, Global auto-mirroring, selective-sync
 interaction, offline move queuing, stale-device conflict handling and the
 migration of existing accounts remain unimplemented. See
 [the root API](API.md#fixed-account-roots).

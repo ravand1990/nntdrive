@@ -105,8 +105,12 @@ class SyncController extends ChangeNotifier {
     required this.api,
     this.storageAccess = const StorageAccess(),
     this.syncRunner = _runNativeSync,
+    RootNameSealer? nameSealer,
     AccountRootsLoader? rootsLoader,
-  }) : rootsLoader = rootsLoader ??
+  })  : nameSealer = nameSealer ??
+            ((nodeId, name) =>
+                NativeBridge.instance.sealName(handle, nodeId, name)),
+        rootsLoader = rootsLoader ??
             (() => AccountRootsService(
                   api: api,
                   sealName: (nodeId, name) =>
@@ -119,12 +123,18 @@ class SyncController extends ChangeNotifier {
   final ApiClient api;
   final StorageAccess storageAccess;
   final SyncRunner syncRunner;
+  final RootNameSealer nameSealer;
   final AccountRootsLoader rootsLoader;
 
   final List<SyncFolderConfig> folders = [];
 
   /// Fixed account roots: Global first, then every device space.
   final List<AccountRoot> accountRoots = [];
+
+  /// This device's own fixed space, when the account has one. New sync folders
+  /// are created inside it, so two devices never place a folder at the same
+  /// account-root path.
+  String? deviceRootNodeId;
   String? rootsWarning;
   String? rootsError;
   bool rootsLoading = false;
@@ -188,6 +198,7 @@ class SyncController extends ChangeNotifier {
       accountRoots
         ..clear()
         ..addAll(result.roots);
+      deviceRootNodeId = result.deviceRootNodeId;
       rootsWarning = result.warning;
     } catch (e) {
       rootsError = _rootsErrorText(e);
@@ -262,11 +273,15 @@ class SyncController extends ChangeNotifier {
     final id = const Uuid().v4();
     final remoteRootId = const Uuid().v4();
     final name = p.basename(path).isEmpty ? 'Sync folder' : p.basename(path);
+    // Place the remote folder inside this device's fixed space. Two devices
+    // adding the same local name then get separate parents instead of one
+    // account-root path; without a device space fall back to the account root.
+    final parentId = deviceRootNodeId;
     try {
-      final sealed = NativeBridge.instance.sealName(handle, remoteRootId, name);
+      final sealed = nameSealer(remoteRootId, name);
       await api.createFile(
         id: remoteRootId,
-        parentId: null,
+        parentId: parentId,
         nameEnc: sealed,
         isDir: true,
       );
@@ -287,8 +302,10 @@ class SyncController extends ChangeNotifier {
     if (report == null || config.hasErrors) {
       lastStatus =
           'Folder added, but sync needs attention. Check its error and retry.';
-    } else {
+    } else if (parentId == null) {
       lastStatus = 'Folder added and synchronized.';
+    } else {
+      lastStatus = 'Folder added inside this device space and synchronized.';
     }
     notifyListeners();
     return true;

@@ -62,10 +62,11 @@ class FakeRootsApi extends ApiClient {
   @override
   Future<AccountInfo> me() async {
     if (meFails) throw ApiException(500, 'error', 'me failed');
-    final info = AccountInfo('account', 'user@example.test', 'User', false,
-        null, 0);
+    final info =
+        AccountInfo('account', 'user@example.test', 'User', false, null, 0);
     info.devices = [
-      DeviceInfo('device-1', deviceNames['current'] ?? '', 'linux', false, true),
+      DeviceInfo(
+          'device-1', deviceNames['current'] ?? '', 'linux', false, true),
       DeviceInfo('device-2', 'Tablet', 'android', false, false),
     ];
     return info;
@@ -109,6 +110,24 @@ void main() {
     expect(openSealed(api.bootstraps[0].nameEnc), 'Global|id-1');
     expect(api.bootstraps[1].nodeId, 'id-2');
     expect(openSealed(api.bootstraps[1].nameEnc), 'Workstation|id-2');
+    // New sync folders are created under exactly this device's own space.
+    expect(result.deviceRootNodeId, 'id-2');
+  });
+
+  test('another device\'s space is never the new-folder destination', () async {
+    api.roots.add(AccountRoot(
+        rootId: 'other-device',
+        kind: 'device',
+        nodeId: 'someone-else-2',
+        nameEnc: 'opaque',
+        deviceId: 'device-2'));
+
+    final result = await service().ensure();
+
+    // Global is created as id-1; this device's own space as id-2. The other
+    // device's node ID is never used as a destination.
+    expect(result.deviceRootNodeId, 'id-2');
+    expect(result.deviceRootNodeId, isNot('someone-else-2'));
   });
 
   test('a repeat launch reads the roots instead of writing again', () async {
@@ -116,8 +135,7 @@ void main() {
     final second = await service().ensure();
 
     expect(second.roots, hasLength(2));
-    expect(second.roots.map((r) => r.rootId),
-        first.roots.map((r) => r.rootId));
+    expect(second.roots.map((r) => r.rootId), first.roots.map((r) => r.rootId));
     expect(api.roots, hasLength(2));
     // One Global and one device bootstrap in total across both launches.
     expect(api.bootstraps, hasLength(2));
@@ -168,8 +186,7 @@ void main() {
   test('a persistent collision stops after the bounded attempts', () async {
     api.takenIds.addAll(['id-1', 'id-2', 'id-3']);
 
-    await expectLater(
-        service().ensure(), throwsA(isA<ApiException>()));
+    await expectLater(service().ensure(), throwsA(isA<ApiException>()));
 
     // Two attempts for Global only; nothing partial was created.
     expect(api.bootstraps.map((b) => b.nodeId), ['id-1', 'id-2']);
@@ -185,6 +202,8 @@ void main() {
 
     expect(result.roots.map((r) => r.kind), ['global']);
     expect(result.warning, contains('Global space'));
+    // No device space means no destination rather than a guessed one.
+    expect(result.deviceRootNodeId, isNull);
   });
 
   test('a non-409 failure is surfaced, not swallowed', () async {
@@ -202,6 +221,9 @@ void main() {
 
     expect(result.roots, hasLength(2));
     expect(openSealed(api.bootstraps[1].nameEnc), 'This device|id-2');
+    // A device space exists, but this sign-in names no current device, so the
+    // client must not adopt another device's space as its destination.
+    expect(result.deviceRootNodeId, isNull);
   });
 
   test('the sealed name is never sent for a different node ID', () async {
