@@ -152,4 +152,112 @@ void main() {
     expect(sync.rootsError, contains('Could not reach the server'));
     expect(sync.accountRoots, isEmpty);
   });
+
+  testWidgets('a partly excluded Global folder is marked as not fully shared',
+      (tester) async {
+    final sync = _controller();
+    addTearDown(sync.dispose);
+    sync.accountRoots.addAll([
+      AccountRoot(rootId: 'r1', kind: 'global', nodeId: 'n1', nameEnc: 'x'),
+      AccountRoot(
+          rootId: 'r2',
+          kind: 'device',
+          nodeId: 'n2',
+          nameEnc: 'x',
+          deviceName: 'Workstation'),
+    ]);
+    sync.folders.addAll([
+      SyncFolderConfig(
+          id: 'f1',
+          name: 'Global',
+          localPath: '/library/Global',
+          remoteRootId: 'n1',
+          excluded: const ['photos']),
+      SyncFolderConfig(
+          id: 'f2',
+          name: 'Workstation',
+          localPath: '/library/Workstation',
+          remoteRootId: 'n2',
+          excluded: const ['videos']),
+    ]);
+
+    await _pumpPage(tester, sync);
+
+    // Only the shared space is marked; a device space exclusion is local.
+    expect(find.text('Not fully shared: 1 excluded folder'), findsOneWidget);
+    expect(find.text('Not fully shared: 2 excluded folders'), findsNothing);
+  });
+
+  testWidgets('the selective-sync dialog warns when Global has exclusions',
+      (tester) async {
+    final sync = _controller();
+    addTearDown(sync.dispose);
+    sync.accountRoots.addAll([
+      AccountRoot(rootId: 'r1', kind: 'global', nodeId: 'n1', nameEnc: 'x'),
+    ]);
+    sync.folders.add(SyncFolderConfig(
+        id: 'f1',
+        name: 'Global',
+        localPath: '/library/Global',
+        remoteRootId: 'n1',
+        excluded: const ['photos']));
+
+    await _pumpPage(tester, sync);
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Selective sync…'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Global is shared with every device'),
+        findsOneWidget);
+    expect(find.textContaining('1 excluded folder'), findsNWidgets(2));
+    expect(find.textContaining('Excluded paths stop synchronizing'),
+        findsOneWidget);
+    expect(find.text('Not fully shared: 1 excluded folder'), findsOneWidget);
+    expect(find.text('Everything in this folder is synchronized.'),
+        findsNothing);
+
+    // Removing the exclusion removes the warning straight away.
+    tester.widget<InputChip>(find.byType(InputChip)).onDeleted!();
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Global is shared with every device'),
+        findsNothing);
+    expect(find.textContaining('Excluded paths stop synchronizing'),
+        findsNothing);
+    // The folder card still shows the saved exclusion until it is saved.
+    expect(find.text('Not fully shared: 1 excluded folder'), findsOneWidget);
+    expect(find.text('Everything in this folder is synchronized.'),
+        findsOneWidget);
+  });
+
+  testWidgets('the selective-sync dialog stays silent for a device space',
+      (tester) async {
+    final sync = _controller();
+    addTearDown(sync.dispose);
+    sync.accountRoots.addAll([
+      AccountRoot(
+          rootId: 'r2',
+          kind: 'device',
+          nodeId: 'n2',
+          nameEnc: 'x',
+          deviceName: 'Workstation'),
+    ]);
+    sync.folders.add(SyncFolderConfig(
+        id: 'f2',
+        name: 'Workstation',
+        localPath: '/library/Workstation',
+        remoteRootId: 'n2',
+        excluded: const ['videos']));
+
+    await _pumpPage(tester, sync);
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Selective sync…'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Everything in this folder is synchronized.'),
+        findsNothing);
+    expect(find.textContaining('Global is shared with every device'),
+        findsNothing);
+  });
 }

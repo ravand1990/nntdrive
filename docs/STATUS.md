@@ -293,9 +293,15 @@ server is unreachable is now queued on this device and replayed on the next
 unlock or sync: only opaque IDs and the sealed name are stored, replay re-runs the
 guarded move so a changed source or a destination collision stops safely, and an
 already-applied attempt is recognised instead of repeated. Entries that stop
-retrying are shown on the sync page with a discard action. Cross-device move,
-selective-sync interaction, stale-device conflict handling and the migration of
-existing accounts remain unimplemented. See
+retrying are shown on the sync page with a discard action. Selective sync now
+says what it does to the shared space: when a sync folder mirrors **Global** and
+subfolders are excluded, the selective-sync dialog explains that Global is no
+longer fully shared, and the folder card shows a "Not fully shared" marker.
+Excluded paths stop synchronizing in both directions, so the other devices no
+longer receive their changes and their remote changes are not applied here;
+nothing is deleted, and a device space or an unreadable space list is never
+assumed to be Global. Cross-device move, stale-device conflict handling and the
+migration of existing accounts remain unimplemented. See
 [the root API](API.md#fixed-account-roots).
 
 ## Android folder access (#69, v0.7.0)

@@ -186,80 +186,125 @@ class _SyncPageState extends State<SyncPage> {
     final result = await showDialog<List<String>>(
       context: context,
       builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: Text('Selective sync — ${folder.name}'),
-          content: SizedBox(
-            width: 520,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Excluded folders stop synchronizing. Existing local and remote files are kept; '
-                  'changes on either side are ignored until you include the folder again.',
-                ),
-                const SizedBox(height: 12),
-                if (excluded.isEmpty)
-                  const Text('Everything in this folder is synchronized.')
-                else
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
-                    children: excluded
-                        .map((path) => InputChip(
-                              label: Text(path),
-                              onDeleted: () =>
-                                  setDialogState(() => excluded.remove(path)),
-                            ))
-                        .toList(),
+        builder: (context, setDialogState) {
+          final theme = Theme.of(context);
+          // Rebuilt on every chip change, so the warning appears and disappears
+          // while the user edits the exclusions.
+          final shareWarning = globalExclusionWarning(
+            remoteRootId: folder.remoteRootId,
+            roots: c.accountRoots,
+            excluded: excluded,
+          );
+          return AlertDialog(
+            title: Text('Selective sync — ${folder.name}'),
+            content: SizedBox(
+              width: 520,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Excluded folders stop synchronizing. Existing local and remote files are kept; '
+                    'changes on either side are ignored until you include the folder again.',
                   ),
-                const SizedBox(height: 12),
-                OutlinedButton.icon(
-                  onPressed: () async {
-                    try {
-                      final picked = await getDirectoryPath(
-                        initialDirectory: folder.localPath,
-                        confirmButtonText: 'Exclude this folder',
-                      );
-                      if (picked == null) return;
-                      final rel = p
-                          .relative(picked, from: folder.localPath)
-                          .replaceAll('\\', '/');
-                      if (rel == '.' ||
-                          rel.startsWith('../') ||
-                          p.isAbsolute(rel)) {
-                        _toast(
-                            'Choose a subfolder inside ${folder.localPath}.');
-                        return;
+                  if (shareWarning != null) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.errorContainer,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(Icons.warning_amber_outlined,
+                              size: 18,
+                              color: theme.colorScheme.onErrorContainer),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              shareWarning,
+                              style: TextStyle(
+                                  color: theme.colorScheme.onErrorContainer),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  if (excluded.isEmpty)
+                    const Text('Everything in this folder is synchronized.')
+                  else
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: excluded
+                          .map((path) => InputChip(
+                                label: Text(path),
+                                onDeleted: () =>
+                                    setDialogState(() => excluded.remove(path)),
+                              ))
+                          .toList(),
+                    ),
+                  const SizedBox(height: 12),
+                  OutlinedButton.icon(
+                    onPressed: () async {
+                      try {
+                        final picked = await getDirectoryPath(
+                          initialDirectory: folder.localPath,
+                          confirmButtonText: 'Exclude this folder',
+                        );
+                        if (picked == null) return;
+                        final rel = p
+                            .relative(picked, from: folder.localPath)
+                            .replaceAll('\\', '/');
+                        if (rel == '.' ||
+                            rel.startsWith('../') ||
+                            p.isAbsolute(rel)) {
+                          _toast(
+                              'Choose a subfolder inside ${folder.localPath}.');
+                          return;
+                        }
+                        if (!excluded.contains(rel)) {
+                          setDialogState(() => excluded.add(rel));
+                        }
+                      } catch (e) {
+                        _toast('Folder picker failed: $e');
                       }
-                      if (!excluded.contains(rel)) {
-                        setDialogState(() => excluded.add(rel));
-                      }
-                    } catch (e) {
-                      _toast('Folder picker failed: $e');
-                    }
-                  },
-                  icon: const Icon(Icons.folder_off_outlined),
-                  label: const Text('Exclude a subfolder'),
-                ),
-              ],
+                    },
+                    icon: const Icon(Icons.folder_off_outlined),
+                    label: const Text('Exclude a subfolder'),
+                  ),
+                ],
+              ),
             ),
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancel')),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, excluded),
-              child: const Text('Save'),
-            ),
-          ],
-        ),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancel')),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, excluded),
+                child: const Text('Save'),
+              ),
+            ],
+          );
+        },
       ),
     );
     if (result != null) {
       await c.setExcluded(folder, result);
-      if (mounted) _toast('Selective sync updated.');
+      if (mounted) {
+        _toast(globalExclusionWarning(
+                  remoteRootId: folder.remoteRootId,
+                  roots: c.accountRoots,
+                  excluded: result,
+                ) ==
+                null
+            ? 'Selective sync updated.'
+            : 'Selective sync updated. Global is no longer fully shared with your other devices.');
+      }
     }
   }
 
@@ -632,6 +677,12 @@ class _SyncPageState extends State<SyncPage> {
         ? ''
         : ' · ↑${folder.uploaded} ↓${folder.downloaded}'
             '${folder.conflicts > 0 ? ' · ${folder.conflicts} conflict(s)' : ''}';
+    // Global stops being fully shared as soon as part of it is excluded.
+    final shareMarker = globalExclusionMarker(
+      remoteRootId: folder.remoteRootId,
+      roots: c.accountRoots,
+      excluded: folder.excluded,
+    );
     return Card(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(14, 10, 6, 10),
@@ -680,6 +731,22 @@ class _SyncPageState extends State<SyncPage> {
             ),
             const SizedBox(height: 6),
             Text('$lastSync$counts', style: theme.textTheme.bodySmall),
+            if (shareMarker != null) ...[
+              const SizedBox(height: 4),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.warning_amber_outlined,
+                      size: 16, color: theme.colorScheme.error),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(shareMarker,
+                        style: theme.textTheme.bodySmall
+                            ?.copyWith(color: theme.colorScheme.error)),
+                  ),
+                ],
+              ),
+            ],
             if (folder.progress != null)
               SyncTransferProgress(event: folder.progress!),
             if (folder.running && folder.progress == null)

@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Features
+
+- Selective-sync clarity for the shared space (#95 partial): when a sync folder mirrors the account-wide **Global** space and subfolders are excluded, the selective-sync dialog now says Global is no longer fully shared and the folder card carries a matching "Not fully shared" marker; excluded paths stop synchronizing in both directions, so other devices no longer receive changes to them and their remote changes are no longer applied here. Nothing is deleted or silently unsynced, and a device space, a private folder or an unreadable space list is never guessed to be Global. Stale-device conflict handling and existing-account migration remain unimplemented.
+
 ## [0.10.2] - 2026-11-13
 
 ### Features

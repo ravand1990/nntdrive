@@ -234,4 +234,60 @@ void main() {
       expect(openSealed(request.nameEnc), endsWith('|${request.nodeId}'));
     }
   });
+
+  group('Global selective-sync warning', () {
+    List<AccountRoot> roots() => [
+          AccountRoot(rootId: 'r1', kind: 'global', nodeId: 'n1', nameEnc: 'x'),
+          AccountRoot(
+              rootId: 'r2',
+              kind: 'device',
+              nodeId: 'n2',
+              nameEnc: 'x',
+              deviceId: 'd1',
+              deviceName: 'Workstation'),
+        ];
+
+    test('a full Global folder has no warning', () {
+      expect(
+          globalExclusionWarning(
+              remoteRootId: 'n1', roots: roots(), excluded: const []),
+          isNull);
+      expect(
+          globalExclusionMarker(
+              remoteRootId: 'n1', roots: roots(), excluded: const []),
+          isNull);
+    });
+
+    test('excluding part of Global reports it is no longer fully shared', () {
+      final warning = globalExclusionWarning(
+          remoteRootId: 'n1', roots: roots(), excluded: const ['photos']);
+      expect(warning, contains('Global is shared with every device'));
+      expect(warning, contains('1 excluded folder'));
+      expect(
+          globalExclusionMarker(
+              remoteRootId: 'n1', roots: roots(), excluded: const ['photos']),
+          'Not fully shared: 1 excluded folder');
+      expect(
+          globalExclusionMarker(
+              remoteRootId: 'n1',
+              roots: roots(),
+              excluded: const ['photos', 'videos']),
+          'Not fully shared: 2 excluded folders');
+    });
+
+    test('exclusions in a private folder or an unknown space are not shared '
+        'warnings', () {
+      // A device space on this account is not mirrored everywhere, so an
+      // exclusion there is an ordinary local choice.
+      expect(
+          globalExclusionWarning(
+              remoteRootId: 'n2', roots: roots(), excluded: const ['photos']),
+          isNull);
+      // Roots that cannot be read yet must not be guessed to be Global.
+      expect(
+          globalExclusionWarning(
+              remoteRootId: 'n1', roots: const [], excluded: const ['photos']),
+          isNull);
+    });
+  });
 }

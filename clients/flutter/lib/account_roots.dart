@@ -169,3 +169,48 @@ String accountRootStatus(AccountRoot root) {
   if (root.stale) return 'Device offline · files remain available';
   return 'On demand on this account';
 }
+
+/// True when [remoteRootId] is the account-wide space every client mirrors.
+///
+/// A sync entry only knows the remote node ID it mirrors, so this is what tells
+/// the sync page that an exclusion affects the shared space rather than a folder
+/// that exists on this device alone.
+bool remoteRootIsGlobal(String remoteRootId, List<AccountRoot> roots) {
+  for (final root in roots) {
+    if (root.isGlobal && root.nodeId == remoteRootId) return true;
+  }
+  return false;
+}
+
+String _excludedFolders(int count) =>
+    count == 1 ? '1 excluded folder' : '$count excluded folders';
+
+/// Warning for the selective-sync dialog when a folder mirrors Global and some
+/// of its paths are excluded.
+///
+/// Global is only "shared with every device" while it synchronizes whole. An
+/// exclusion stops the path in both directions, so the other devices no longer
+/// receive it and its remote changes are not applied here. Null means the
+/// folder is not Global, or has nothing excluded.
+String? globalExclusionWarning({
+  required String remoteRootId,
+  required List<AccountRoot> roots,
+  required List<String> excluded,
+}) {
+  if (excluded.isEmpty || !remoteRootIsGlobal(remoteRootId, roots)) return null;
+  return 'Global is shared with every device, but not all of it synchronizes: '
+      '${_excludedFolders(excluded.length)}. Excluded paths stop synchronizing '
+      'in both directions, so the other devices no longer receive their changes '
+      'and their remote changes are not applied here.';
+}
+
+/// Short marker for the folder card, so a partly shared Global is visible
+/// without opening the dialog. Same conditions as [globalExclusionWarning].
+String? globalExclusionMarker({
+  required String remoteRootId,
+  required List<AccountRoot> roots,
+  required List<String> excluded,
+}) {
+  if (excluded.isEmpty || !remoteRootIsGlobal(remoteRootId, roots)) return null;
+  return 'Not fully shared: ${_excludedFolders(excluded.length)}';
+}
