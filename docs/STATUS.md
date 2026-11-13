@@ -314,7 +314,10 @@ file keeps both versions as a conflict copy — nothing is overwritten. The sync
 engine already reconciles by revision, and
 `two_devices_roundtrip_create_modify_delete_and_conflict` in `crates/sync`
 proves the concurrent offline-edit case; the banner is disclosure, it blocks
-nothing. Existing-account migration remains unimplemented. See
+nothing. Existing accounts are migrated by the same idempotent bootstrap, and
+pre-spaces sync folders stay listable and movable as described above, so this
+issue has no remaining implementation scope. Installed two-device acceptance
+stays with #65. See
 [the root API](API.md#fixed-account-roots).
 
 ## Android folder access (#69, v0.7.0)
