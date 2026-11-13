@@ -8,6 +8,8 @@ import 'account_roots.dart';
 import 'api.dart';
 import 'native.dart';
 import 'sync_controller.dart';
+import 'sync_overview.dart';
+import 'sync_overview_page.dart';
 import 'sync_widgets.dart';
 
 class SyncPage extends StatefulWidget {
@@ -141,6 +143,29 @@ class _SyncPageState extends State<SyncPage> {
     await c.syncAll();
     if (!mounted) return;
     _toast(c.lastStatus ?? 'Sync finished.');
+  }
+
+  /// Opens the device-local list of everything that is not fully in sync.
+  Future<void> _openOverview() async {
+    final folders = c.folders.where((folder) => folder.enabled).toList();
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => SyncOverviewPage(
+        load: () =>
+            buildUnsyncedOverview(folders: folders, inspect: c.inspectFolder),
+        onSyncFolder: (folderId) async {
+          final match =
+              c.folders.where((folder) => folder.id == folderId).toList();
+          if (match.isEmpty) return;
+          await c.syncFolder(match.first);
+        },
+        onGrantAccess: (folderId) async {
+          final match =
+              c.folders.where((folder) => folder.id == folderId).toList();
+          if (match.isEmpty) return false;
+          return c.grantStorageAccess(match.first);
+        },
+      ),
+    ));
   }
 
   /// Decrypted label for a pre-spaces folder. A name that cannot be opened is
@@ -486,6 +511,16 @@ class _SyncPageState extends State<SyncPage> {
             ),
           ),
           const SizedBox(height: 12),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.fact_check_outlined),
+              title: const Text('Not synced'),
+              subtitle: const Text(
+                  'Every cloud-only, local-only, pending, failed, conflict, skipped or blocked item on this device.'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: c.folders.isEmpty ? null : _openOverview,
+            ),
+          ),
           if (c.pendingMoveCount > 0) ...[
             Card(
               color: c.pendingMoveAttention > 0

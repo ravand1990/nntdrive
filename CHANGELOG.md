@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Features
+
+- Unsynced overview (#79 partial): the sync page opens a device-local **Not synced** list built from a read-only plan of the Rust sync engine. Every enabled folder is compared without uploading, downloading, deleting or writing the journal, and each item shows a text status — cloud only, local only, pending, failed, conflict, skipped or blocked — with a plain-language reason, its folder, its size and a folder-level retry; blocked items offer an access grant. Counts filter the list, an empty result says nothing is waiting to sync, and folders that cannot be compared, first-ever folders and pending folder moves are shown as notices instead of being reported as in sync.
+
 ## [0.10.6] - 2026-11-13
 
 ### Features

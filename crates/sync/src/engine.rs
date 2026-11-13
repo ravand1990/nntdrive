@@ -83,6 +83,36 @@ pub struct SyncEngine {
     pub excluded_paths: Vec<String>,
 }
 
+/// One planned difference between this device and the account. `kind` is a
+/// stable snake_case identifier; `path_to` carries the destination of a pending
+/// move and `size` the local or remote content size when known.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct InspectItem {
+    pub kind: String,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path_to: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+    pub is_dir: bool,
+}
+
+/// Read-only result: no upload, download, journal write or remote mutation.
+/// `folder_moves_pending` means a plain comparison would be misleading until a
+/// real sync applies the directory move, so no items are reported then.
+#[derive(Debug, Default, Clone, serde::Serialize)]
+pub struct SyncInspection {
+    pub items: Vec<InspectItem>,
+    pub skipped: Vec<(String, String)>,
+    pub case_collisions: Vec<(String, String)>,
+    pub folder_moves_pending: bool,
+    pub journal_available: bool,
+    pub truncated: bool,
+}
+
+/// Upper bound on reported items so one pathological tree cannot exhaust RAM.
+pub const INSPECT_ITEM_LIMIT: usize = 10_000;
+
 impl SyncEngine {
     /// Resolve an already synchronized conflict pair. Both sides must still
     /// match the journal and the freshly fetched remote revisions; stale review
@@ -517,6 +547,203 @@ impl SyncEngine {
             }
         }
         Ok(report)
+    }
+
+    /// Computes the differences a real sync run would apply, without touching
+    /// local files, the journal or the account. An interrupted or id-based
+    /// folder move is reported as pending instead of a misleading file plan.
+    /// The transport may refresh its own local content-hash cache while it
+    /// builds the snapshot, exactly as a real sync would.
+    pub async fn inspect<R: Remote>(
+        &self,
+        remote: &mut R,
+        root: &Path,
+        journal_path: &Path,
+        now: &str,
+    ) -> Result<SyncInspection> {
+        if !root.is_dir() {
+            return Err(SyncError::Remote(format!(
+                "sync folder {} does not exist or is not a directory",
+                root.display()
+            )));
+        }
+        let snapshot = Journal::inspect_read_only(journal_path).await?;
+        let journal_available = snapshot.is_some();
+        let snapshot = snapshot.unwrap_or_default();
+        let mut baseline = snapshot.baseline;
+        baseline.retain(|_, entry| !self.is_excluded(&entry.path));
+        let previous: HashMap<String, scanner::ScannedEntry> = baseline
+            .values()
+            .filter(|entry| !entry.deleted)
+            .map(|entry| {
+                (
+                    entry.path.clone(),
+                    scanner::ScannedEntry {
+                        path: entry.path.clone(),
+                        is_dir: entry.is_dir,
+                        size: entry.size,
+                        mtime_ms: 0,
+                        content_hash: entry.content_hash.clone(),
+                        read_only: false,
+                    },
+                )
+            })
+            .collect();
+        let scan_root = root.to_path_buf();
+        let mut opts = self.scan_options.clone();
+        opts.excluded_paths = self.excluded_paths.clone();
+        let scan = tokio::task::spawn_blocking(move || scanner::scan(&scan_root, &opts, &previous))
+            .await
+            .map_err(|e| SyncError::Remote(format!("scan task failed: {e}")))??;
+        let remote_entries = remote.snapshot().await?;
+        let remote_entries: Vec<_> = remote_entries
+            .into_iter()
+            .filter(|entry| !self.is_excluded(&entry.path))
+            .collect();
+        // A directory that keeps its remote identity but changed path is applied
+        // by a real sync as a local rename. Without that step a plain comparison
+        // would report a bogus delete/download pair.
+        let remote_ids = remote.directory_ids();
+        let folder_moves_pending = snapshot.pending_move.is_some()
+            || remote_ids.iter().any(|(path, id)| {
+                snapshot
+                    .directory_ids
+                    .iter()
+                    .any(|(old_path, old_id)| old_id == id && old_path != path)
+            });
+        if folder_moves_pending {
+            return Ok(SyncInspection {
+                skipped: scan.skipped,
+                case_collisions: scan.case_collisions,
+                folder_moves_pending: true,
+                journal_available,
+                truncated: false,
+                items: Vec::new(),
+            });
+        }
+        let local_changes = reconcile::detect_local(&baseline, &scan.entries);
+        let remote_changes = reconcile::detect_remote(&baseline, &remote_entries);
+        let actions = reconcile::reconcile(
+            &baseline,
+            &local_changes,
+            &remote_changes,
+            &self.device_name,
+            now,
+        );
+        let local: HashMap<&str, (u64, bool)> = scan
+            .entries
+            .iter()
+            .map(|entry| (entry.path.as_str(), (entry.size, entry.is_dir)))
+            .collect();
+        let remote_state: HashMap<&str, (u64, bool)> = remote_entries
+            .iter()
+            .filter(|entry| !entry.deleted)
+            .map(|entry| (entry.path.as_str(), (entry.size, entry.is_dir)))
+            .collect();
+        let mut items = Vec::new();
+        let mut truncated = false;
+        for action in &actions {
+            if items.len() >= INSPECT_ITEM_LIMIT {
+                truncated = true;
+                break;
+            }
+            let size_of = |path: &str| {
+                local
+                    .get(path)
+                    .or_else(|| remote_state.get(path))
+                    .map(|(size, _)| *size)
+            };
+            let dir_of = |path: &str| {
+                local
+                    .get(path)
+                    .or_else(|| remote_state.get(path))
+                    .map(|(_, is_dir)| *is_dir)
+                    .unwrap_or(false)
+            };
+            let item = match action {
+                Action::Upload { path, .. } => InspectItem {
+                    kind: "upload".into(),
+                    path: path.clone(),
+                    path_to: None,
+                    size: size_of(path),
+                    is_dir: false,
+                },
+                Action::AdoptRevision { path, size, .. } => InspectItem {
+                    kind: "adopt_revision".into(),
+                    path: path.clone(),
+                    path_to: None,
+                    size: Some(*size),
+                    is_dir: false,
+                },
+                Action::Download { path, .. } => InspectItem {
+                    kind: "download".into(),
+                    path: path.clone(),
+                    path_to: None,
+                    size: size_of(path),
+                    is_dir: false,
+                },
+                Action::DeleteRemote { path, .. } => InspectItem {
+                    kind: "delete_remote".into(),
+                    path: path.clone(),
+                    path_to: None,
+                    size: size_of(path),
+                    is_dir: dir_of(path),
+                },
+                Action::DeleteLocal { path } => InspectItem {
+                    kind: "delete_local".into(),
+                    path: path.clone(),
+                    path_to: None,
+                    size: size_of(path),
+                    is_dir: dir_of(path),
+                },
+                Action::CreateLocalDir { path } => InspectItem {
+                    kind: "create_local_dir".into(),
+                    path: path.clone(),
+                    path_to: None,
+                    size: None,
+                    is_dir: true,
+                },
+                Action::CreateRemoteDir { path } => InspectItem {
+                    kind: "create_remote_dir".into(),
+                    path: path.clone(),
+                    path_to: None,
+                    size: None,
+                    is_dir: true,
+                },
+                Action::RenameLocal { from, to } => InspectItem {
+                    kind: "rename_local".into(),
+                    path: from.clone(),
+                    path_to: Some(to.clone()),
+                    size: size_of(from),
+                    is_dir: false,
+                },
+                Action::MoveRemote { from, to } => InspectItem {
+                    kind: "move_remote".into(),
+                    path: from.clone(),
+                    path_to: Some(to.clone()),
+                    size: size_of(from),
+                    is_dir: false,
+                },
+                Action::Conflict {
+                    path, local_copy, ..
+                } => InspectItem {
+                    kind: "conflict".into(),
+                    path: path.clone(),
+                    path_to: Some(local_copy.clone()),
+                    size: size_of(path),
+                    is_dir: false,
+                },
+            };
+            items.push(item);
+        }
+        Ok(SyncInspection {
+            items,
+            skipped: scan.skipped,
+            case_collisions: scan.case_collisions,
+            folder_moves_pending: false,
+            journal_available,
+            truncated,
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1648,5 +1875,147 @@ mod tests {
             .unwrap();
         assert!(!report.errors.is_empty());
         assert!(!root.path().parent().unwrap().join("escape.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn inspect_plans_without_touching_local_or_remote_state() {
+        let root = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let journal_path = state.path().join("journal.sqlite");
+        std::fs::write(root.path().join("local.txt"), b"local data").unwrap();
+        let mut remote = FakeRemote::default();
+        remote.0.lock().await.files.insert(
+            "remote.txt".into(),
+            (b"remote data".to_vec(), Uuid::new_v4()),
+        );
+        let engine = SyncEngine::new("device");
+        let inspection = engine
+            .inspect(
+                &mut remote,
+                root.path(),
+                &journal_path,
+                "2026-11-13T000000Z",
+            )
+            .await
+            .unwrap();
+        assert!(!inspection.folder_moves_pending);
+        assert!(!inspection.journal_available);
+        assert!(!inspection.truncated);
+        let kinds: Vec<(&str, &str)> = inspection
+            .items
+            .iter()
+            .map(|item| (item.kind.as_str(), item.path.as_str()))
+            .collect();
+        assert!(kinds.contains(&("upload", "local.txt")), "{kinds:?}");
+        assert!(kinds.contains(&("download", "remote.txt")), "{kinds:?}");
+        // Nothing was applied and no journal was created by the inspection.
+        assert!(!journal_path.exists());
+        assert_eq!(remote.0.lock().await.uploads, 0);
+        assert_eq!(
+            std::fs::read(root.path().join("local.txt")).unwrap(),
+            b"local data"
+        );
+        assert!(!root.path().join("remote.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn inspect_reflects_pending_changes_after_a_real_sync() {
+        let root = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let journal_path = state.path().join("journal.sqlite");
+        std::fs::write(root.path().join("note.txt"), b"v1").unwrap();
+        let mut remote = FakeRemote::default();
+        let engine = SyncEngine::new("device");
+        let journal = Journal::open(&journal_path).await.unwrap();
+        let report = engine
+            .run_once(&mut remote, root.path(), &journal, "2026-11-13T000000Z")
+            .await
+            .unwrap();
+        assert_eq!(report.uploaded, 1);
+        drop(journal);
+
+        let clean = engine
+            .inspect(
+                &mut remote,
+                root.path(),
+                &journal_path,
+                "2026-11-13T000100Z",
+            )
+            .await
+            .unwrap();
+        assert!(clean.journal_available);
+        assert!(clean.items.is_empty(), "{:?}", clean.items);
+
+        std::fs::write(root.path().join("note.txt"), b"v2").unwrap();
+        let edited = engine
+            .inspect(
+                &mut remote,
+                root.path(),
+                &journal_path,
+                "2026-11-13T000200Z",
+            )
+            .await
+            .unwrap();
+        assert_eq!(edited.items.len(), 1, "{:?}", edited.items);
+        assert_eq!(edited.items[0].kind, "upload");
+        assert_eq!(edited.items[0].path, "note.txt");
+        assert_eq!(edited.items[0].size, Some(2));
+    }
+
+    #[tokio::test]
+    async fn inspect_defers_to_a_pending_folder_move() {
+        let root = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let journal_path = state.path().join("journal.sqlite");
+        let journal = Journal::open(&journal_path).await.unwrap();
+        journal.begin_move("old", "new").await.unwrap();
+        drop(journal);
+        let mut remote = FakeRemote::default();
+        let engine = SyncEngine::new("device");
+        let inspection = engine
+            .inspect(&mut remote, root.path(), &journal_path, "now")
+            .await
+            .unwrap();
+        assert!(inspection.folder_moves_pending);
+        assert!(inspection.items.is_empty());
+    }
+
+    #[tokio::test]
+    async fn inspect_reports_a_deep_conflict_as_a_conflict_item() {
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let journal_path = state.path().join("journal.sqlite");
+        let journal_a = Journal::in_memory().await.unwrap();
+        let journal_b = Journal::open(&journal_path).await.unwrap();
+        let mut remote = FakeRemote::default();
+        let engine = SyncEngine::new("device");
+        std::fs::write(a.path().join("shared.txt"), b"base").unwrap();
+        engine
+            .run_once(&mut remote, a.path(), &journal_a, "t1")
+            .await
+            .unwrap();
+        engine
+            .run_once(&mut remote, b.path(), &journal_b, "t2")
+            .await
+            .unwrap();
+        std::fs::write(a.path().join("shared.txt"), b"from-a").unwrap();
+        engine
+            .run_once(&mut remote, a.path(), &journal_a, "t3")
+            .await
+            .unwrap();
+        std::fs::write(b.path().join("shared.txt"), b"from-b").unwrap();
+        drop(journal_b);
+        let inspection = engine
+            .inspect(&mut remote, b.path(), &journal_path, "t4")
+            .await
+            .unwrap();
+        let conflict = inspection
+            .items
+            .iter()
+            .find(|item| item.kind == "conflict")
+            .expect("conflict item");
+        assert_eq!(conflict.path, "shared.txt");
+        assert!(conflict.path_to.is_some());
     }
 }

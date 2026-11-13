@@ -472,6 +472,28 @@ class NativeBridge {
     });
   }
 
+  /// Read-only plan of what a real sync would change for one folder. No local
+  /// file, journal row or remote state is written; the core may only refresh
+  /// its own content-hash cache. Runs off the UI isolate.
+  Future<Map<String, dynamic>> syncInspectAsync(
+          int handle, Map<String, dynamic> request) =>
+      _operations.run(handle,
+          () => _syncInspectAsync(handle, jsonEncode(request)));
+
+  Future<Map<String, dynamic>> _syncInspectAsync(
+          int handle, String encoded) =>
+      Isolate.run(() {
+        final f = NativeBridge.instance._lib
+            .lookupFunction<_BackfillNative, _BackfillDart>(
+                'nntdrive_sync_inspect');
+        final input = _cstr(encoded);
+        try {
+          return _decode(f(handle, input));
+        } finally {
+          malloc.free(input);
+        }
+      });
+
   // Isolate helpers: all parameters are primitives, so nothing unsafe crosses
   /// Runs the core off the UI thread. NativeCallable.listener is deliberately
   /// created on the receiving isolate: Tokio threads may emit events freely.
