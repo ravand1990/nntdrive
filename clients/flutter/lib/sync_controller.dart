@@ -16,6 +16,7 @@ import 'package:uuid/uuid.dart';
 import 'account_roots.dart';
 import 'api.dart';
 import 'native.dart';
+import 'pending_moves.dart';
 import 'session_operations.dart';
 import 'space_subscription.dart';
 import 'storage_access.dart';
@@ -106,9 +107,13 @@ class SyncController extends ChangeNotifier {
     required this.api,
     this.storageAccess = const StorageAccess(),
     this.syncRunner = _runNativeSync,
+    PendingMoveQueue? pendingMoves,
+    this.pendingMoveFlusher = flushPendingMoves,
     RootNameSealer? nameSealer,
     AccountRootsLoader? rootsLoader,
-  })  : nameSealer = nameSealer ??
+  })  : pendingMoves = pendingMoves ??
+            PendingMoveQueue(store: const PreferencesPendingMoveStore()),
+        nameSealer = nameSealer ??
             ((nodeId, name) =>
                 NativeBridge.instance.sealName(handle, nodeId, name)),
         rootsLoader = rootsLoader ??
@@ -126,6 +131,10 @@ class SyncController extends ChangeNotifier {
   final SyncRunner syncRunner;
   final RootNameSealer nameSealer;
   final AccountRootsLoader rootsLoader;
+
+  /// Moves saved on this device while the server was unreachable.
+  final PendingMoveQueue pendingMoves;
+  final PendingMoveFlusher pendingMoveFlusher;
 
   final List<SyncFolderConfig> folders = [];
 
@@ -151,6 +160,10 @@ class SyncController extends ChangeNotifier {
   bool _loaded = false;
   bool get loaded => _loaded;
   final Set<String> _running = {};
+
+  /// Offline moves waiting on this device, and how many stopped retrying.
+  int pendingMoveCount = 0;
+  int pendingMoveAttention = 0;
 
   static const _prefsKey = 'syncFolders';
   static const _pausedKey = 'syncPaused';
@@ -182,7 +195,11 @@ class SyncController extends ChangeNotifier {
       }
     }
     notifyListeners();
+    await _refreshPendingMoveCounts();
     await _refreshAccountRoots();
+    // A reconnect attempt is best-effort: an offline launch keeps the queue as
+    // it was, and unlock or folder sync must never fail because of it.
+    await _applyPendingMoves(silent: true);
     await scanConflicts();
     _loaded = true;
     notifyListeners();
@@ -236,6 +253,95 @@ class SyncController extends ChangeNotifier {
       return 'Unlock the app, then set up account spaces.';
     }
     return 'Could not set up account spaces. Retry.';
+  }
+
+  /// Queue a move that could not reach the server. The returned message is
+  /// shown to the user and never contains a filename or path.
+  Future<String> enqueueOfflineMove(
+      RemoteFile file, String? destinationParentId) {
+    if (_stopped) {
+      return Future.value(
+          'The app is closing. Try this move again after reopening it.');
+    }
+    return _operations.run(0, () async {
+      final result = await pendingMoves.enqueue(
+          file: file, destinationParentId: destinationParentId);
+      await _refreshPendingMoveCounts();
+      switch (result) {
+        case PendingMoveAdd.added:
+          return 'You are offline. This move is saved on this device and will be applied when the server can be reached.';
+        case PendingMoveAdd.duplicate:
+          return 'You are offline. A move for this item is already waiting to be applied.';
+        case PendingMoveAdd.full:
+          return 'You are offline and too many moves are already waiting. Reconnect and apply them first.';
+      }
+    });
+  }
+
+  /// Re-read the queued moves from local storage.
+  Future<void> refreshPendingMoves() {
+    if (_stopped) return Future.value();
+    return _operations.run(0, () async {
+      await _refreshPendingMoveCounts();
+    });
+  }
+
+  /// Try every queued move now, for example on an explicit "Apply now".
+  Future<void> applyPendingMoves() {
+    if (_stopped) return Future.value();
+    return _operations.run(0, () async {
+      await _applyPendingMoves();
+    });
+  }
+
+  /// Drop queued moves that stopped retrying after a conflict.
+  Future<void> discardPendingMoves() {
+    if (_stopped) return Future.value();
+    return _operations.run(0, () async {
+      await pendingMoves.discardBlocked();
+      await _refreshPendingMoveCounts();
+      if (pendingMoveAttention == 0) {
+        lastStatus = 'Queued moves that needed attention were discarded.';
+      }
+      notifyListeners();
+    });
+  }
+
+  Future<void> _refreshPendingMoveCounts() async {
+    try {
+      final moves = await pendingMoves.load();
+      pendingMoveCount = moves.length;
+      pendingMoveAttention = moves.where((m) => m.blockedReason != null).length;
+    } catch (_) {
+      pendingMoveCount = 0;
+      pendingMoveAttention = 0;
+    }
+    notifyListeners();
+  }
+
+  /// Apply queued moves. Never throws: a queued move is a convenience and must
+  /// not break unlock, sync or the rest of the queue.
+  Future<PendingMoveFlush> _applyPendingMoves({bool silent = false}) async {
+    PendingMoveFlush flush;
+    try {
+      flush = await pendingMoveFlusher(
+          api: api, handle: handle, queue: pendingMoves);
+    } catch (_) {
+      await _refreshPendingMoveCounts();
+      return const PendingMoveFlush();
+    }
+    pendingMoveCount = flush.pending;
+    pendingMoveAttention = flush.needsAttention;
+    if (flush.applied > 0) {
+      lastStatus = 'Applied ${flush.applied} queued move(s).';
+    } else if (!silent && flush.needsAttention > 0) {
+      lastStatus =
+          'A queued move needs attention: the item or its destination changed elsewhere.';
+    } else if (!silent && flush.problems.isNotEmpty) {
+      lastStatus = flush.problems.first;
+    }
+    notifyListeners();
+    return flush;
   }
 
   /// The sync entry that already mirrors [nodeId] on this device, if any.
@@ -565,8 +671,9 @@ class SyncController extends ChangeNotifier {
 
   Future<void> _syncAll({bool silent = false}) async {
     if (syncing || paused) return;
+    final queuedMoves = await _applyPendingMoves(silent: silent);
     if (folders.isEmpty) {
-      if (!silent) {
+      if (!silent && queuedMoves.applied == 0) {
         lastStatus = 'Add a folder to start syncing.';
         notifyListeners();
       }
@@ -575,6 +682,9 @@ class SyncController extends ChangeNotifier {
     syncing = true;
     lastStatus = 'Syncing…';
     notifyListeners();
+    if (queuedMoves.applied > 0) {
+      lastStatus = 'Applied ${queuedMoves.applied} queued move(s). Syncing…';
+    }
     var uploaded = 0;
     var downloaded = 0;
     var conflicts = 0;
@@ -591,9 +701,12 @@ class SyncController extends ChangeNotifier {
       }
     }
     syncing = false;
+    final moveNote = queuedMoves.applied > 0
+        ? 'Applied ${queuedMoves.applied} queued move(s). '
+        : '';
     lastStatus = failures > 0
-        ? '$failures folder(s) had errors; $uploaded uploaded, $downloaded downloaded, $conflicts conflict(s).'
-        : 'Sync complete: $uploaded uploaded, $downloaded downloaded, $conflicts conflict(s).';
+        ? '$moveNote$failures folder(s) had errors; $uploaded uploaded, $downloaded downloaded, $conflicts conflict(s).'
+        : '${moveNote}Sync complete: $uploaded uploaded, $downloaded downloaded, $conflicts conflict(s).';
     await _save();
   }
 

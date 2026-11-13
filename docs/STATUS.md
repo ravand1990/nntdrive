@@ -288,9 +288,14 @@ mirrors its tree into `<documents>/NNTDrive/<space name>`; "Stop syncing" remove
 only the sync relationship and keeps the files, the remote space and the local
 journal. Names are reduced to one safe directory component, so a device name
 cannot escape the spaces directory, and a removed Global subscription stays
-opted out across restarts until it is subscribed again. Cross-device move,
-selective-sync interaction, offline move queuing, stale-device conflict handling
-and the migration of existing accounts remain unimplemented. See
+opted out across restarts until it is subscribed again. A move chosen while the
+server is unreachable is now queued on this device and replayed on the next
+unlock or sync: only opaque IDs and the sealed name are stored, replay re-runs the
+guarded move so a changed source or a destination collision stops safely, and an
+already-applied attempt is recognised instead of repeated. Entries that stop
+retrying are shown on the sync page with a discard action. Cross-device move,
+selective-sync interaction, stale-device conflict handling and the migration of
+existing accounts remain unimplemented. See
 [the root API](API.md#fixed-account-roots).
 
 ## Android folder access (#69, v0.7.0)

@@ -1158,18 +1158,30 @@ class _FilesPageState extends State<FilesPage> {
   Future<void> _move(RemoteFile file) async {
     if (_renaming) return;
     setState(() => _renaming = true);
+    MoveDestination? destination;
     try {
-      final destination = await showDialog<MoveDestination>(context: context,
+      destination = await showDialog<MoveDestination>(context: context,
         builder: (_) => MoveDialog(api: _api, handle: widget.session.handle,
           operations: widget.operations, source: file,
           sourceSpaceRootId: _sourceSpaceRootId));
       if (destination == null || !mounted) return;
       await widget.operations.run(widget.session.handle, () =>
         moveRemoteEntry(api: _api, handle: widget.session.handle,
-          file: file, parentId: destination.parentId));
+          file: file, parentId: destination!.parentId));
       if (mounted) await _refresh();
     } on RenameFailure catch (e) {
       if (mounted) _showError(e.message);
+    } on ApiException catch (e) {
+      if (e.status == 0 && destination != null) {
+        // Unreachable server: keep the intent on this device instead of losing
+        // it. The replay re-checks both ends, so a later conflict stops safely.
+        final message =
+            await widget.sync.enqueueOfflineMove(file, destination.parentId);
+        if (!mounted) return;
+        _toast(message);
+      } else if (mounted) {
+        _showError('Move failed. Refresh and try again. Choose a different destination if it is inside the source folder.');
+      }
     } catch (_) {
       if (mounted) _showError('Move failed. Refresh and try again. Choose a different destination if it is inside the source folder.');
     } finally {
