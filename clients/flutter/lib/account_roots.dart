@@ -27,13 +27,18 @@ String _randomNodeId() => const Uuid().v4();
 /// Result of one bootstrap pass: the roots the account now has, plus a
 /// plain-language warning when only the this-device space could not be made.
 class AccountRootsResult {
-  const AccountRootsResult(this.roots, {this.warning});
+  const AccountRootsResult(this.roots, {this.warning, this.deviceRootNodeId});
 
   final List<AccountRoot> roots;
 
   /// Set when the device space could not be bootstrapped (for example a
   /// session token that is not device-bound). Global bootstrap still applies.
   final String? warning;
+
+  /// Node ID of *this* device's own fixed space, or null when the account has
+  /// none. Sync folders created on this device are placed inside it, so two
+  /// devices cannot create the same path at the account root.
+  final String? deviceRootNodeId;
 }
 
 class AccountRootsService {
@@ -73,8 +78,8 @@ class AccountRootsService {
     }
     String? warning;
     final deviceRootExists = device != null &&
-        existing.any(
-            (root) => root.kind == 'device' && root.deviceId == device.id);
+        existing
+            .any((root) => root.kind == 'device' && root.deviceId == device.id);
     if (!deviceRootExists) {
       try {
         await _bootstrap('device', device?.name ?? deviceRootFallbackName);
@@ -87,7 +92,24 @@ class AccountRootsService {
         }
       }
     }
-    return AccountRootsResult(await api.listRoots(), warning: warning);
+    final roots = await api.listRoots();
+    return AccountRootsResult(roots,
+        warning: warning,
+        deviceRootNodeId: _deviceRootNodeId(roots, device?.id));
+  }
+
+  /// This device's own space, never another device's. A token without a
+  /// current device entry gets no destination rather than a guessed one.
+  static String? _deviceRootNodeId(List<AccountRoot> roots, String? deviceId) {
+    if (deviceId == null) {
+      return null;
+    }
+    for (final root in roots) {
+      if (root.kind == 'device' && root.deviceId == deviceId) {
+        return root.nodeId;
+      }
+    }
+    return null;
   }
 
   /// Re-read the account's roots without creating anything.
