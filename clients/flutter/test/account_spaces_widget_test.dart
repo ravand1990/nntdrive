@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nntdrive/account_roots.dart';
 import 'package:nntdrive/api.dart';
@@ -52,8 +55,10 @@ void main() {
     expect(find.text('Shared with every device'), findsOneWidget);
     expect(find.text('Workstation'),
         findsOneWidget); // a stale device stays listed
-    expect(find.text('Device offline · files remain available'), findsOneWidget);
-    expect(find.text('Device revoked · files remain available'), findsOneWidget);
+    expect(
+        find.text('Device offline · files remain available'), findsOneWidget);
+    expect(
+        find.text('Device revoked · files remain available'), findsOneWidget);
   });
 
   testWidgets('a failed bootstrap is shown with a retry action',
@@ -64,7 +69,8 @@ void main() {
 
     await _pumpPage(tester, sync);
 
-    expect(find.text('Sign in again to set up account spaces.'), findsOneWidget);
+    expect(
+        find.text('Sign in again to set up account spaces.'), findsOneWidget);
     expect(find.text('Retry'), findsOneWidget);
   });
 
@@ -82,8 +88,16 @@ void main() {
         findsNothing);
   });
 
-  testWidgets('load bootstraps and stores the account roots', (tester) async {
+  // Real local folder creation needs the normal event loop, so this is a plain
+  // test rather than a widget test with its fake-async zone.
+  test('load bootstraps and stores the account roots', () async {
     SharedPreferences.setMockInitialValues({});
+    final scratch = await Directory.systemTemp.createTemp('spaces-widget-');
+    addTearDown(() => scratch.delete(recursive: true));
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+            const MethodChannel('plugins.flutter.io/path_provider'),
+            (call) async => scratch.path);
     var loads = 0;
     final sync = SyncController(
       server: 'http://unused',
@@ -102,16 +116,21 @@ void main() {
               deviceName: 'Workstation'),
         ], warning: 'This sign-in cannot create a device space.');
       },
+      syncRunner: (handle, request, progress) async =>
+          {'uploaded': 0, 'downloaded': 0, 'conflicts': 0, 'errors': []},
     );
     addTearDown(sync.dispose);
 
     await sync.load();
-
     expect(loads, 1);
     expect(sync.accountRoots.map((r) => r.rootId), ['r1', 'r2']);
     expect(sync.rootsWarning, contains('device space'));
     expect(sync.rootsError, isNull);
     expect(sync.loaded, isTrue);
+    // Global is mirrored on this device; the other device's space is not.
+    expect(sync.folders, hasLength(1));
+    expect(sync.folders.single.remoteRootId, 'n1');
+    expect(sync.spaceSubscribed(sync.accountRoots.last), isFalse);
   });
 
   testWidgets('a bootstrap failure does not fail loading the sync page',

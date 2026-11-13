@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
 import 'account_roots.dart';
+import 'api.dart';
 import 'sync_controller.dart';
 import 'sync_widgets.dart';
 
@@ -18,6 +19,9 @@ class SyncPage extends StatefulWidget {
 
 class _SyncPageState extends State<SyncPage> {
   bool _adding = false;
+
+  /// Node ID of the space whose subscription action is still running.
+  String? _spaceWorking;
 
   SyncController get c => widget.controller;
 
@@ -103,6 +107,32 @@ class _SyncPageState extends State<SyncPage> {
           'Could not open this folder. Use an on-device folder or app-private storage.');
     } finally {
       if (mounted) setState(() => _adding = false);
+    }
+  }
+
+  Future<void> _toggleSpace(AccountRoot root) async {
+    final label = accountRootLabel(root);
+    final subscribed = c.spaceSubscribed(root);
+    setState(() => _spaceWorking = root.nodeId);
+    try {
+      if (subscribed) {
+        await c.unsubscribeSpace(root);
+        if (!mounted) return;
+        _toast(
+            '$label is no longer synchronized on this device. Its files stay in the library.');
+      } else {
+        final ok = await c.subscribeSpace(root);
+        if (!mounted) return;
+        _toast(ok
+            ? (c.lastStatus ?? '$label is synchronized on this device.')
+            : (c.lastStatus ?? 'Could not sync $label on this device.'));
+      }
+    } on StateError {
+      _toast('Wait for sync to finish, then retry.');
+    } catch (_) {
+      _toast('Could not change this space on this device. Retry.');
+    } finally {
+      if (mounted) setState(() => _spaceWorking = null);
     }
   }
 
@@ -502,8 +532,8 @@ class _SyncPageState extends State<SyncPage> {
             ),
             const SizedBox(height: 4),
             const Text(
-              'The Global space is visible on every device of this account. '
-              'Each device also has its own space; other devices can browse it on demand. '
+              'The Global space is synchronized automatically on every device. '
+              'Each device also has its own space; sync it here to keep a copy on this device. '
               'Both are ordinary folders in your encrypted library.',
             ),
             if (c.rootsError != null) ...[
@@ -522,11 +552,24 @@ class _SyncPageState extends State<SyncPage> {
               ListTile(
                 dense: true,
                 contentPadding: EdgeInsets.zero,
-                leading: Icon(root.isGlobal
-                    ? Icons.public
-                    : Icons.devices_outlined),
+                leading:
+                    Icon(root.isGlobal ? Icons.public : Icons.devices_outlined),
                 title: Text(accountRootLabel(root)),
                 subtitle: Text(accountRootStatus(root)),
+                trailing: _spaceWorking == root.nodeId
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : TextButton(
+                        onPressed: _spaceWorking == null
+                            ? () => _toggleSpace(root)
+                            : null,
+                        child: Text(c.spaceSubscribed(root)
+                            ? 'Stop syncing'
+                            : 'Sync to this device'),
+                      ),
               ),
             if (roots.isEmpty && !c.rootsLoading && c.rootsError == null) ...[
               const SizedBox(height: 6),
