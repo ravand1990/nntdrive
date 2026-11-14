@@ -6,6 +6,12 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.17.2] - 2026-11-14
+
+### Bug fixes
+
+- Search filters stay on screen at 200% text (#78 partial): with the system text size doubled, the type and sync-status dropdowns on the search page ran past the right edge of a phone screen, so part of the filter row could not be read or reached. They now shrink and shorten their label instead of overflowing. The same pass adds widget tests for the sync folders page, the empty sync page, the search filters and results, and the rename and conflict-choice dialogs, all at 200% text, and pins WCAG AA contrast for the text colours the app paints.
+
 ## [0.17.1] - 2026-11-14
 
 ### Features
