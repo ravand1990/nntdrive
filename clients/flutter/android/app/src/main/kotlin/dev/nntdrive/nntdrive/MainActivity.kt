@@ -52,6 +52,16 @@ class MainActivity : FlutterActivity() {
                         result.success(folder.canonicalPath)
                     }
                 }
+                "openSettings" -> {
+                    // Only reached from an explicit user action on a denial.
+                    startActivity(
+                        Intent(
+                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.parse("package:$packageName"),
+                        ),
+                    )
+                    result.success(true)
+                }
                 else -> result.notImplemented()
             }
         } catch (_: IllegalArgumentException) {
@@ -60,6 +70,8 @@ class MainActivity : FlutterActivity() {
             result.error("storage_unavailable", "Storage access could not be checked.", null)
         } catch (_: SecurityException) {
             result.error("storage_unavailable", "Storage access could not be checked.", null)
+        } catch (_: ActivityNotFoundException) {
+            result.error("settings_unavailable", "System settings could not be opened.", null)
         }
     }
 
@@ -85,15 +97,31 @@ class MainActivity : FlutterActivity() {
             return
         }
         if (isFinishing || isDestroyed) {
-            result.success(false)
+            pendingStorageRequest = result
+            completeStorageRequest(false)
             return
         }
         if (hasSharedAccess()) {
-            result.success(true)
+            pendingStorageRequest = result
+            completeStorageRequest(true)
+            return
+        }
+        // A permanently denied runtime permission would ignore another prompt,
+        // so report the Settings path instead of asking (and looping) again.
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.R &&
+            permissionAsked() &&
+            !hasRationale()
+        ) {
+            pendingStorageRequest = result
+            storageRequestActive = true
+            completeStorageRequest(false)
             return
         }
         pendingStorageRequest = result
         storageRequestActive = true
+        markPermissionAsked()
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 // Only explicit user action reaches here. Never open the global
@@ -119,11 +147,40 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun hasRationale(): Boolean = when {
+        // Runtime permissions and their rationale only exist from API 23.
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.M -> false
+        else -> try {
+            shouldShowRequestPermissionRationale(Manifest.permission.READ_EXTERNAL_STORAGE)
+        } catch (_: SecurityException) {
+            false
+        }
+    }
+
+    private fun permissionAsked(): Boolean =
+        getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(KEY_PERMISSION_ASKED, false)
+
+    private fun markPermissionAsked() {
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(KEY_PERMISSION_ASKED, true).apply()
+    }
+
     private fun completeStorageRequest(granted: Boolean, clearAdmission: Boolean = true) {
         if (clearAdmission) storageRequestActive = false
         val result = pendingStorageRequest ?: return
         pendingStorageRequest = null
-        result.success(granted)
+        // Report why access was refused so the client can offer the Settings
+        // link only when another prompt cannot work.
+        result.success(
+            mapOf(
+                "granted" to granted,
+                "outcome" to StoragePermissionDecision.afterRequest(
+                    sdkInt = Build.VERSION.SDK_INT,
+                    granted = granted,
+                    askedBefore = permissionAsked(),
+                    showRationale = hasRationale(),
+                ),
+            ),
+        )
     }
 
     @Deprecated("The Android settings permission screen uses the activity-result callback.")
@@ -162,5 +219,7 @@ class MainActivity : FlutterActivity() {
     private companion object {
         const val STORAGE_SETTINGS_REQUEST = 6901
         const val STORAGE_LEGACY_REQUEST = 6902
+        const val PREFS = "storage_access"
+        const val KEY_PERMISSION_ASKED = "permission_asked"
     }
 }
