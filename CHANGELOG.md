@@ -6,6 +6,12 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-14
+
+### Features
+
+- Android Material 3 layout (#78 partial): the client now uses one theme for light and dark, taken from the brand colour, so the busy overlay and the "setup complete" tick follow dark mode instead of staying white and green. Dialog boxes stop growing past a readable width on tablets and in landscape. Android draws edge-to-edge with the status and navigation bar icons matching the theme. The file browser keeps a readable column instead of stretching a phone layout across a tablet or landscape window, and the new-item sheet stays above the keyboard. In the unlock screen the form scrolls when the keyboard covers it instead of clipping the **Unlock** button. TalkBack labels, 200% text scaling and installed-device acceptance remain open.
+
 ## [0.15.0] - 2026-11-14
 
 ### Features
