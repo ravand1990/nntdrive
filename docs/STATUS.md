@@ -791,8 +791,14 @@ rename. See [client details](CLIENTS.md#rename-in-the-file-browser-51-partial).
   and a probe restart, not a packaged Flutter window or installed-release upgrade.
   Native helper fixtures are distinct from the still-required installed-build
   update/restart/version/data and locked-file manual checks.
-- Android and iOS have no in-app updater; Android requires the system package
-  installer and iOS requires App Store/TestFlight or a signed enterprise install.
+- Android has an in-app update check (#77 partial): it reads the same release
+  feed, compares Android version codes from `nntdrive-<version>-android.json`,
+  requires a `SHA256SUMS.txt` entry for the APK, and hands a verified download to
+  the system installer, which always asks the user to confirm. Android 8+ needs
+  the per-app install switch. No real in-place upgrade is claimed: the release APK
+  is still debug-signed, so that needs the stable signing key and one recorded
+  Android 11+ upgrade. iOS has no in-app updater; it requires App
+  Store/TestFlight or a signed enterprise install.
 - Sync conflict review supports Keep mine (the preserved conflict copy), Keep
   theirs (the canonical path) and Keep both. Recovery/kept files remain synced;
   no version is deleted. Changed local hashes or remote revisions reject stale

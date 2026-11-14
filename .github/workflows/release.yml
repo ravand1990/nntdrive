@@ -137,6 +137,20 @@ jobs:
           # longer update (shortcut: keep until two releases use versioned names).
           cp "dist/nntdrive-${VERSION}-linux-x64.tar.gz" dist/nntdrive-linux-x64.tar.gz
           cp "dist/nntdrive-${VERSION}-windows-x64.zip" dist/nntdrive-windows-x64.zip
+      - name: Publish the Android version code for the in-app updater
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          # The Android client compares version codes, not display versions.
+          BUILD_NUMBER=$(sed -n 's/^version: .*+\([0-9][0-9]*\)$/\1/p' clients/flutter/pubspec.yaml)
+          if [ -z "$BUILD_NUMBER" ]; then
+            echo "clients/flutter/pubspec.yaml has no build number" >&2
+            exit 1
+          fi
+          printf '{"version":"%s","versionCode":%s}\n' "$VERSION" "$BUILD_NUMBER" \
+            > "dist/nntdrive-${VERSION}-android.json"
       - name: Generate update checksums
         run: cd dist && sha256sum * > SHA256SUMS.txt
       - name: Create GitHub release and attach deployment and client files
@@ -152,7 +166,7 @@ jobs:
             echo "Container image: \`${IMAGE}\` (linux/amd64)"
             echo
             echo "Client builds: \`nntdrive-${VERSION}-linux-x64.tar.gz\`, \`nntdrive-${VERSION}-android.apk\` and \`nntdrive-${VERSION}-windows-x64.zip\`."
-            echo "Checking for updates in the Windows/Linux clients uses this release feed; iOS is not built yet."
+            echo "Checking for updates in the Windows/Linux clients uses this release feed; Android clients use the same feed and hand the verified APK to the system installer; iOS is not built yet."
             echo
             echo "## Changes"
             echo

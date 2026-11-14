@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Features
+
+- Android in-app update check (#77 partial): **Check for updates** now works on Android. The app reads the same release feed as the desktop clients, compares Android version codes from a published `nntdrive-<version>-android.json`, downloads the APK and verifies its `SHA256SUMS.txt` digest before anything else happens. A release without a version code or checksum, or a download that does not match, is refused with a plain message. A verified package is handed to the Android installer, which asks the user to confirm; if **Install unknown apps** is off the app explains it once and offers the settings screen instead of looping. **Later** defers that version code only, startup checks at most once a day, and offline checks stay silent. Updates are never silent and nothing removes the account, keys or sync journal. A real in-place upgrade still needs a stable Android signing key, so that path remains open on the issue.
+
 ## [0.12.0] - 2026-11-14
 
 ### Features
