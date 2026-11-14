@@ -1,8 +1,10 @@
 package dev.nntdrive.nntdrive
 
 import android.Manifest
+import android.app.PendingIntent
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -17,6 +19,7 @@ import java.io.IOException
 
 class MainActivity : FlutterActivity() {
     private var storageChannel: MethodChannel? = null
+    private var updateChannel: MethodChannel? = null
     private var pendingStorageRequest: MethodChannel.Result? = null
     // Keep OS admission separate from the engine's result lifetime: detaching
     // an engine cannot dismiss a settings screen/runtime permission dialog.
@@ -28,6 +31,113 @@ class MainActivity : FlutterActivity() {
             flutterEngine.dartExecutor.binaryMessenger,
             "dev.nntdrive/storage_access",
         ).also { it.setMethodCallHandler(::handleStorageAccess) }
+        updateChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "dev.nntdrive/update_install",
+        ).also { it.setMethodCallHandler(::handleUpdateInstall) }
+    }
+
+    /**
+     * The staged package and its checksum arrive from the Flutter layer; both are
+     * re-validated here (cache confinement plus a fresh digest) before Android is
+     * asked to install anything. Success means the installer session was
+     * committed, not that the user finished the upgrade.
+     */
+    private fun handleUpdateInstall(call: MethodCall, result: MethodChannel.Result) {
+        try {
+            when (call.method) {
+                "readiness" -> result.success(
+                    mapOf(
+                        "supported" to (Build.VERSION.SDK_INT >= UpdateInstallDecision.MIN_SDK),
+                        "canRequestPackageInstalls" to canRequestPackageInstalls(),
+                        "sdkInt" to Build.VERSION.SDK_INT,
+                    ),
+                )
+                "openSettings" -> {
+                    // Only reached from an explicit user action on the permission note.
+                    startActivity(installSettingsIntent())
+                    result.success(true)
+                }
+                "install" -> {
+                    val arguments = call.arguments as? Map<*, *>
+                    result.success(
+                        startPackageInstall(
+                            path = arguments?.get("path") as? String ?: "",
+                            expectedSha256 = arguments?.get("sha256") as? String ?: "",
+                        ),
+                    )
+                }
+                else -> result.notImplemented()
+            }
+        } catch (_: ActivityNotFoundException) {
+            result.error("settings_unavailable", "Android settings could not be opened.", null)
+        } catch (_: SecurityException) {
+            result.error("install_unavailable", "Android refused the app update.", null)
+        } catch (_: IOException) {
+            result.error("install_unavailable", "The downloaded package could not be read.", null)
+        } catch (_: IllegalArgumentException) {
+            result.error("install_unavailable", "The downloaded package could not be used.", null)
+        }
+    }
+
+    private fun canRequestPackageInstalls(): Boolean =
+        Build.VERSION.SDK_INT < UpdateInstallDecision.PER_APP_INSTALL_SWITCH_SDK ||
+            packageManager.canRequestPackageInstalls()
+
+    private fun installSettingsIntent(): Intent =
+        if (UpdateInstallDecision.hasPerAppInstallSwitch(Build.VERSION.SDK_INT)) {
+            Intent(
+                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                Uri.parse("package:$packageName"),
+            )
+        } else {
+            // Before Android 8 the switch is device-wide.
+            Intent(Settings.ACTION_SECURITY_SETTINGS)
+        }
+
+    private fun startPackageInstall(path: String, expectedSha256: String): Map<String, Any> {
+        val candidate = File(path)
+        val outcome = UpdateInstallDecision.decide(
+            sdkInt = Build.VERSION.SDK_INT,
+            checksumVerified = UpdateInstallPaths.matchesSha256(candidate, expectedSha256),
+            packageStaged = UpdateInstallPaths.isStagedPackage(candidate, cacheDir),
+            canRequestPackageInstalls = canRequestPackageInstalls(),
+        )
+        return when (outcome) {
+            UpdateInstallDecision.READY -> {
+                commitInstallerSession(candidate)
+                mapOf("started" to true, "needsPermission" to false, "outcome" to outcome)
+            }
+            UpdateInstallDecision.PERMISSION_REQUIRED ->
+                mapOf("started" to false, "needsPermission" to true, "outcome" to outcome)
+            else ->
+                mapOf("started" to false, "needsPermission" to false, "outcome" to outcome)
+        }
+    }
+
+    private fun commitInstallerSession(apk: File) {
+        val installer = packageManager.packageInstaller
+        val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+        params.setAppPackageName(packageName)
+        val sessionId = installer.createSession(params)
+        installer.openSession(sessionId).use { session ->
+            apk.inputStream().use { input ->
+                session.openWrite("nntdrive-update.apk", 0, apk.length()).use { output ->
+                    input.copyTo(output)
+                    session.fsync(output)
+                }
+            }
+            val statusIntent = Intent(this, UpdateInstallReceiver::class.java)
+                .setAction(UpdateInstallReceiver.ACTION_INSTALL_STATUS)
+                .setPackage(packageName)
+            // Android 12+ requires an explicit mutability flag; the installer
+            // fills in the status extras.
+            val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
+            session.commit(
+                PendingIntent.getBroadcast(this, sessionId, statusIntent, flags).intentSender,
+            )
+        }
     }
 
     private fun handleStorageAccess(call: MethodCall, result: MethodChannel.Result) {
@@ -208,12 +318,19 @@ class MainActivity : FlutterActivity() {
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
         disposeStorageAccess()
+        disposeUpdateInstall()
         super.cleanUpFlutterEngine(flutterEngine)
     }
 
     override fun onDestroy() {
         disposeStorageAccess()
+        disposeUpdateInstall()
         super.onDestroy()
+    }
+
+    private fun disposeUpdateInstall() {
+        updateChannel?.setMethodCallHandler(null)
+        updateChannel = null
     }
 
     private companion object {

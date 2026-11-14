@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -34,6 +35,8 @@ import 'sync_page.dart';
 import 'updater.dart';
 import 'update_checks.dart';
 import 'update_prompt.dart';
+import 'android_update.dart';
+import 'android_update_prompt.dart';
 
 const _uuid = Uuid();
 
@@ -130,6 +133,32 @@ class _NntDriveAppState extends State<NntDriveApp> {
     },
   );
 
+  /// Android startup check: same feed, but the package goes to the system
+  /// installer, so it uses the Android flow and compares version codes. It
+  /// honours the auto-check switch and a deferred release, and stays silent
+  /// when the feed is unreachable.
+  Future<void> _autoCheckAndroidUpdate() async {
+    if (!(widget.prefs.getBool('updateAutoCheck') ?? true)) return;
+    final now = DateTime.now();
+    final last =
+        DateTime.tryParse(widget.prefs.getString('updateLastCheck') ?? '');
+    if (last != null && now.difference(last) < const Duration(hours: 24)) {
+      return;
+    }
+    await widget.prefs.setString('updateLastCheck', now.toIso8601String());
+    try {
+      final updater = AndroidUpdater(config: await Updater.loadConfig());
+      final info = await updater.check();
+      if (!mounted || info == null) return;
+      if (await updater.deferredVersionCode() == info.versionCode) return;
+      final context = _navigatorKey.currentState?.overlay?.context;
+      if (context == null || !context.mounted) return;
+      await promptAndroidUpdate(context, updater, info, _formatBytes(info.size));
+    } catch (_) {
+      // Offline or an unreadable feed never blocks using the client.
+    }
+  }
+
   @override
   void dispose() {
     _updates.dispose();
@@ -150,6 +179,7 @@ class _NntDriveAppState extends State<NntDriveApp> {
     _email = widget.prefs.getString('email');
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && Updater.supported) _updates.start();
+      if (mounted && Platform.isAndroid) unawaited(_autoCheckAndroidUpdate());
       if (widget.instance != null) unawaited(_startDesktop());
     });
   }
@@ -1547,6 +1577,7 @@ class _FilesPageState extends State<FilesPage> {
   Future<void> _checkForUpdates() => widget.updates.manual(_checkForUpdatesNow);
 
   Future<void> _checkForUpdatesNow() async {
+    if (Platform.isAndroid) return _checkForAndroidUpdateNow();
     if (!Updater.supported) {
       _toast('Automatic updates are available on Windows and Linux.');
       return;
@@ -1575,6 +1606,39 @@ class _FilesPageState extends State<FilesPage> {
 
   Future<void> _promptUpdate(UpdateInfo info) =>
       promptUpdate(context, info, _formatBytes(info.size));
+
+  /// Android reads the same release feed but installs through the system
+  /// package installer, so it uses its own check, deferral and prompt flow.
+  Future<void> _checkForAndroidUpdateNow() async {
+    _showProgress('Checking for updates…');
+    try {
+      final updater = AndroidUpdater(config: await Updater.loadConfig());
+      final info = await updater.check();
+      if (mounted && Navigator.of(context, rootNavigator: true).canPop()) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+      if (!mounted) return;
+      if (info == null) {
+        _toast('NNTDrive ${await _androidVersionLabel()} is up to date.');
+        return;
+      }
+      await promptAndroidUpdate(context, updater, info, _formatBytes(info.size));
+    } catch (e) {
+      if (mounted && Navigator.of(context, rootNavigator: true).canPop()) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+      _showError(e);
+    }
+  }
+
+  Future<String> _androidVersionLabel() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      return info.version;
+    } catch (_) {
+      return '';
+    }
+  }
 
   Future<void> _showUpdateSettings() =>
       widget.updates.manual(_showUpdateSettingsNow);
@@ -1773,7 +1837,9 @@ class _FilesPageState extends State<FilesPage> {
             ListTile(
               leading: const Icon(Icons.system_update_alt),
               title: const Text('Check for updates'),
-              subtitle: const Text('Windows and Linux update in place'),
+              subtitle: Text(Platform.isAndroid
+                  ? 'Downloads, verifies and opens the Android installer'
+                  : 'Windows and Linux update in place'),
               onTap: () {
                 Navigator.pop(context);
                 _checkForUpdates();

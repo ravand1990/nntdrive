@@ -475,9 +475,28 @@ the smallest practical scope and lifetime. Clearing the field removes it. **Test
 access** verifies the repository and token before saving. Builds can still
 provide a fallback with
 `--dart-define=NNTDRIVE_UPDATE_TOKEN=...` and
-`--dart-define=NNTDRIVE_UPDATE_REPO=owner/repo`. Android and iOS are not updated
-by this mechanism (Android requires the system package installer; iOS requires
-App Store/TestFlight or a signed enterprise install).
+`--dart-define=NNTDRIVE_UPDATE_REPO=owner/repo`. iOS is not updated by this
+mechanism (it requires App Store/TestFlight or a signed enterprise install).
+
+## Android in-app update check (#77 partial)
+
+Android reads the same release feed but cannot update in place: the release APK
+is downloaded, verified and handed to the Android package installer, where the
+user confirms the upgrade. **Menu → Check for updates** runs the check on demand;
+startup checks once per 24 hours and stays silent when offline. **Later**
+remembers that version code only, so the next release prompts again.
+
+Each release publishes `nntdrive-<version>-android.json` containing the APK's
+version code, and the APK must appear in `SHA256SUMS.txt`. The client compares
+version codes rather than display versions, and a release without the version
+code, without a checksum entry, or with a mismatching download is refused before
+the installer is opened. The staged package must stay inside the app cache and
+its checksum is recomputed on the Android side before the installer session is
+committed. Android 8 and newer need the per-app **Install unknown apps** switch;
+when it is off the client explains it once and offers the settings screen instead
+of looping. Nothing installs silently, and the app, its keys and the sync journal
+stay in place. The current release APK is still debug-signed, so a real in-place
+upgrade needs the stable signing key tracked in #77.
 
 ## Rename in the file browser (#51 partial)
 
