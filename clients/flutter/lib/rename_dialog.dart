@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'discard_on_back.dart';
 import 'file_rename.dart';
 
 class RenameDialog extends StatefulWidget {
@@ -24,22 +25,25 @@ class _RenameDialogState extends State<RenameDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-        title: Text(widget.isDir ? 'Rename folder' : 'Rename file'),
-        content: Form(
-            key: _form,
-            child: TextFormField(
-              controller: _name,
-              autofocus: true,
-              decoration: const InputDecoration(labelText: 'New name'),
-              validator: (name) => renameValidationError(name ?? ''),
-              onFieldSubmitted: (_) => _submit(),
-            )),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel')),
-          FilledButton(onPressed: _submit, child: const Text('Rename')),
-        ],
+  Widget build(BuildContext context) => DiscardOnBack(
+        hasUnsavedInput: () => _name.text != widget.initialName,
+        child: AlertDialog(
+          title: Text(widget.isDir ? 'Rename folder' : 'Rename file'),
+          content: Form(
+              key: _form,
+              child: TextFormField(
+                controller: _name,
+                autofocus: true,
+                decoration: const InputDecoration(labelText: 'New name'),
+                validator: (name) => renameValidationError(name ?? ''),
+                onFieldSubmitted: (_) => _submit(),
+              )),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel')),
+            FilledButton(onPressed: _submit, child: const Text('Rename')),
+          ],
+        ),
       );
 }

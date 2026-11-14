@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Features
+
+- Android back navigation (#78 partial): system back in the file browser now leaves one folder at a time instead of dropping out of the unlocked account, and the app-bar control is labelled **Up one folder** so the gesture and the button agree. Opening a folder keeps its name in the title. Back inside the rename or new-folder dialog asks **Discard your text?** instead of silently throwing away typed input. Predictive-back preview and installed-device acceptance remain open.
+
 ## [0.13.0] - 2026-11-14
 
 ### Features

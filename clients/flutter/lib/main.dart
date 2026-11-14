@@ -27,6 +27,7 @@ import 'file_rename.dart';
 import 'file_move.dart';
 import 'file_copy.dart';
 import 'move_dialog.dart';
+import 'discard_on_back.dart';
 import 'rename_dialog.dart';
 import 'native.dart';
 import 'reference_backfill.dart';
@@ -957,6 +958,7 @@ class FilesPage extends StatefulWidget {
     required this.themeMode,
     required this.onTheme,
     required this.onSignOut,
+    this.api,
   });
   final Session session;
   final SyncController sync;
@@ -966,12 +968,16 @@ class FilesPage extends StatefulWidget {
   final ValueChanged<ThemeMode> onTheme;
   final VoidCallback onSignOut;
 
+  /// Test seam: a page built by a test talks to this client instead of
+  /// constructing one from the session.
+  final ApiClient? api;
+
   @override
   State<FilesPage> createState() => _FilesPageState();
 }
 
 class _FilesPageState extends State<FilesPage> {
-  late final ApiClient _api =
+  late final ApiClient _api = widget.api ??
       ApiClient(baseUrl: widget.session.server, token: widget.session.token);
   final List<RemoteFile> _path = [];
   List<RemoteFile> _files = [];
@@ -1125,8 +1131,12 @@ class _FilesPageState extends State<FilesPage> {
         _availability = availability;
         _me = me;
         _files = files;
+        // Keep the folders on the trail named: the app-bar title and up control
+        // read from here, and a listing only carries the current folder's
+        // entries. Drop names for anything no longer on screen or on the trail.
+        final keep = {for (final entry in _path) entry.id, ...names.keys};
         _names
-          ..clear()
+          ..removeWhere((id, _) => !keep.contains(id))
           ..addAll(names);
       });
     } on ApiException catch (e) {
@@ -1156,11 +1166,25 @@ class _FilesPageState extends State<FilesPage> {
     _showFileActions(file);
   }
 
+  /// Leaves one folder. Android system back and the app-bar up control share
+  /// this, so back cannot drop the user out of the account while a folder is
+  /// open.
   void _up() {
     if (_path.isEmpty) return;
     setState(() => _path.removeLast());
     _refresh();
   }
+
+  /// Keeps Android back inside the folder trail. The route itself stays
+  /// poppable only at the account root, so back then exits the app normally.
+  Widget _backScope(Widget child) => PopScope(
+        canPop: _path.isEmpty,
+        onPopInvokedWithResult: (didPop, Object? result) {
+          if (didPop) return;
+          _up();
+        },
+        child: child,
+      );
 
   String _name(RemoteFile f) => _names[f.id] ?? (f.isDir ? 'Encrypted folder' : 'Encrypted file');
 
@@ -1255,21 +1279,24 @@ class _FilesPageState extends State<FilesPage> {
     final controller = TextEditingController();
     final name = await showDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('New folder'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: 'Folder name'),
-          onSubmitted: (v) => Navigator.pop(context, v),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, controller.text.trim()),
-            child: const Text('Create'),
+      builder: (context) => DiscardOnBack(
+        hasUnsavedInput: () => controller.text.trim().isNotEmpty,
+        child: AlertDialog(
+          title: const Text('New folder'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            decoration: const InputDecoration(labelText: 'Folder name'),
+            onSubmitted: (v) => Navigator.pop(context, v),
           ),
-        ],
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, controller.text.trim()),
+              child: const Text('Create'),
+            ),
+          ],
+        ),
       ),
     );
     if (name == null || name.isEmpty) return;
@@ -1924,7 +1951,7 @@ class _FilesPageState extends State<FilesPage> {
       appBar: AppBar(
         leading: _path.isEmpty
             ? null
-            : IconButton(onPressed: _up, icon: const Icon(Icons.arrow_back), tooltip: 'Up'),
+            : IconButton(onPressed: _up, icon: const Icon(Icons.arrow_back), tooltip: 'Up one folder'),
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1978,7 +2005,7 @@ class _FilesPageState extends State<FilesPage> {
           ),
         ),
       ),
-      body: Column(
+      body: _backScope(Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (space != null && spaceNotice != null)
@@ -2035,7 +2062,7 @@ class _FilesPageState extends State<FilesPage> {
               ),
           ),
         ],
-      ),
+      )),
       floatingActionButton: FloatingActionButton(
         onPressed: () => showModalBottomSheet<void>(
           context: context,

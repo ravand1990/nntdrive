@@ -673,6 +673,30 @@ and a filesystem swap after validation can still race the external application.
 Installed Windows/Linux reveal and state-by-state manual acceptance have not
 been performed; launcher fixtures do not establish OS integration acceptance.
 
+## Navigation and back behaviour (#78 partial)
+
+The file browser keeps one folder trail inside a single screen. Android system
+back leaves exactly one folder and then, at the account root, lets the app close
+as usual; the app-bar control does the same and is labelled **Up one folder**, so
+the gesture and the visible control agree. Back never leaves a folder trail by
+dropping the user out of the unlocked account.
+
+Opening a folder keeps its name in the app-bar title, including ancestor folders
+on the trail; a listing names only its own entries, so the trail keeps the names
+it was opened under rather than showing a placeholder.
+
+Text dialogs — rename and new folder — refuse to throw away typed input on back:
+back asks **Discard your text?** with **Keep editing** and **Discard**, while an
+untouched dialog closes silently. Cancel and the primary button are unchanged.
+
+Not covered: predictive-back preview is not animated for the folder trail itself,
+because Flutter disables the system preview for a route that cannot pop; the
+gesture still goes up one folder. An unlocked session does not restore its folder
+trail after process death — a cold start asks for the password again, which is
+the intended behaviour for an encrypted client. Rotation keeps the current folder.
+Installed-device acceptance of the gesture is covered by the manual pass tracked
+on #78 and has not been performed.
+
 ## Folder sync walkthrough
 
 Open the sync icon in the file browser, select a base folder (for example
