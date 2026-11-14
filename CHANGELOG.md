@@ -6,6 +6,8 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-11-14
+
 ### Features
 
 - TalkBack labels on file rows (#78 partial): each file or folder row now announces whether it is a file or a folder and whether it is a favourite, so a screen reader no longer depends on the shape or colour of the icons. A widget test also pins the browser to 200% text scaling to catch row overflow.
