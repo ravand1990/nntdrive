@@ -198,6 +198,25 @@ class _AccountSearchPageState extends State<AccountSearchPage> {
         ),
       );
 
+  /// Filter dropdowns keep a bounded, flexible width: a doubled text scale
+  /// ellipsises the selected label instead of overflowing the filter row.
+  Widget _dropdown<T>({
+    Key? key,
+    required T value,
+    required List<DropdownMenuItem<T>> items,
+    required ValueChanged<T?> onChanged,
+  }) =>
+      ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 220),
+        child: DropdownButton<T>(
+          key: key,
+          isExpanded: true,
+          value: value,
+          items: items,
+          onChanged: onChanged,
+        ),
+      );
+
   @override
   Widget build(BuildContext context) {
     final index = widget.index;
@@ -235,7 +254,7 @@ class _AccountSearchPageState extends State<AccountSearchPage> {
                   runSpacing: 8,
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
-                    DropdownButton<SearchKind>(
+                    _dropdown<SearchKind>(
                       value: _kind,
                       items: SearchKind.values
                           .map(
@@ -252,7 +271,7 @@ class _AccountSearchPageState extends State<AccountSearchPage> {
                         _changed();
                       },
                     ),
-                    DropdownButton<SearchStatus>(
+                    _dropdown<SearchStatus>(
                       key: const Key('search-status-filter'),
                       value: _status,
                       items: SearchStatus.values
