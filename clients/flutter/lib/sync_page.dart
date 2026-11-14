@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import 'account_roots.dart';
 import 'api.dart';
 import 'native.dart';
+import 'storage_access.dart';
 import 'sync_controller.dart';
 import 'sync_overview.dart';
 import 'sync_overview_page.dart';
@@ -25,6 +26,10 @@ class _SyncPageState extends State<SyncPage> {
 
   /// Node ID of the space whose subscription action is still running.
   String? _spaceWorking;
+
+  /// A refusal the OS will not prompt about again. The next explicit tap opens
+  /// system settings instead of repeating a prompt that cannot appear.
+  StoragePermissionOutcome? _refusal;
 
   SyncController get c => widget.controller;
 
@@ -55,28 +60,72 @@ class _SyncPageState extends State<SyncPage> {
                 'storage, not only the selected folder. NNTDrive only syncs the '
                 'folders you configure. You can instead use an app-private folder '
                 'without this permission. Protected folders and cloud document '
-                'providers are not supported. Enable access on the next screen, '
-                'then return here. Older Android versions show a permission prompt.'),
+                'providers are not supported. If you decline, the app stays usable: '
+                'you can retry later or use an app-private folder. Enable access on '
+                'the next screen, then return here. Older Android versions show a '
+                'permission prompt.'),
             actions: [
               TextButton(
                   onPressed: () => Navigator.pop(context, false),
                   child: const Text('Cancel')),
               FilledButton(
                   onPressed: () => Navigator.pop(context, true),
-                  child: const Text('Continue')),
+                  child: const Text('Continue to permission')),
             ],
           ),
         ) ??
         false;
   }
 
+  Future<void> _openStorageSettings() async {
+    try {
+      await c.storageAccess.openSettings();
+    } catch (_) {
+      _toast('Could not open Android settings. Open the app settings manually '
+          'and allow file access.');
+      return;
+    }
+    _toast('Allow storage access in settings, then return here and retry.');
+  }
+
+  /// Keeps the app usable after a refusal and offers the settings link only
+  /// when the OS will not show the permission prompt again.
+  void _reportRefusal(StoragePermissionOutcome outcome) {
+    if (permissionNeedsSettings(outcome)) {
+      _refusal = outcome;
+      _toast(
+        'Android will not show the access prompt again. Allow file access in '
+        'app settings, then return and retry.',
+        action: 'Open settings',
+        onAction: _openStorageSettings,
+      );
+      return;
+    }
+    _refusal = null;
+    _toast('Storage access was not granted. Retry, or use app-private storage.');
+  }
+
   Future<void> _grantAccess(SyncFolderConfig folder) async {
+    if (_refusal != null && permissionNeedsSettings(_refusal!)) {
+      await _openStorageSettings();
+      return;
+    }
     if (!await _confirmStorageAccess() || !mounted) return;
     try {
       final ok = await c.grantStorageAccess(folder);
-      _toast(ok
-          ? 'Folder synchronized.'
-          : 'Access or sync was not confirmed. Check the folder error and retry.');
+      if (ok) {
+        _refusal = null;
+        _toast('Folder synchronized.');
+      } else {
+        final outcome = c.lastPermissionOutcome;
+        if (outcome != null &&
+            outcome != StoragePermissionOutcome.granted) {
+          _reportRefusal(outcome);
+        } else {
+          _toast(
+              'Access or sync was not confirmed. Check the folder error and retry.');
+        }
+      }
     } catch (_) {
       _toast(
           'Could not open storage access. Check Android app settings and retry.');
@@ -91,12 +140,17 @@ class _SyncPageState extends State<SyncPage> {
           : await getDirectoryPath(confirmButtonText: 'Sync this folder');
       if (path == null) return;
       if (await c.storageAccess.permissionRequired(path)) {
-        if (!mounted || !await _confirmStorageAccess()) return;
-        if (!await c.storageAccess.request()) {
-          _toast(
-              'Storage access was not granted. Try again or use app-private storage.');
+        if (_refusal != null && permissionNeedsSettings(_refusal!)) {
+          await _openStorageSettings();
           return;
         }
+        if (!mounted || !await _confirmStorageAccess()) return;
+        final outcome = await c.storageAccess.request();
+        if (outcome != StoragePermissionOutcome.granted) {
+          _reportRefusal(outcome);
+          return;
+        }
+        _refusal = null;
       }
       final ok = await c.addFolder(path);
       if (!mounted) return;
@@ -224,10 +278,15 @@ class _SyncPageState extends State<SyncPage> {
     if (ok == true) await c.removeFolder(folder);
   }
 
-  void _toast(String message) {
+  void _toast(String message, {String? action, VoidCallback? onAction}) {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+        .showSnackBar(SnackBar(
+      content: Text(message),
+      action: action == null || onAction == null
+          ? null
+          : SnackBarAction(label: action, onPressed: onAction),
+    ));
   }
 
   Future<void> _selectiveSync(SyncFolderConfig folder) async {

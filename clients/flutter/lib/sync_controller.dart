@@ -167,6 +167,9 @@ class SyncController extends ChangeNotifier {
   bool paused = false;
   bool syncing = false;
   String? lastStatus;
+  /// Why the last explicit access request failed, so the page can offer the
+  /// settings link only when another prompt cannot work.
+  StoragePermissionOutcome? lastPermissionOutcome;
   Timer? _timer;
   Timer? _initialTimer;
   bool _stopped = false;
@@ -883,8 +886,13 @@ class SyncController extends ChangeNotifier {
   Future<bool> grantStorageAccess(SyncFolderConfig folder) {
     if (_stopped) return Future.value(false);
     return _operations.run(0, () async {
-      final granted = await storageAccess.request();
-      if (!granted || _stopped || !folders.contains(folder)) return false;
+      final outcome = await storageAccess.request();
+      lastPermissionOutcome = outcome;
+      if (outcome != StoragePermissionOutcome.granted ||
+          _stopped ||
+          !folders.contains(folder)) {
+        return false;
+      }
       final report = await syncFolder(folder);
       return report != null && !folder.hasErrors;
     });

@@ -703,6 +703,18 @@ error rather than successful empty synchronization. **Grant storage access and
 retry** explains the scope, reopens settings only on explicit confirmation and
 rescans the **same** configured folder after return. You may also restore access
 in Android Settings and use **Sync now**, without deleting/re-adding the folder.
+
+Refusals are classified before anything else happens. On Android 6–10 a
+first refusal is retryable: the client keeps the folder, says access was not
+granted and offers the app-private alternative, and only an explicit tap asks
+again. A refusal the OS will not prompt about a second time — or any refusal on
+Android 11+, where All files access only exists in system settings — is reported
+as permanent and offers an **Open settings** action instead of a repeated
+prompt; until access is granted, later attempts open app settings rather than
+showing the rationale dialog again. Refusing never removes a folder, changes its
+journal or reports a sync. The decision table itself is unit-tested on the JVM
+(`StoragePermissionDecisionTest`), separately from installed-device acceptance.
+
 Folder checks fail closed on unlistable directories; the native scanner aborts
 the round on directory/metadata/file-read failures, including cached-hash reads,
 so missing access is not interpreted as file deletion. Intentional exclusions and

@@ -12,6 +12,57 @@ class StorageAccessException implements Exception {
       : 'Cannot read this folder. Check that it exists and is accessible, then retry.';
 }
 
+/// Why the platform refused storage access.
+///
+/// [denied] may be asked again after explaining why access is needed;
+/// [permanentlyDenied] and [settingsRequired] cannot: only the system settings
+/// screen can grant access, so the client must stop prompting.
+enum StoragePermissionOutcome {
+  granted,
+  denied,
+  permanentlyDenied,
+  settingsRequired,
+}
+
+/// What the UI does next after a refusal.
+enum StoragePermissionNext { proceed, retry, openSettings }
+
+/// Only a refusal the OS still lets us ask about gets another prompt.
+StoragePermissionNext permissionNextStep(StoragePermissionOutcome outcome) {
+  switch (outcome) {
+    case StoragePermissionOutcome.granted:
+      return StoragePermissionNext.proceed;
+    case StoragePermissionOutcome.denied:
+      return StoragePermissionNext.retry;
+    case StoragePermissionOutcome.permanentlyDenied:
+    case StoragePermissionOutcome.settingsRequired:
+      return StoragePermissionNext.openSettings;
+  }
+}
+
+bool permissionNeedsSettings(StoragePermissionOutcome outcome) =>
+    permissionNextStep(outcome) == StoragePermissionNext.openSettings;
+
+/// Parses the platform's answer. Older platforms returned a bare boolean; an
+/// unknown shape is treated as a plain denial so nothing can prompt in a loop.
+StoragePermissionOutcome parsePermissionOutcome(Object? value) {
+  if (value is bool) {
+    return value
+        ? StoragePermissionOutcome.granted
+        : StoragePermissionOutcome.denied;
+  }
+  if (value is Map) {
+    if (value['granted'] == true) return StoragePermissionOutcome.granted;
+    switch (value['outcome']) {
+      case 'permanently_denied':
+        return StoragePermissionOutcome.permanentlyDenied;
+      case 'settings_required':
+        return StoragePermissionOutcome.settingsRequired;
+    }
+  }
+  return StoragePermissionOutcome.denied;
+}
+
 class StorageAccess {
   const StorageAccess();
   static const channel = MethodChannel('dev.nntdrive/storage_access');
@@ -24,8 +75,19 @@ class StorageAccess {
   }
 
   /// No timer/background check may call this: only an explicit user action.
-  Future<bool> request() async =>
-      isAndroid && (await channel.invokeMethod<bool>('request') ?? false);
+  Future<StoragePermissionOutcome> request() async {
+    if (!isAndroid) return StoragePermissionOutcome.denied;
+    return parsePermissionOutcome(
+        await channel.invokeMethod<Object?>('request'));
+  }
+
+  /// Opens this app's system settings page. Only for outcomes where another
+  /// prompt cannot work.
+  Future<void> openSettings() async {
+    if (!isAndroid) return;
+    // The platform's return value is not needed, so never cast it.
+    await channel.invokeMethod<Object?>('openSettings');
+  }
 
   Future<String?> privateFolder() async =>
       isAndroid ? await channel.invokeMethod<String>('privateFolder') : null;
