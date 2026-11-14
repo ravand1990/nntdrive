@@ -2022,7 +2022,12 @@ class _FilesPageState extends State<FilesPage> {
                           final f = filtered[i];
                           final local = _availability[f.id] ?? LocalAvailability.unknown;
                           return ListTile(
-                            leading: Icon(f.isDir ? Icons.folder_outlined : Icons.insert_drive_file_outlined),
+                            leading: Icon(
+                              f.isDir
+                                  ? Icons.folder_outlined
+                                  : Icons.insert_drive_file_outlined,
+                              semanticLabel: f.isDir ? 'Folder' : 'File',
+                            ),
                             title: Text(_name(f)),
                             subtitle: LocalAvailabilityLabel(
                               state: local,
@@ -2034,7 +2039,9 @@ class _FilesPageState extends State<FilesPage> {
                                 if (f.favorite)
                                   const Padding(
                                     padding: EdgeInsets.symmetric(horizontal: 4),
-                                    child: Icon(Icons.star, size: 18),
+                                    // Colour alone never carries this state.
+                                    child: Icon(Icons.star,
+                                        size: 18, semanticLabel: 'Favourite'),
                                   ),
                                 LocalRevealButton(
                                   state: local,
