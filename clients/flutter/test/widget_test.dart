@@ -46,4 +46,34 @@ void main() {
     expect(formatBytes(1536), '1.5 KiB');
     expect(formatBytes(5 * 1024 * 1024), '5.0 MiB');
   });
+
+  testWidgets('unlock form scrolls instead of overflowing with the keyboard open',
+      (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(400, 420);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(MaterialApp(
+      home: MediaQuery(
+        data: const MediaQueryData(
+          size: Size(400, 420),
+          viewInsets: EdgeInsets.only(bottom: 250),
+        ),
+        child: UnlockPage(
+          server: 'http://127.0.0.1:1',
+          email: 'test@example.invalid',
+          keyfileJson: '{}',
+          accountId: 'test-account',
+          token: 'test-token',
+          onUnlocked: (_) async {},
+          onSignOut: () {},
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    // A short window with the keyboard open must scroll, not clip.
+    expect(tester.takeException(), isNull);
+    expect(find.widgetWithText(FilledButton, 'Unlock'), findsOneWidget);
+  });
 }
