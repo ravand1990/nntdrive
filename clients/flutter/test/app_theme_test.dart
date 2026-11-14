@@ -63,7 +63,7 @@ void main() {
           theme.appBarTheme.foregroundColor!,
           theme.appBarTheme.backgroundColor!
         ),
-        'page background': (s.onSurface, theme.scaffoldBackgroundColor!),
+        'page background': (s.onSurface, theme.scaffoldBackgroundColor),
       };
       for (final entry in pairs.entries) {
         expect(ratio(entry.value.$1, entry.value.$2), greaterThanOrEqualTo(4.5),
