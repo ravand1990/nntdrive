@@ -5,6 +5,61 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'updater.dart';
 
+/// Shows what changed in every version between the installed build and the
+/// offered one, one heading per version, newest first. Bounded in height so a
+/// long upgrade history stays scrollable instead of filling the window.
+class UpdateNotesView extends StatelessWidget {
+  const UpdateNotesView({super.key, required this.info, this.maxHeight = 320});
+
+  final UpdateInfo info;
+  final double maxHeight;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    final notes = info.releaseNotes;
+    if (notes.isEmpty) {
+      if (info.notes.isEmpty) return const SizedBox.shrink();
+      return ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: maxHeight),
+        child: SingleChildScrollView(
+          child: Text(info.notes, style: textTheme.bodySmall),
+        ),
+      );
+    }
+    final omitted = info.olderNotesOmitted;
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: maxHeight),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (var i = 0; i < notes.length; i++) ...[
+              Padding(
+                padding: EdgeInsets.only(top: i == 0 ? 0 : 16),
+                child: Text(
+                  'Changes in ${notes[i].version}',
+                  style: textTheme.titleSmall,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(notes[i].body, style: textTheme.bodySmall),
+            ],
+            if (omitted > 0) ...[
+              const SizedBox(height: 16),
+              Text(
+                '$omitted older release${omitted == 1 ? '' : 's'} not shown.',
+                style: textTheme.bodySmall,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// Shared by startup and explicit checks. The caller serializes this entire flow.
 Future<void> promptUpdate(
     BuildContext context, UpdateInfo info, String sizeLabel) async {
@@ -25,9 +80,9 @@ Future<void> promptUpdate(
                   '${info.size > 0 ? ' ($sizeLabel)' : ''}. '
                   'It downloads, verifies and replaces this installation, then '
                   'restarts the app.'),
-              if (info.notes.isNotEmpty) ...[
+              if (info.releaseNotes.isNotEmpty || info.notes.isNotEmpty) ...[
                 const SizedBox(height: 12),
-                Text(info.notes, style: Theme.of(context).textTheme.bodySmall),
+                UpdateNotesView(info: info),
               ],
             ],
           ),

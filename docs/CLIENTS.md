@@ -422,13 +422,23 @@ that release version, not release checks or prompts for newer versions. Checks
 and prompts are serialized across automatic and manual triggers, and offline or
 inaccessible feeds never prevent using the app. The updater:
 
-1. reads `releases/latest` and compares the tag with the installed version;
-2. selects `nntdrive-<version>-windows-x64.zip` or
-   `nntdrive-<version>-linux-x64.tar.gz`, falling back to the unversioned name
-   used by older releases;
-3. downloads over HTTPS and verifies the SHA-256 from `SHA256SUMS.txt`;
-4. unpacks to a temporary directory and starts a detached helper;
-5. exits, letting the helper replace the install directory and restart the app.
+1. lists the repository's releases (paginated) and picks the newest stable one
+   whose tag is a dotted version newer than the installed build; drafts,
+   prereleases and non-version tags such as `nightly` are ignored;
+2. collects the notes of **every** stable release between the installed version
+   and that release, newest first, so a user who skipped several releases sees
+   what changed in each; releases without notes are skipped, one section is
+   shown per version, and the prompt stays scrollable under fixed section, body
+   and total-text caps (dropped older sections are counted);
+3. selects `nntdrive-<version>-windows-x64.zip` or
+   `nntdrive-<version>-linux-x64.tar.gz` from the target release, falling back to
+   the unversioned name used by older releases;
+4. downloads over HTTPS and verifies the SHA-256 from `SHA256SUMS.txt`;
+5. unpacks to a temporary directory and starts a detached helper;
+6. exits, letting the helper replace the install directory and restart the app.
+
+Release notes are read from the cached release list, not one request per version.
+A dev build newer than every published release reports "up to date".
 
 The helper launch is awaited before the app exits. Windows sends the script with
 PowerShell's UTF-16LE `-EncodedCommand`, uses ordinary process creation with a
