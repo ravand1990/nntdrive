@@ -13,6 +13,8 @@ import 'package:uuid/uuid.dart';
 
 import 'api.dart';
 import 'account_roots.dart';
+import 'app_layout.dart';
+import 'app_theme.dart';
 import 'space_notice.dart';
 import 'account_search.dart';
 import 'search_page.dart';
@@ -44,6 +46,8 @@ const _uuid = Uuid();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Android draws behind the system bars; the icon style follows the theme.
+  await applyEdgeToEdgeSystemUi();
   DesktopInstance? instance;
   if (Platform.isWindows || Platform.isLinux) {
     try {
@@ -352,12 +356,6 @@ class _NntDriveAppState extends State<NntDriveApp> {
     _updateTray();
   }
 
-  ThemeData _theme(Brightness brightness) => ThemeData(
-        useMaterial3: true,
-        colorSchemeSeed: const Color(0xFF0B6BCB),
-        brightness: brightness,
-      );
-
   @override
   Widget build(BuildContext context) {
     Widget home;
@@ -396,39 +394,40 @@ class _NntDriveAppState extends State<NntDriveApp> {
       navigatorKey: _navigatorKey,
       title: 'NNTDrive',
       debugShowCheckedModeBanner: false,
-      theme: _theme(Brightness.light),
-      darkTheme: _theme(Brightness.dark),
+      theme: buildNntDriveTheme(Brightness.light),
+      darkTheme: buildNntDriveTheme(Brightness.dark),
       themeMode: _themeMode,
       home: home,
-      builder: (context, child) => Column(children: [
-        Expanded(child: Stack(children: [
-          FocusScope(canRequestFocus: !_ending,
-              child: AbsorbPointer(absorbing: _ending, child: child!)),
-          if (_ending) Positioned.fill(child: Material(
-            color: const Color(0xDDFFFFFF), child: Center(child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (_shutdownError == null) const CircularProgressIndicator(),
-                const SizedBox(height: 16),
-                Text(_shutdownError ?? 'Finishing active operations before locking the vault…'),
-                if (_shutdownError != null) TextButton(onPressed: _signOut,
-                    child: const Text('Retry Sign out')),
-              ],
+      builder: (context, child) => SystemUiStyleScope(
+        child: Column(children: [
+          Expanded(child: Stack(children: [
+            FocusScope(canRequestFocus: !_ending,
+                child: AbsorbPointer(absorbing: _ending, child: child!)),
+            if (_ending) Positioned.fill(child: Material(
+              color: Theme.of(context).busyOverlayColor, child: Center(child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_shutdownError == null) const CircularProgressIndicator(),
+                  const SizedBox(height: 16),
+                  Text(_shutdownError ?? 'Finishing active operations before locking the vault…'),
+                  if (_shutdownError != null) TextButton(onPressed: _signOut,
+                      child: const Text('Retry Sign out')),
+                ],
+              )),
             )),
+          ])),
+          if (widget.instance != null) Material(child: SafeArea(top: false,
+            child: Padding(padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Row(children: [
+                Expanded(child: Text(_desktopError ?? (_desktop?.ready == true
+                    ? 'Close keeps NNTDrive in the tray. Hiding does not lock the vault.'
+                    : 'Starting desktop session…'))),
+                TextButton(onPressed: _desktop == null ? null : () => _desktop!.requestQuit(),
+                    child: const Text('Quit NNTDrive')),
+              ]),
+            ),
           )),
         ])),
-        if (widget.instance != null) Material(child: SafeArea(top: false,
-          child: Padding(padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Row(children: [
-              Expanded(child: Text(_desktopError ?? (_desktop?.ready == true
-                  ? 'Close keeps NNTDrive in the tray. Hiding does not lock the vault.'
-                  : 'Starting desktop session…'))),
-              TextButton(onPressed: _desktop == null ? null : () => _desktop!.requestQuit(),
-                  child: const Text('Quit NNTDrive')),
-            ]),
-          ),
-        )),
-      ]),
     );
   }
 }
@@ -629,7 +628,7 @@ class _LoginPageState extends State<LoginPage> {
       builder: (context) => AlertDialog(
         title: Row(
           children: [
-            const Icon(Icons.check_circle, color: Colors.green),
+            Icon(Icons.check_circle, color: Theme.of(context).connectedIndicatorColor),
             const SizedBox(width: 10),
             Expanded(
               child: Text(isAdmin ? 'First-time setup complete' : 'Account created'),
@@ -897,50 +896,52 @@ class _UnlockPageState extends State<UnlockPage> {
       body: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 430),
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Icon(Icons.lock_outline, size: 48),
-                const SizedBox(height: 14),
-                Text('Unlock NNTDrive', textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.headlineSmall),
-                const SizedBox(height: 6),
-                Text(widget.email, textAlign: TextAlign.center),
-                const SizedBox(height: 12),
-                const Text(
-                  'Sync paused: vault locked. Unlock to allow synchronization.',
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 20),
-                TextField(
-                  controller: _password,
-                  obscureText: true,
-                  autofocus: true,
-                  onSubmitted: _busy ? null : (_) => _unlock(),
-                  decoration: const InputDecoration(
-                    labelText: 'Password',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                FilledButton(
-                  onPressed: _busy ? null : _unlock,
-                  child: _busy
-                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Text('Unlock'),
-                ),
-                if (_error != null) ...[
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Icon(Icons.lock_outline, size: 48),
+                  const SizedBox(height: 14),
+                  Text('Unlock NNTDrive', textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.headlineSmall),
+                  const SizedBox(height: 6),
+                  Text(widget.email, textAlign: TextAlign.center),
                   const SizedBox(height: 12),
-                  Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                  const Text(
+                    'Sync paused: vault locked. Unlock to allow synchronization.',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 20),
+                  TextField(
+                    controller: _password,
+                    obscureText: true,
+                    autofocus: true,
+                    onSubmitted: _busy ? null : (_) => _unlock(),
+                    decoration: const InputDecoration(
+                      labelText: 'Password',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  FilledButton(
+                    onPressed: _busy ? null : _unlock,
+                    child: _busy
+                        ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Text('Unlock'),
+                  ),
+                  if (_error != null) ...[
+                    const SizedBox(height: 12),
+                    Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                  ],
+                  TextButton(
+                    onPressed: widget.onSignOut,
+                    child: const Text('Use another account / server'),
+                  ),
                 ],
-                TextButton(
-                  onPressed: widget.onSignOut,
-                  child: const Text('Use another account / server'),
-                ),
-              ],
+              ),
             ),
           ),
         ),
@@ -2000,7 +2001,7 @@ class _FilesPageState extends State<FilesPage> {
           ),
         ),
       ),
-      body: _backScope(Column(
+      body: _backScope(AppContentFrame(child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (space != null && spaceNotice != null)
@@ -2059,33 +2060,39 @@ class _FilesPageState extends State<FilesPage> {
               ),
           ),
         ],
-      )),
+      ))),
       floatingActionButton: FloatingActionButton(
         onPressed: () => showModalBottomSheet<void>(
           context: context,
           showDragHandle: true,
           builder: (context) => SafeArea(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ListTile(
-                  leading: const Icon(Icons.upload_file),
-                  title: const Text('Upload a file'),
-                  subtitle: const Text('Encrypted and erasure-coded locally'),
-                  onTap: () {
-                    Navigator.pop(context);
-                    _upload();
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.create_new_folder_outlined),
-                  title: const Text('New folder'),
-                  onTap: () {
-                    Navigator.pop(context);
-                    _createFolder();
-                  },
-                ),
-              ],
+            top: false,
+            child: Padding(
+              // Keep the last row above the keyboard as well as the nav bar.
+              padding: EdgeInsets.only(
+                  bottom: MediaQuery.viewInsetsOf(context).bottom),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.upload_file),
+                    title: const Text('Upload a file'),
+                    subtitle: const Text('Encrypted and erasure-coded locally'),
+                    onTap: () {
+                      Navigator.pop(context);
+                      _upload();
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.create_new_folder_outlined),
+                    title: const Text('New folder'),
+                    onTap: () {
+                      Navigator.pop(context);
+                      _createFolder();
+                    },
+                  ),
+                ],
+              ),
             ),
           ),
         ),
