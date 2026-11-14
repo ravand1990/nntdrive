@@ -80,9 +80,12 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun canRequestPackageInstalls(): Boolean =
-        Build.VERSION.SDK_INT < UpdateInstallDecision.PER_APP_INSTALL_SWITCH_SDK ||
-            packageManager.canRequestPackageInstalls()
+    private fun canRequestPackageInstalls(): Boolean = when {
+        // Before Android 8 the switch is device-wide, so there is nothing to
+        // read per app.
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.O -> packageManager.canRequestPackageInstalls()
+        else -> true
+    }
 
     private fun installSettingsIntent(): Intent =
         if (UpdateInstallDecision.hasPerAppInstallSwitch(Build.VERSION.SDK_INT)) {

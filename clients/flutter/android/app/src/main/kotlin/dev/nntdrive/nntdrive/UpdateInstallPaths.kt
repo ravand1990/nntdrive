@@ -34,8 +34,8 @@ object UpdateInstallPaths {
         val actual = try {
             digest(candidate)
         } catch (_: IOException) {
-            return null
-        } ?: return false
+            null
+        }
         return actual == expected
     }
 
