@@ -6,6 +6,8 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-14
+
 ### Features
 
 - Android item menu (#78 partial): every file and folder now has one visible **More actions** menu instead of a row of cramped icon buttons. The same menu opens when a file is tapped, lists rename, move and copy for both files and folders, keeps the file's download, version and favourite actions, and asks for confirmation before deleting. An action that cannot run says why: actions are greyed out with **Finish the operation that is already running** while another operation runs, and folder deletion explains that it waits for Trash and restore (#81) instead of failing silently. Row actions keep a 48dp touch target. Material 3 layout, accessibility and installed-device acceptance remain open.
