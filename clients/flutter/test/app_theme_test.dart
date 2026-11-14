@@ -36,6 +36,42 @@ void main() {
     }
   });
 
+  test('text keeps WCAG AA contrast on the surfaces the app uses', () {
+    // WCAG 2.1 AA needs 4.5:1 for normal-size text. The app renders body text,
+    // secondary text, filled buttons and error cards from these roles, so a
+    // seed change must not quietly make any of them unreadable.
+    double ratio(Color foreground, Color background) {
+      final a = foreground.computeLuminance();
+      final b = background.computeLuminance();
+      return (a > b ? (a + 0.05) / (b + 0.05) : (b + 0.05) / (a + 0.05));
+    }
+
+    for (final brightness in Brightness.values) {
+      final theme = buildNntDriveTheme(brightness);
+      final s = theme.colorScheme;
+      final pairs = {
+        'body text on the page': (s.onSurface, s.surface),
+        'secondary text on the page': (s.onSurfaceVariant, s.surface),
+        'row text on a card': (s.onSurface, s.surfaceContainerHighest),
+        'secondary text on a card': (s.onSurfaceVariant, s.surfaceContainerHighest),
+        'filled button label': (s.onPrimary, s.primary),
+        'error text on the page': (s.error, s.surface),
+        'conflict card text': (s.onErrorContainer, s.errorContainer),
+        // The app overrides these two itself, so they can drift from the
+        // generated pairs that Material guarantees.
+        'app bar title': (
+          theme.appBarTheme.foregroundColor!,
+          theme.appBarTheme.backgroundColor!
+        ),
+        'page background': (s.onSurface, theme.scaffoldBackgroundColor!),
+      };
+      for (final entry in pairs.entries) {
+        expect(ratio(entry.value.$1, entry.value.$2), greaterThanOrEqualTo(4.5),
+            reason: '${entry.key} must stay readable in $brightness');
+      }
+    }
+  });
+
   test('system bars stay transparent and only the icons follow brightness', () {
     final light = appSystemUiOverlayStyle(Brightness.light);
     expect(light.statusBarColor, Colors.transparent);
