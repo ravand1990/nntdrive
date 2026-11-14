@@ -38,20 +38,79 @@ class UpdateInfo {
     required this.assetUrl,
     required this.size,
     this.sha256,
+    this.releaseNotes = const [],
+    this.olderNotesOmitted = 0,
   });
 
   final String version;
+
+  /// Plain-text fallback of [releaseNotes], newest version first.
   final String notes;
   final String assetName;
   final Uri assetUrl;
   final int size;
   final String? sha256;
+
+  /// One entry per stable release between the installed build and [version],
+  /// newest first. Empty when a feed published no notes, in which case the
+  /// update is still offered.
+  final List<ReleaseNote> releaseNotes;
+
+  /// Older releases whose notes were dropped by the text caps.
+  final int olderNotesOmitted;
 }
 
+/// The notes of a single release, kept separate so the prompt can render one
+/// heading per version instead of one undifferentiated block of text.
+class ReleaseNote {
+  const ReleaseNote({required this.version, required this.body});
+
+  final String version;
+  final String body;
+}
+
+/// Aggregated upgrade notes: [entries] newest first, [omitted] older releases
+/// that no longer fit under the caps.
+class UpgradeNotes {
+  const UpgradeNotes({required this.entries, this.omitted = 0});
+
+  final List<ReleaseNote> entries;
+  final int omitted;
+
+  bool get isEmpty => entries.isEmpty;
+
+  /// Plain text used by callers that show notes without structure.
+  String get text {
+    final buffer = StringBuffer();
+    for (final entry in entries) {
+      if (buffer.isNotEmpty) buffer.write('\n\n');
+      buffer.write('Version ${entry.version}\n\n${entry.body}');
+    }
+    if (omitted > 0) {
+      if (buffer.isNotEmpty) buffer.write('\n\n');
+      buffer.write('$omitted older release${omitted == 1 ? '' : 's'} not shown.');
+    }
+    return buffer.toString();
+  }
+}
+
+/// Bounds for aggregated notes: enough for a whole minor series without letting
+/// a long history flood the update prompt.
+const defaultMaxNoteSections = 20;
+const defaultMaxNoteBodyChars = 4000;
+const defaultMaxNoteTotalChars = 20000;
+
+/// GitHub's maximum page size for the releases endpoint.
+const _releasePageSize = 100;
+const _maxReleasePages = 10;
+
 class Updater {
-  Updater(this.config);
+  Updater(this.config, {http.Client? client}) : _client = client;
 
   final UpdateConfig config;
+
+  /// Optional client for tests; production code creates one per request.
+  final http.Client? _client;
 
   static const defaultRepo = String.fromEnvironment(
     'NNTDRIVE_UPDATE_REPO',
@@ -114,10 +173,67 @@ class Updater {
           'Automatic updates are only supported on Windows and Linux.');
     }
     final current = await currentVersion();
-    final res = await http.get(
-      Uri.parse('https://api.github.com/repos/${config.repo}/releases/latest'),
-      headers: _headers,
+    final releases = await fetchReleases();
+    final target = selectTargetRelease(releases, current);
+    if (target == null) return null;
+    final tag = releaseTag(target)!;
+
+    final assets = (target['assets'] as List? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .toList();
+    final asset = selectPlatformAsset(assets, tag);
+    if (asset == null) {
+      throw UpdateException(
+          'Release $tag has no ${platformAssetName(tag)} asset.');
+    }
+    final assetName = asset['name'] as String;
+    final sums = assets.where((a) => a['name'] == 'SHA256SUMS.txt').firstOrNull;
+    final checksum =
+        sums == null ? null : await _fetchChecksum(sums, assetName);
+    final notes = collectUpgradeNotes(releases, installedVersion: current);
+    return UpdateInfo(
+      version: tag,
+      notes: notes.text,
+      releaseNotes: notes.entries,
+      olderNotesOmitted: notes.omitted,
+      assetName: assetName,
+      assetUrl: _assetUri(asset),
+      size: (asset['size'] as num?)?.toInt() ?? 0,
+      sha256: checksum,
     );
+  }
+
+  /// Reads the release feed page by page so a full first page never hides older
+  /// versions. Drafts and prereleases are returned unfiltered; selection and
+  /// notes handle them, because only stable releases are offered.
+  Future<List<Map<String, dynamic>>> fetchReleases() async {
+    final releases = <Map<String, dynamic>>[];
+    for (var page = 1; page <= _maxReleasePages; page++) {
+      final res = await _get(
+        Uri.parse('https://api.github.com/repos/${config.repo}/releases'
+            '?per_page=$_releasePageSize&page=$page'),
+        _headers,
+      );
+      _throwForStatus(res);
+      final decoded = jsonDecode(res.body);
+      if (decoded is! List) {
+        throw const UpdateException(
+            'GitHub returned an unexpected release feed.');
+      }
+      final batch = decoded.whereType<Map<String, dynamic>>().toList();
+      releases.addAll(batch);
+      if (batch.length < _releasePageSize) break;
+    }
+    return releases;
+  }
+
+  Future<http.Response> _get(Uri uri, Map<String, String> headers) async {
+    final client = _client;
+    if (client != null) return client.get(uri, headers: headers);
+    return http.get(uri, headers: headers);
+  }
+
+  void _throwForStatus(http.Response res) {
     if (res.statusCode == 404) {
       throw const UpdateException(
         'Could not read the latest release. Check the repository name, and for '
@@ -132,34 +248,6 @@ class Updater {
     if (res.statusCode != 200) {
       throw UpdateException('GitHub release check failed (${res.statusCode}).');
     }
-    final release = jsonDecode(res.body) as Map<String, dynamic>;
-    final tag =
-        (release['tag_name'] as String? ?? '').replaceFirst(RegExp(r'^v'), '');
-    if (tag.isEmpty) {
-      throw const UpdateException('The latest release has no version tag.');
-    }
-    if (!isNewerVersion(tag, current)) return null;
-
-    final assets = (release['assets'] as List? ?? const [])
-        .whereType<Map<String, dynamic>>()
-        .toList();
-    final asset = selectPlatformAsset(assets, tag);
-    if (asset == null) {
-      throw UpdateException(
-          'Release $tag has no ${platformAssetName(tag)} asset.');
-    }
-    final assetName = asset['name'] as String;
-    final sums = assets.where((a) => a['name'] == 'SHA256SUMS.txt').firstOrNull;
-    final checksum =
-        sums == null ? null : await _fetchChecksum(sums, assetName);
-    return UpdateInfo(
-      version: tag,
-      notes: (release['body'] as String? ?? '').trim(),
-      assetName: assetName,
-      assetUrl: _assetUri(asset),
-      size: (asset['size'] as num?)?.toInt() ?? 0,
-      sha256: checksum,
-    );
   }
 
   /// Downloads and verifies the release, stages it, then starts a detached
@@ -333,25 +421,130 @@ Map<String, dynamic>? selectPlatformAsset(
   return null;
 }
 
-/// Compares dotted numeric versions, ignoring any `-prerelease` suffix.
-bool isNewerVersion(String candidate, String current) {
-  List<int> parse(String value) {
-    final core =
-        value.toLowerCase().replaceFirst(RegExp(r'^v'), '').split('-').first;
-    final parts = core.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-    while (parts.length < 3) {
-      parts.add(0);
-    }
-    return parts.take(3).toList();
+/// Parses a dotted numeric version (`v` prefix, prerelease and build metadata
+/// allowed) into three comparable parts. Returns null for tags that are not
+/// ordinary versions, such as `nightly`.
+List<int>? parseVersionParts(String value) {
+  final core = value
+      .trim()
+      .toLowerCase()
+      .replaceFirst(RegExp(r'^v'), '')
+      .split('-')
+      .first
+      .split('+')
+      .first;
+  if (core.isEmpty) return null;
+  final parts = <int>[];
+  for (final piece in core.split('.')) {
+    final number = int.tryParse(piece);
+    if (number == null || number < 0) return null;
+    parts.add(number);
   }
-
-  final a = parse(candidate);
-  final b = parse(current);
-  for (var i = 0; i < 3; i++) {
-    if (a[i] != b[i]) return a[i] > b[i];
+  while (parts.length < 3) {
+    parts.add(0);
   }
-  return false;
+  return parts.take(3).toList();
 }
+
+/// Compares dotted numeric versions, ignoring any `-prerelease` suffix.
+/// Unparseable values sort below every real version.
+int compareVersions(String a, String b) {
+  final left = parseVersionParts(a);
+  final right = parseVersionParts(b);
+  if (left == null && right == null) return 0;
+  if (left == null) return -1;
+  if (right == null) return 1;
+  for (var i = 0; i < 3; i++) {
+    if (left[i] != right[i]) return left[i] > right[i] ? 1 : -1;
+  }
+  return 0;
+}
+
+bool isNewerVersion(String candidate, String current) =>
+    compareVersions(candidate, current) > 0;
+
+/// The version a release publishes, without the `v` prefix, or null when the
+/// tag is not an ordinary version.
+String? releaseTag(Map<String, dynamic> release) {
+  final raw = release['tag_name'];
+  if (raw is! String) return null;
+  final tag = raw.trim().replaceFirst(RegExp(r'^[vV]'), '');
+  return parseVersionParts(tag) == null ? null : tag;
+}
+
+bool _isStableRelease(Map<String, dynamic> release) =>
+    release['prerelease'] != true && release['draft'] != true;
+
+/// The newest stable release newer than [installed], or null when nothing is
+/// newer. Used for both the offered version and its download assets.
+Map<String, dynamic>? selectTargetRelease(
+  List<Map<String, dynamic>> releases,
+  String installed,
+) {
+  Map<String, dynamic>? best;
+  String? bestTag;
+  for (final release in releases) {
+    if (!_isStableRelease(release)) continue;
+    final tag = releaseTag(release);
+    if (tag == null || !isNewerVersion(tag, installed)) continue;
+    if (bestTag == null || compareVersions(tag, bestTag) > 0) {
+      best = release;
+      bestTag = tag;
+    }
+  }
+  return best;
+}
+
+/// Collects the notes of every stable release newer than [installedVersion],
+/// newest first. Releases without notes and duplicate versions are skipped, and
+/// the result is bounded by section count, per-release text and total text.
+UpgradeNotes collectUpgradeNotes(
+  List<Map<String, dynamic>> releases, {
+  required String installedVersion,
+  int maxSections = defaultMaxNoteSections,
+  int maxBodyChars = defaultMaxNoteBodyChars,
+  int maxTotalChars = defaultMaxNoteTotalChars,
+}) {
+  final candidates = <ReleaseNote>[];
+  final seen = <String>{};
+  for (final release in releases) {
+    if (!_isStableRelease(release)) continue;
+    final tag = releaseTag(release);
+    if (tag == null || !isNewerVersion(tag, installedVersion)) continue;
+    final body = (release['body'] as String? ?? '').trim();
+    if (body.isEmpty) continue;
+    final key = parseVersionParts(tag)!.join('.');
+    if (!seen.add(key)) continue;
+    candidates.add(ReleaseNote(version: tag, body: body));
+  }
+  candidates.sort((a, b) => compareVersions(b.version, a.version));
+
+  final entries = <ReleaseNote>[];
+  var used = 0;
+  var omitted = 0;
+  for (final note in candidates) {
+    final room = maxTotalChars - used;
+    if (entries.length >= maxSections || room < 40) {
+      omitted++;
+      continue;
+    }
+    var body = note.body;
+    if (body.length > maxBodyChars) {
+      body = '${body.substring(0, maxBodyChars).trimRight()}…';
+    }
+    if (body.length > room) {
+      body = '${body.substring(0, room).trimRight()}…';
+    }
+    if (body.isEmpty) {
+      omitted++;
+      continue;
+    }
+    entries.add(ReleaseNote(version: note.version, body: body));
+    used += body.length;
+  }
+  return UpgradeNotes(entries: entries, omitted: omitted);
+}
+
 
 /// Reads `SHA256SUMS.txt` lines (`<hash>  <name>` or `<hash> *<name>`).
 String? parseChecksum(String body, String assetName) {

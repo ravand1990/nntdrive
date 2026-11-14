@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Features
+
+- Update notes cover every version (#123): when an update is available, the Windows and Linux clients now show what changed in **each** release between the installed build and the newest one, not only the latest release's notes. Each version gets its own heading, newest first, in a scrollable prompt; releases without notes, prereleases and non-version tags are skipped, and the list is bounded so a long history cannot flood the window. The download still comes from the newest release with its `SHA256SUMS.txt` check, and a build newer than every published release still reports up to date.
+
 ## [0.16.0] - 2026-11-14
 
 ### Features
