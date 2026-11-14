@@ -31,6 +31,12 @@ class LocalRevealButton extends StatelessWidget {
           : enabled ? 'Show in folder'
               : 'Show in folder unavailable: ${state.displayExplanation}',
       icon: const Icon(Icons.folder_open_outlined),
+      // Material 3 icon buttons default to a 40dp container; row actions must
+      // stay a 48dp touch target.
+      style: IconButton.styleFrom(
+        minimumSize: const Size(48, 48),
+        tapTargetSize: MaterialTapTargetSize.padded,
+      ),
       onPressed: enabled ? onReveal : null,
     );
   }

@@ -26,6 +26,7 @@ import 'local_availability_widgets.dart';
 import 'file_rename.dart';
 import 'file_move.dart';
 import 'file_copy.dart';
+import 'item_actions.dart';
 import 'move_dialog.dart';
 import 'discard_on_back.dart';
 import 'rename_dialog.dart';
@@ -1163,7 +1164,7 @@ class _FilesPageState extends State<FilesPage> {
       _refresh();
       return;
     }
-    _showFileActions(file);
+    _itemActions(file);
   }
 
   /// Leaves one folder. Android system back and the app-bar up control share
@@ -1483,94 +1484,88 @@ class _FilesPageState extends State<FilesPage> {
     }
   }
 
-  void _showFileActions(RemoteFile file) {
+  /// One menu for files and folders, used by the row overflow control and by
+  /// tapping a file. Unavailable entries carry their reason instead of looking
+  /// like a broken control.
+  void _itemActions(RemoteFile file) {
     showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true,
       showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.insert_drive_file),
-              title: Text(_name(file)),
-              subtitle: Text('${_formatBytes(file.size)} · revision ${file.revision}'),
-            ),
-            const Divider(height: 1),
-            ListTile(
-              leading: const Icon(Icons.download),
-              title: const Text('Download and verify'),
-              onTap: () {
-                Navigator.pop(context);
-                _download(file);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.history),
-              title: const Text('Version history'),
-              onTap: () {
-                Navigator.pop(context);
-                _showVersions(file);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.upgrade),
-              title: const Text('Upload new version'),
-              subtitle: const Text('Keeps the previous revision recoverable'),
-              onTap: () {
-                Navigator.pop(context);
-                _uploadRevision(file);
-              },
-            ),
-            ListTile(
-              leading: Icon(file.favorite ? Icons.star : Icons.star_border),
-              title: Text(file.favorite ? 'Remove favorite' : 'Add favorite'),
-              onTap: () async {
-                Navigator.pop(context);
-                try {
-                  await _api.setFavorite(file.id, !file.favorite);
-                  await _refresh();
-                } catch (e) {
-                  _showError(e);
-                }
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.delete_outline),
-              title: const Text('Delete'),
-              onTap: () async {
-                Navigator.pop(context);
-                final ok = await showDialog<bool>(
-                  context: context,
-                  builder: (context) => AlertDialog(
-                    title: const Text('Delete file?'),
-                    content: const Text(
-                        'This removes the file and its versions from the index. '
-                        'Posted Usenet articles cannot be physically deleted.'),
-                    actions: [
-                      TextButton(
-                          onPressed: () => Navigator.pop(context, false),
-                          child: const Text('Cancel')),
-                      FilledButton(
-                          onPressed: () => Navigator.pop(context, true),
-                          child: const Text('Delete')),
-                    ],
-                  ),
-                );
-                if (ok == true) {
-                  try {
-                    await _api.deleteFile(file.id);
-                    await _refresh();
-                  } catch (e) {
-                    _showError(e);
-                  }
-                }
-              },
-            ),
-          ],
+      builder: (sheetContext) => ItemActionsSheet(
+        title: _name(file),
+        details: file.isDir
+            ? 'Folder'
+            : '${_formatBytes(file.size)} · revision ${file.revision}',
+        specs: itemActionSpecs(
+          isDir: file.isDir,
+          favorite: file.favorite,
+          busy: _renaming,
         ),
+        onSelected: (kind) {
+          Navigator.pop(sheetContext);
+          _runItemAction(file, kind);
+        },
       ),
     );
+  }
+
+  Future<void> _runItemAction(RemoteFile file, ItemActionKind kind) async {
+    switch (kind) {
+      case ItemActionKind.open:
+        _open(file);
+        return;
+      case ItemActionKind.download:
+        return _download(file);
+      case ItemActionKind.versions:
+        return _showVersions(file);
+      case ItemActionKind.uploadVersion:
+        return _uploadRevision(file);
+      case ItemActionKind.favorite:
+        try {
+          await _api.setFavorite(file.id, !file.favorite);
+          await _refresh();
+        } catch (e) {
+          _showError(e);
+        }
+        return;
+      case ItemActionKind.rename:
+        return _rename(file);
+      case ItemActionKind.move:
+        return _move(file);
+      case ItemActionKind.copy:
+        return _copy(file);
+      case ItemActionKind.delete:
+        return _confirmDelete(file);
+    }
+  }
+
+  /// Deleting is irreversible for the client, so it always asks first.
+  Future<void> _confirmDelete(RemoteFile file) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(file.isDir ? 'Delete folder?' : 'Delete file?'),
+        content: const Text(
+            'This removes the entry and its versions from the index. '
+            'Posted Usenet articles cannot be physically deleted.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    try {
+      await _api.deleteFile(file.id);
+      await _refresh();
+    } catch (e) {
+      _showError(e);
+    }
   }
 
   void _showProgress(String message) {
@@ -2035,24 +2030,26 @@ class _FilesPageState extends State<FilesPage> {
                             trailing: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                if (f.favorite) const Icon(Icons.star, size: 18),
+                                if (f.favorite)
+                                  const Padding(
+                                    padding: EdgeInsets.symmetric(horizontal: 4),
+                                    child: Icon(Icons.star, size: 18),
+                                  ),
                                 LocalRevealButton(
                                   state: local,
                                   onReveal: () => _revealLocal(f),
                                 ),
                                 IconButton(
-                                  tooltip: f.isDir ? 'Rename folder' : 'Rename file',
-                                  icon: const Icon(Icons.edit_outlined),
-                                  onPressed: _renaming ? null : () => _rename(f),
+                                  tooltip: 'More actions for ${_name(f)}',
+                                  icon: const Icon(Icons.more_vert),
+                                  // Material 3 icon buttons default to a 40dp
+                                  // container; keep the row target at 48dp.
+                                  style: IconButton.styleFrom(
+                                    minimumSize: const Size(48, 48),
+                                    tapTargetSize: MaterialTapTargetSize.padded,
+                                  ),
+                                  onPressed: () => _itemActions(f),
                                 ),
-                                IconButton(
-                                  tooltip: f.isDir ? 'Move folder' : 'Move file',
-                                  icon: const Icon(Icons.drive_file_move_outlined),
-                                  onPressed: _renaming ? null : () => _move(f),
-                                ),
-                                CopyFileButton(isDir: f.isDir, busy: _renaming,
-                                  onCopy: () => _copy(f)),
-                                if (f.isDir) const Icon(Icons.chevron_right),
                               ],
                             ),
                             onTap: () => _open(f),
