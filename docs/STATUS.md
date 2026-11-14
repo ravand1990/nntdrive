@@ -1,5 +1,23 @@
 # Project status
 
+## Android back navigation (#78 partial)
+
+Android system back in the file browser now leaves one folder at a time and only
+lets the app close at the account root; the app-bar control uses the same path and
+is labelled **Up one folder**. Opening a folder keeps its decrypted name in the
+title, because the trail now retains the names it was opened under instead of
+being cleared by each listing. Back inside the rename or new-folder dialog asks
+**Discard your text?** rather than discarding typed input silently. Verified with
+`flutter analyze` (clean) and the full Flutter suite (269 passed, 4 platform
+skips) in the pinned isolated wrapper, including a new widget regression that
+fails when the folder scope is removed and a dialog regression that fails when
+the discard guard is removed. Predictive-back preview for the folder trail is not
+animated (Flutter suppresses the system preview for a route that cannot pop), and
+the gesture plus the dialogs are unverified on a real Android device — that
+installed pass stays open on
+[#78](https://github.com/ravand1990/nntdrive/issues/78). See
+[navigation behaviour](CLIENTS.md#navigation-and-back-behaviour-78-partial).
+
 ## Unsynced-items overview (#79 partial)
 
 The sync page now opens a device-local **Not synced** view. For every enabled
