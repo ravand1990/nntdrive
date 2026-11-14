@@ -6,6 +6,8 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-14
+
 ### Features
 
 - Android permission handling (#78 partial): storage refusals are now classified instead of treated as one failure. A first refusal stays retryable and keeps the folder usable, while a refusal the OS will not prompt about again — including every All files access refusal on Android 11+ — is reported as permanent, offers an **Open settings** action and stops repeating a prompt that cannot appear. The rationale dialog says up front that declining leaves the app usable and that app-private storage needs no permission.
