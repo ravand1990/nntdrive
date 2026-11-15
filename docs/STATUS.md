@@ -684,9 +684,7 @@ files. The Trash page has a per-row **Delete permanently** action and an
 metadata-only: articles already posted to Usenet cannot be retracted, and the
 dialogs say so.
 
-This is not completion: rewind continuation past the
-first page of changes and installed TalkBack/device acceptance remain open on
-#81.
+This is not completion: installed TalkBack/device acceptance remains open on #81.
 
 ## Per-file version history (#81 partial)
 
@@ -739,6 +737,14 @@ remain in history and that posted Usenet copies cannot be retracted. Its scope
 is the whole account by default and can be narrowed to one folder through the
 same locally decrypted picker; choosing a different folder plans again, so the
 user never confirms counts that belong to the previous scope.
+
+A large plan is read page by page with the preview's keyset cursor, up to 25
+pages in one planning pass; if changes remain after that, the dialog says so and
+offers **Load more changes**. Rows already seen are skipped, so a repeated
+cursor cannot loop or send one file twice. Confirming applies the loaded plan in
+batches of at most 200 files — the backend's per-request limit — and the
+dialogs report the summed result; if a later batch fails, the dialog says how
+many files were already changed instead of claiming nothing happened.
 
 ## Recent implementation milestones
 

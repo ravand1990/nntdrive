@@ -44,10 +44,11 @@ class TrashPage extends StatefulWidget {
   final Future<void> Function() emptyTrash;
 
   /// Plans a rewind to an earlier instant, for the whole account or for one
-  /// folder when [scopeId] is given. When null the rewind action is not
-  /// offered at all.
-  final Future<RewindPreview> Function(DateTime before, {String? scopeId})?
-      previewRewind;
+  /// folder when [scopeId] is given. When [after] is given only files whose id
+  /// sorts after it are returned, so a large plan is read page by page. When
+  /// null the rewind action is not offered at all.
+  final Future<RewindPreview> Function(DateTime before,
+      {String? scopeId, String? after})? previewRewind;
 
   /// Applies a plan that the user has just seen and confirmed.
   final Future<RewindResult> Function(DateTime before, List<RewindItem> items,
@@ -482,8 +483,8 @@ class _RewindDialog extends StatefulWidget {
     this.pickScope,
   });
 
-  final Future<RewindPreview> Function(DateTime before, {String? scopeId})
-      preview;
+  final Future<RewindPreview> Function(DateTime before,
+      {String? scopeId, String? after}) preview;
   final Future<RewindResult> Function(DateTime before, List<RewindItem> items,
       {String? scopeId}) apply;
   final Future<List<String>> Function(List<RewindItem> items) decrypt;
@@ -502,12 +503,23 @@ class _RewindDialogState extends State<_RewindDialog> {
     (label: '30 days ago', days: 30),
   ];
 
+  /// One plan read keeps asking for the next page up to this many pages, so a
+  /// single confirmation stays bounded; leftovers get a manual "load more".
+  static const _maxPages = 25;
+
+  /// The backend refuses more than this in one confirmed request.
+  static const _applyBatch = 200;
+
   int? _presetDays;
   DateTime? _before;
-  RewindPreview? _plan;
-  List<String> _names = const [];
+  RewindCounts? _counts;
+  final List<RewindItem> _items = [];
+  final List<String> _names = [];
+  final Set<String> _seenIds = {};
+  String? _next;
   bool _loading = false;
   bool _applying = false;
+  int _appliedSoFar = 0;
   String? _error;
 
   /// The folder to rewind, or null for the whole account.
@@ -515,37 +527,103 @@ class _RewindDialogState extends State<_RewindDialog> {
 
   String get _scopeName => _scope?.name ?? 'My files';
 
+  void _reset() {
+    _counts = null;
+    _items.clear();
+    _names.clear();
+    _seenIds.clear();
+    _next = null;
+    _appliedSoFar = 0;
+  }
+
+  /// Opens the sealed names of [items]; a row whose name cannot be opened stays
+  /// unreadable rather than showing ciphertext.
+  Future<List<String>> _decrypt(List<RewindItem> items) async {
+    if (items.isEmpty) return const [];
+    try {
+      return await widget.decrypt(items);
+    } catch (_) {
+      return List.filled(items.length, 'Name unavailable');
+    }
+  }
+
+  /// Adds [page] to the plan and keeps reading further pages while the plan has
+  /// more, so one confirmed rewind covers every changed file, not only the
+  /// first page. Rows already seen are skipped, so a repeated cursor cannot
+  /// loop or apply one file twice.
+  Future<void> _extend(DateTime before, RewindPreview page) async {
+    var current = page;
+    var pages = 1;
+    while (true) {
+      final fresh = <RewindItem>[];
+      for (final item in current.items) {
+        if (_seenIds.add(item.id)) fresh.add(item);
+      }
+      final names = await _decrypt(fresh);
+      if (!mounted) return;
+      setState(() {
+        _counts = current.counts;
+        _items.addAll(fresh);
+        _names.addAll(names);
+        _next = current.next;
+      });
+      final cursor = current.next;
+      if (cursor == null || pages >= _maxPages || fresh.isEmpty) return;
+      current =
+          await widget.preview(before, scopeId: _scope?.id, after: cursor);
+      pages++;
+      if (!mounted) return;
+    }
+  }
+
   Future<void> _choose(DateTime before, {int? preset}) async {
     setState(() {
       _presetDays = preset;
       _before = before;
-      _plan = null;
-      _names = const [];
+      _reset();
       _error = null;
       _loading = true;
     });
     try {
-      final plan = await widget.preview(before, scopeId: _scope?.id);
-      List<String> names = const [];
-      if (plan.items.isNotEmpty) {
-        try {
-          names = await widget.decrypt(plan.items);
-        } catch (_) {
-          names = const []; // Unreadable names are never shown as ciphertext.
-        }
-      }
+      final first = await widget.preview(before, scopeId: _scope?.id);
       if (!mounted) return;
-      setState(() {
-        _plan = plan;
-        _names = names;
-        _loading = false;
-      });
+      await _extend(before, first);
+      if (!mounted) return;
+      setState(() => _loading = false);
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _error = _describeError(e,
             fallback: 'The rewind plan could not be read. Check the connection '
                 'and try again.');
+        _loading = false;
+      });
+    }
+  }
+
+  /// Continues a plan that stopped before its last page, for example when the
+  /// page budget was reached.
+  Future<void> _loadMore() async {
+    final before = _before;
+    final cursor = _next;
+    if (before == null || cursor == null || _loading || _applying) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final page =
+          await widget.preview(before, scopeId: _scope?.id, after: cursor);
+      if (!mounted) return;
+      await _extend(before, page);
+      if (!mounted) return;
+      setState(() => _loading = false);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = _describeError(e,
+            fallback: 'The rest of the rewind plan could not be read. Check '
+                'the connection and try again.');
         _loading = false;
       });
     }
@@ -575,8 +653,7 @@ class _RewindDialogState extends State<_RewindDialog> {
     if (choice == null || !mounted) return;
     setState(() {
       _scope = choice.isRoot ? null : choice;
-      _plan = null;
-      _names = const [];
+      _reset();
       _error = null;
     });
     final before = _before;
@@ -585,24 +662,44 @@ class _RewindDialogState extends State<_RewindDialog> {
   }
 
   Future<void> _apply() async {
-    final plan = _plan;
     final before = _before;
-    if (plan == null || before == null || plan.items.isEmpty) return;
+    if (before == null || _items.isEmpty) return;
     setState(() {
       _applying = true;
+      _appliedSoFar = 0;
       _error = null;
     });
+    var applied = 0;
+    var unchanged = 0;
+    final failed = <({String id, String reason})>[];
     try {
-      final result =
-          await widget.apply(before, plan.items, scopeId: _scope?.id);
+      // One confirmed request carries at most _applyBatch files, so a plan
+      // larger than that is applied in order, batch by batch.
+      for (var start = 0; start < _items.length; start += _applyBatch) {
+        final end = start + _applyBatch < _items.length
+            ? start + _applyBatch
+            : _items.length;
+        final result = await widget.apply(before, _items.sublist(start, end),
+            scopeId: _scope?.id);
+        applied += result.applied;
+        unchanged += result.unchanged;
+        failed.addAll(result.failed);
+        if (!mounted) return;
+        setState(() => _appliedSoFar = applied);
+      }
       if (!mounted) return;
-      Navigator.of(context).pop(result);
+      Navigator.of(context).pop(RewindResult(applied, unchanged, failed));
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = _describeError(e,
-            fallback: 'The rewind could not be applied. Nothing was changed by '
-                'this attempt; preview again.');
+        _error = applied > 0
+            ? 'The rewind stopped after $applied '
+                '${applied == 1 ? 'file was' : 'files were'} changed. Some of '
+                'the rest may not have been changed; preview again to see '
+                'what is left.'
+            : _describeError(e,
+                fallback: 'The rewind could not be applied. Nothing was changed '
+                    'by this attempt; preview again.');
         _applying = false;
       });
     }
@@ -618,8 +715,9 @@ class _RewindDialogState extends State<_RewindDialog> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final plan = _plan;
-    final changes = plan?.items.length ?? 0;
+    final counts = _counts;
+    final changes = _items.length;
+    final planned = counts?.rewind ?? changes;
     return AlertDialog(
       title: const Text('Rewind to an earlier date'),
       content: SizedBox(
@@ -687,7 +785,7 @@ class _RewindDialogState extends State<_RewindDialog> {
                 const SizedBox(height: 12),
                 Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
               ],
-              if (plan != null) ...[
+              if (counts != null) ...[
                 const SizedBox(height: 16),
                 Text('As of ${_when(_before ?? DateTime.now())}',
                     style: theme.textTheme.titleSmall),
@@ -696,11 +794,11 @@ class _RewindDialogState extends State<_RewindDialog> {
                     ? 'Nothing would change.'
                     : '$changes ${changes == 1 ? 'file would' : 'files would'} '
                         'go back to an earlier version.'),
-                if (plan.counts.createdAfter > 0)
-                  Text('${plan.counts.createdAfter} created after that date '
+                if (counts.createdAfter > 0)
+                  Text('${counts.createdAfter} created after that date '
                       'stay as they are.'),
-                if (plan.counts.pendingReferences > 0)
-                  Text('${plan.counts.pendingReferences} cannot be rewound yet '
+                if (counts.pendingReferences > 0)
+                  Text('${counts.pendingReferences} cannot be rewound yet '
                       'because their content references are still pending.'),
                 if (changes > 0) ...[
                   const SizedBox(height: 8),
@@ -723,10 +821,19 @@ class _RewindDialogState extends State<_RewindDialog> {
                   if (changes > 50)
                     Text('and ${changes - 50} more',
                         style: theme.textTheme.bodySmall),
-                  if (plan.next != null)
+                  if (_next != null) ...[
+                    const SizedBox(height: 4),
                     Text(
-                        'Only the first $changes changed files are shown. '
-                        'Rewind again afterwards to continue with the rest.',
+                        'Showing $changes of $planned changed files. Load the '
+                        'rest to rewind them all in one go.',
+                        style: theme.textTheme.bodySmall),
+                    TextButton(
+                      onPressed: _loading || _applying ? null : _loadMore,
+                      child: const Text('Load more changes'),
+                    ),
+                  ],
+                  if (_applying && _appliedSoFar > 0)
+                    Text('$_appliedSoFar of $changes changed so far.',
                         style: theme.textTheme.bodySmall),
                   const SizedBox(height: 8),
                   Text('Already posted Usenet copies cannot be retracted; '
