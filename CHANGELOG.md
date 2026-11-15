@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Features
+
+- Per-file version history and restore (#81 partial): a file's **Version history** action now opens a history that marks the version the file currently uses, shows when each earlier content was committed and how large it is, lets any earlier version be downloaded under its own dated name, and restores one after a confirmation. Restoring only points the file back at a version that already exists — nothing is uploaded, downloaded or deleted, every version stays listed, so you can switch back at any time. The server re-checks that the version belongs to this file and account, refuses a folder, a trashed file or a version whose content references are still pending, and tells the account's other devices to refresh; names are still decrypted only on the device.
+
 ## [0.22.0] - 2026-11-15
 
 ### Features

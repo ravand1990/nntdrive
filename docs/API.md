@@ -94,10 +94,30 @@ remain allowed. Copying into a root is normal folder behaviour.
 | POST | `/files/{id}/restore` | `{parent_id?}` (see Trash below) |
 | GET | `/files/{id}/versions` | revision metadata |
 | POST | `/files/{id}/versions` | `{revision_id,parent_revision,base_revision,size,sealed_manifest}` |
+| POST | `/files/{id}/versions/{revision}/restore` | make an earlier revision current again |
 | GET | `/files/{id}/manifest?revision=<uuid>` | raw sealed manifest bytes |
 
 `base_revision` provides optimistic concurrency: a mismatch returns `409`.
 A version is only visible after commit; clients must upload all chunks first.
+
+### Version restore
+
+`POST /files/{id}/versions/{revision}/restore` moves the file's current pointer
+back to a revision that already exists. It uploads, downloads and deletes
+nothing: every version row and its chunk references stay, so the content that
+was current before the restore can be restored in turn. The response is
+`{"restored": true, "unchanged": false, "revision": "<uuid>"}`, or
+`{"restored": false, "unchanged": true, ...}` when that revision was already
+current. Each restore publishes one `version` event with `{"restore": true}` so
+other devices refresh through their normal sync path.
+
+The call is tenant-scoped and takes the account namespace lock before it reads
+the file, so another account's file or revision answers `404` rather than
+revealing ownership. A folder (`400`), a file in the trash (`409`, restore it
+from the trash first) and a revision whose content references are still pending
+(`409`) are refused. Nothing here exposes a sealed manifest: the stored bytes
+are served later by `GET /files/{id}/manifest?revision=<uuid>` exactly as they
+were committed.
 
 ## Trash
 

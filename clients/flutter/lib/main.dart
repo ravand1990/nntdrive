@@ -43,6 +43,7 @@ import 'update_prompt.dart';
 import 'android_update.dart';
 import 'android_update_prompt.dart';
 import 'trash_page.dart';
+import 'version_history.dart';
 
 const _uuid = Uuid();
 
@@ -1518,48 +1519,34 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   Future<void> _showVersions(RemoteFile file) async {
-    try {
-      final versions = await _api.versions(file.id);
-      if (!mounted) return;
-      await showDialog<void>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text('Versions — ${_name(file)}'),
-          content: SizedBox(
-            width: 520,
-            child: ListView.separated(
-              shrinkWrap: true,
-              itemCount: versions.length,
-              separatorBuilder: (_, __) => const Divider(height: 1),
-              itemBuilder: (context, i) {
-                final v = versions[i];
-                return ListTile(
-                  dense: true,
-                  title: Text(v.createdAt),
-                  subtitle: Text('${_formatBytes(v.size)} · ${v.revisionId}'),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.download),
-                    tooltip: 'Download this version',
-                    onPressed: () {
-                      Navigator.pop(context);
-                      _download(file,
-                          revisionId: v.revisionId,
-                          asName: '${p.basenameWithoutExtension(_name(file))} '
-                              '(${v.createdAt.substring(0, 10)})'
-                              '${p.extension(_name(file))}');
-                    },
-                  ),
-                );
-              },
-            ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
-          ],
-        ),
-      );
-    } catch (e) {
-      _showError(e);
+    var restored = false;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => VersionHistoryDialog(
+        title: _name(file),
+        currentVersion: file.currentVersion,
+        load: () => _api.versions(file.id),
+        restore: (version) async {
+          // The server re-checks that this revision belongs to the file; the
+          // history itself keeps every version, so this is reversible.
+          await _api.restoreVersion(file.id, version.revisionId);
+          restored = true;
+        },
+        download: (version) {
+          Navigator.pop(dialogContext);
+          _download(
+            file,
+            revisionId: version.revisionId,
+            asName: '${p.basenameWithoutExtension(_name(file))} '
+                '(${formatVersionTime(version.createdAt)})'
+                '${p.extension(_name(file))}',
+          );
+        },
+      ),
+    );
+    if (restored && mounted) {
+      // The file's current content, size and revision changed.
+      await _refresh();
     }
   }
 
