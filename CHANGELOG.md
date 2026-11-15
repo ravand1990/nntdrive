@@ -6,6 +6,16 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-15
+
+### Features
+
+- Trash and restore (#81 partial): deleting a file or folder now moves it to a Trash you can restore from. The new **Trash** entry in the file browser lists every deleted item with its decrypted name, whether it is a file or a folder, the deletion date and the days left before the retention window closes (30 days by default). **Restore** puts the item back where it came from with its versions intact; if that folder is gone, the app offers to restore it to My files instead, and an item past the window stays visible but cannot be restored. Folder deletion works again and takes the whole folder and everything inside it at once, so nothing is left invisibly stranded. Deleted names are still decrypted only on the device, and deleting still never retracts articles already posted to Usenet.
+
+### Tests
+
+- Accessibility checks for the file browser (#78 partial): keyboard focus order, TalkBack names and 48dp touch targets are now pinned by tests, so a later layout change cannot silently break them.
+
 ## [0.17.2] - 2026-11-14
 
 ### Bug fixes
