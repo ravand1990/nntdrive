@@ -2606,6 +2606,35 @@ async fn empty_trash(state: &AppState, token: &str) -> (StatusCode, Value) {
     call(state, req("DELETE", "/api/v1/trash", Some(token), None)).await
 }
 
+/// Enqueue one maintenance job and wait for its recorded result.
+async fn run_maintenance_job(state: &AppState, kind: &str, payload: Value) -> Value {
+    let id = nntdrive_backend::jobs::enqueue(&state.pool, kind, None, payload, 0)
+        .await
+        .unwrap();
+    let worker = tokio::spawn(nntdrive_backend::jobs::worker_loop(
+        Arc::new(state.clone()),
+        format!("{kind}-test"),
+    ));
+    let result = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        loop {
+            let result: Option<Value> = sqlx::query_scalar("SELECT result FROM jobs WHERE id = $1")
+                .bind(id)
+                .fetch_one(&state.pool)
+                .await
+                .unwrap();
+            if let Some(result) = result {
+                return result;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("maintenance job did not finish");
+    worker.abort();
+    let _ = worker.await;
+    result
+}
+
 async fn child_ids(state: &AppState, token: &str, parent: Uuid) -> Vec<Uuid> {
     let (s, body) = call(
         state,
@@ -2925,4 +2954,143 @@ async fn purge_removes_trashed_metadata_and_empties_the_trash() {
             .any(|e| e["kind"] == json!("purge") && e["file_id"] == json!(gone)),
         "{events}"
     );
+}
+
+// Retention is enforced without a client: the background job drops metadata
+// whose window has passed, keeps what is still restorable, publishes one purge
+// event per removed root and never reaches into another account.
+#[tokio::test]
+async fn retention_purge_removes_only_expired_trash_metadata() {
+    let Some(env) = env().await else { return };
+    let alice = register(&env.state, "purge-alice@example.com").await;
+    let bob = register(&env.state, "purge-bob@example.com").await;
+
+    let expired = Uuid::new_v4();
+    let expired_child = Uuid::new_v4();
+    let fresh = Uuid::new_v4();
+    let live = Uuid::new_v4();
+    create_node(&env.state, &alice.token, expired, None, true).await;
+    create_node(
+        &env.state,
+        &alice.token,
+        expired_child,
+        Some(expired),
+        false,
+    )
+    .await;
+    create_node(&env.state, &alice.token, fresh, None, false).await;
+    create_node(&env.state, &alice.token, live, None, false).await;
+    delete_node(&env.state, &alice.token, expired).await;
+    delete_node(&env.state, &alice.token, fresh).await;
+
+    let bob_expired = Uuid::new_v4();
+    create_node(&env.state, &bob.token, bob_expired, None, false).await;
+    delete_node(&env.state, &bob.token, bob_expired).await;
+
+    for id in [expired, expired_child, bob_expired] {
+        sqlx::query("UPDATE files SET deleted_at = now() - interval '31 days' WHERE id = $1")
+            .bind(id)
+            .execute(&env.state.pool)
+            .await
+            .unwrap();
+    }
+
+    let result = run_maintenance_job(&env.state, "trash_purge", json!({})).await;
+    assert_eq!(result["retention_days"], json!(30), "{result}");
+    assert_eq!(result["purged_roots"], json!(2), "{result}");
+    assert_eq!(result["files_removed"], json!(3), "{result}");
+    assert_eq!(result["skipped"], json!(0), "{result}");
+    assert_eq!(result["continued"], json!(false), "{result}");
+
+    // The expired folder went with its child, in this account only.
+    let left: i64 = sqlx::query_scalar("SELECT count(*) FROM files WHERE id = ANY($1)")
+        .bind(vec![expired, expired_child])
+        .fetch_one(&env.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0, "the expired subtree is gone");
+    assert!(
+        trash(&env.state, &alice.token).await["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|f| f["id"] != json!(expired)),
+        "the purge is reflected in the trash listing"
+    );
+    assert_eq!(
+        trash(&env.state, &bob.token).await["files"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0,
+        "the other account's expired entry is gone too"
+    );
+
+    // Inside the window nothing is lost: the fresh item still restores.
+    let (s, body) = restore(&env.state, &alice.token, fresh, None).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["restored"], json!(1));
+    let live_rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM files WHERE id = $1 AND deleted = FALSE")
+            .bind(live)
+            .fetch_one(&env.state.pool)
+            .await
+            .unwrap();
+    assert_eq!(live_rows, 1, "a live file is never touched");
+
+    // Clients learn about the removal from the change feed.
+    let (_, events) = call(
+        &env.state,
+        req("GET", "/api/v1/events", Some(&alice.token), None),
+    )
+    .await;
+    assert!(
+        events["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["kind"] == json!("purge")
+                && e["file_id"] == json!(expired)
+                && e["payload"]["expired"] == json!(true)),
+        "{events}"
+    );
+}
+
+// An expired root that still holds live rows is a state the API prevents. If it
+// exists anyway the retention pass leaves it alone instead of erroring or
+// cascading onto live metadata.
+#[tokio::test]
+async fn retention_purge_skips_a_subtree_with_live_rows() {
+    let Some(env) = env().await else { return };
+    let alice = register(&env.state, "purge-guard@example.com").await;
+
+    let guarded = Uuid::new_v4();
+    let guarded_child = Uuid::new_v4();
+    create_node(&env.state, &alice.token, guarded, None, true).await;
+    create_node(
+        &env.state,
+        &alice.token,
+        guarded_child,
+        Some(guarded),
+        false,
+    )
+    .await;
+    sqlx::query(
+        "UPDATE files SET deleted = TRUE, deleted_at = now() - interval '31 days' WHERE id = $1",
+    )
+    .bind(guarded)
+    .execute(&env.state.pool)
+    .await
+    .unwrap();
+
+    let result = run_maintenance_job(&env.state, "trash_purge", json!({})).await;
+    assert_eq!(result["purged_roots"], json!(0), "{result}");
+    assert_eq!(result["files_removed"], json!(0), "{result}");
+    assert_eq!(result["skipped"], json!(1), "{result}");
+    let kept: i64 = sqlx::query_scalar("SELECT count(*) FROM files WHERE id = ANY($1)")
+        .bind(vec![guarded, guarded_child])
+        .fetch_one(&env.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(kept, 2, "an unsafe subtree is kept");
 }

@@ -118,6 +118,7 @@ async fn process(state: &AppState, job: &Job) -> anyhow::Result<Value> {
         "health_sweep" => health_sweep(state, job).await,
         "repair_stripe" => repair_stripe(state, job).await,
         "refresh_sweep" => refresh_sweep(state, job).await,
+        "trash_purge" => trash_purge(state, job).await,
         "orphan_gc" => {
             let account_id: Uuid = job
                 .payload
@@ -293,6 +294,33 @@ async fn refresh_sweep(state: &AppState, job: &Job) -> anyhow::Result<Value> {
     )
 }
 
+/// How often the trash retention purge runs. The retention window itself comes
+/// from `NNTDRIVE_TRASH_RETENTION_DAYS`; this only bounds how long expired
+/// metadata may linger, so a daily pass is enough.
+const TRASH_PURGE_INTERVAL_SECS: u64 = 24 * 60 * 60;
+
+async fn trash_purge(state: &AppState, job: &Job) -> anyhow::Result<Value> {
+    let after: Option<Uuid> = job
+        .payload
+        .get("after")
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse().ok());
+    let result = crate::trash::purge_expired(state, after, crate::trash::PURGE_BATCH).await?;
+    if result["continued"].as_bool() == Some(true) {
+        if let Some(next) = result["after"].as_str() {
+            enqueue(
+                &state.pool,
+                "trash_purge",
+                Some(&format!("trash_purge:{next}")),
+                json!({ "after": next }),
+                0,
+            )
+            .await?;
+        }
+    }
+    Ok(result)
+}
+
 /// Enqueues periodic maintenance if the queue does not already hold it.
 pub async fn schedule_periodic(state: &AppState) {
     let now = Utc::now();
@@ -312,11 +340,20 @@ pub async fn schedule_periodic(state: &AppState) {
         300,
     )
     .await;
+    let _ = enqueue(
+        &state.pool,
+        "trash_purge",
+        Some(&format!("trash_purge:{}", now.format("%Y-%m-%d"))),
+        json!({}),
+        0,
+    )
+    .await;
 }
 
 pub async fn scheduler_loop(state: Arc<AppState>) {
     let mut health_due = tokio::time::Instant::now();
     let mut refresh_due = tokio::time::Instant::now();
+    let mut trash_due = tokio::time::Instant::now();
     loop {
         let now = tokio::time::Instant::now();
         if now >= health_due {
@@ -340,6 +377,17 @@ pub async fn scheduler_loop(state: Arc<AppState>) {
             )
             .await;
             refresh_due = now + StdDuration::from_secs(state.config.retention_interval_secs);
+        }
+        if now >= trash_due {
+            let _ = enqueue(
+                &state.pool,
+                "trash_purge",
+                Some(&format!("trash_purge:{}", Utc::now().format("%Y-%m-%d"))),
+                json!({}),
+                0,
+            )
+            .await;
+            trash_due = now + StdDuration::from_secs(TRASH_PURGE_INTERVAL_SECS);
         }
         tokio::time::sleep(StdDuration::from_secs(60)).await;
     }

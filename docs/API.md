@@ -143,7 +143,14 @@ A destination that is a file, a deleted node, another account's node or inside
 the restored subtree is refused (`400`/`404`/`409`). An item deleted longer ago
 than `retention_days` cannot be restored and returns `410`. Restoring something
 that is not deleted returns `409`. `retention_days` comes from
-`NNTDRIVE_TRASH_RETENTION_DAYS` (default 30); changing it never deletes data.
+`NNTDRIVE_TRASH_RETENTION_DAYS` (default 30).
+
+The window is also enforced without a client: a daily `trash_purge` background
+job permanently deletes the metadata of trashed top-level nodes whose deadline
+has passed, with the same rules and events as manual permanent deletion below.
+Each root is removed in its own account-scoped transaction under the account
+namespace lock, so a restore that wins the race keeps its item. Changing the
+window therefore does delete data once an item falls out of it.
 
 Permanent deletion removes the account's metadata for good and is separate from
 the retention window:

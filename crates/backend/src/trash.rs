@@ -483,3 +483,119 @@ async fn ensure_no_live_children(
     }
     Ok(())
 }
+
+/// How many expired roots one retention purge job removes before handing the
+/// rest to a continuation job.
+pub const PURGE_BATCH: i64 = 200;
+
+/// Server-side retention enforcement: permanently delete trashed roots whose
+/// deadline has passed.
+///
+/// Each root is removed in its own account-scoped transaction with the same
+/// namespace lock as the interactive purge endpoints, and publishes one `purge`
+/// event so other devices refresh. Removal stays metadata-only: articles
+/// already posted to Usenet cannot be retracted. A root that cannot be removed
+/// safely (a fixed account root, or a subtree that still holds live rows) is
+/// counted as skipped instead of failing the sweep, and the `after` cursor moves
+/// past it so the next run does not retry it in a loop.
+pub async fn purge_expired(
+    state: &AppState,
+    after: Option<Uuid>,
+    limit: i64,
+) -> anyhow::Result<Value> {
+    let retention_days = state.config.trash_retention_days as i64;
+    let rows = sqlx::query(
+        "SELECT f.id, f.account_id
+         FROM files f
+         WHERE f.deleted = TRUE
+           AND ($1::uuid IS NULL OR f.id > $1::uuid)
+           AND (f.parent_id IS NULL OR NOT EXISTS (
+                 SELECT 1 FROM files p
+                 WHERE p.account_id = f.account_id
+                   AND p.id = f.parent_id
+                   AND p.deleted = TRUE
+           ))
+           AND COALESCE(f.deleted_at, f.updated_at) + ($2::bigint * interval '1 day') <= now()
+         ORDER BY f.id
+         LIMIT $3",
+    )
+    .bind(after)
+    .bind(retention_days)
+    .bind(limit)
+    .fetch_all(&state.pool)
+    .await?;
+
+    let mut purged_roots = 0usize;
+    let mut files_removed = 0i64;
+    let mut skipped = 0usize;
+    let mut last = None;
+    for row in &rows {
+        let id: Uuid = row.get("id");
+        let account_id: Uuid = row.get("account_id");
+        last = Some(id);
+
+        let mut tx = state.pool.begin().await?;
+        lock_namespace(&mut tx, account_id).await?;
+        // Re-check under the lock: the item may have been restored, purged or
+        // moved since the batch read, and a restorable item must never go.
+        let still_expired: Option<bool> = sqlx::query_scalar(
+            "SELECT COALESCE(f.deleted_at, f.updated_at) + ($3::bigint * interval '1 day') <= now()
+             FROM files f
+             WHERE f.account_id = $1 AND f.id = $2 AND f.deleted = TRUE
+               AND (f.parent_id IS NULL OR NOT EXISTS (
+                     SELECT 1 FROM files p
+                     WHERE p.account_id = f.account_id
+                       AND p.id = f.parent_id
+                       AND p.deleted = TRUE
+               ))",
+        )
+        .bind(account_id)
+        .bind(id)
+        .bind(retention_days)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if still_expired != Some(true) {
+            tx.rollback().await?;
+            continue;
+        }
+
+        match purge_subtree(&mut tx, account_id, id).await {
+            Ok(removed) => {
+                append_event(
+                    &mut tx,
+                    account_id,
+                    None,
+                    id,
+                    None,
+                    "purge",
+                    json!({ "expired": true, "files_removed": removed }),
+                )
+                .await?;
+                tx.commit().await?;
+                purged_roots += 1;
+                files_removed += removed;
+            }
+            Err(ApiError::Conflict(reason)) => {
+                tracing::warn!(file = %id, %reason, "expired trash item kept");
+                tx.rollback().await?;
+                skipped += 1;
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    tracing::info!(
+        purged_roots,
+        files_removed,
+        skipped,
+        "trash retention purge finished"
+    );
+    Ok(json!({
+        "purged_roots": purged_roots,
+        "files_removed": files_removed,
+        "skipped": skipped,
+        "retention_days": retention_days,
+        "continued": rows.len() as i64 == limit,
+        "after": last,
+    }))
+}
