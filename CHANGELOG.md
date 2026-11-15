@@ -6,6 +6,8 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-15
+
 ### Features
 
 - Permanent delete and empty trash (#81 partial): the Trash page now has a **Delete permanently** action on every deleted item and an **Empty trash** action, each behind a confirmation dialog that says the removal cannot be undone. Deleting an item for good drops the account's own copy of its metadata, versions and names; files already posted to Usenet cannot be retracted, so nothing claims that content disappeared. The server refuses to remove a fixed account root or a folder that still holds live files.
