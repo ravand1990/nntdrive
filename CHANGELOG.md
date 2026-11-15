@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Features
+
+- Not synced actions (#79 partial): the **Not synced** view is now a place you can act from, not only read. A conflict row offers **Resolve conflict**, which shows both sides and asks for keep mine, keep theirs or keep both before anything is written; a retry or an access grant is one tap from the row. Every action reloads the list, and the view reloads by itself when a sync round finishes while it is open — never in the middle of a round — so the counts belong to the current state. A failed action says so and leaves the list intact. Nothing new leaves the device: the choice is applied by the existing sync engine, and names and paths stay local.
+
 ## [0.24.0] - 2026-11-15
 
 ### Features

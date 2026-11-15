@@ -218,6 +218,14 @@ class _SyncPageState extends State<SyncPage> {
           if (match.isEmpty) return false;
           return c.grantStorageAccess(match.first);
         },
+        onResolveConflict: (folderId, copyPath, choice) async {
+          final match =
+              c.folders.where((folder) => folder.id == folderId).toList();
+          if (match.isEmpty) return;
+          await c.resolveConflict(match.first, copyPath, choice);
+        },
+        watch: c,
+        isBusy: () => c.syncing,
       ),
     ));
   }

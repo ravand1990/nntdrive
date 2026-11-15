@@ -33,25 +33,32 @@ list is virtualised, refreshed explicitly, and an empty result states that
 nothing is waiting to sync. A folder that cannot be compared right now, a
 first-ever folder without a completed sync, and a pending folder move are shown
 as notices instead of being reported as in sync. Every row offers a folder
-sync, and blocked storage offers an access grant; conflict rows link to the
-existing Sync review.
+sync, blocked storage offers an access grant, and a conflict row offers
+**Resolve conflict**, which reuses the Sync review choice (keep mine, keep
+theirs or keep both) and applies it through the existing sync engine after
+both sides are named. Each action reloads the plan, and the view reloads by
+itself when a sync round finishes while it is open — a notification during a
+running round is ignored — so the counts and rows belong to the current state.
+A failed action is reported and the previous list stays on screen.
 
 The inspection never uploads, downloads, deletes or writes the journal; it only
 reads an existing journal read-only and may refresh the device-local remote-hash
 cache. A pending or identity-based folder move yields the move notice and no
 per-file items, because a plain path comparison would misreport a rename. Names,
 paths and reasons stay on the device; the backend only serves the opaque listing
-it already serves. The overview covers one device; cross-device presence and
-automatic refresh after sync are not implemented, and no installed-device timing
-is claimed.
+it already serves. The overview covers one device; cross-device presence, reveal
+of a local copy from this view and installed-device timing remain unimplemented.
 
 Focused verification: `cargo test -p nntdrive-sync inspect` passed four new
 engine regressions (plan without writes, clean result after a real sync, pending
 folder move, deep conflict). `flutter test test/sync_overview_test.dart
-test/sync_overview_page_test.dart` passed 13 tests with clean analysis; those
+test/sync_overview_page_test.dart` passed 17 tests with clean analysis; those
 cover every status mapping, exact-path failure attribution, excluded/skipped
 entries, case-collision blocking, storage-blocked folders, inspection failure,
-counts/filtering/truncation and the widget list/filter/empty/retry states.
+counts/filtering/truncation, the widget list/filter/empty/retry states, the
+post-action reload, the finished-round reload (and that a running round does not
+trigger one), resolving a conflict through the shared choice dialog, a failed
+action, and no conflict action without a resolver.
 
 ## Account-wide encrypted-name search (#80 partial)
 
@@ -649,7 +656,7 @@ acceptance remain outstanding. Legacy clients may
 still introduce duplicate names after a guarded
 rename. See [client details](CLIENTS.md#rename-in-the-file-browser-51-partial).
 
-## Trash and restore (#81 partial)
+## Trash and restore (#81)
 
 Deleting is logical and now recoverable. The backend records `deleted_at`, marks
 the deleted node together with its still-live descendants (one shared timestamp,
@@ -684,9 +691,9 @@ files. The Trash page has a per-row **Delete permanently** action and an
 metadata-only: articles already posted to Usenet cannot be retracted, and the
 dialogs say so.
 
-This is not completion: installed TalkBack/device acceptance remains open on #81.
+Trash, restore, version history and rewind are merged. Installed desktop and Android acceptance of these flows is tracked in #138 and has not been run.
 
-## Per-file version history (#81 partial)
+## Per-file version history (#81)
 
 A file's **Version history** action opens a dialog listing that file's sealed
 history newest first: each row shows when the content was committed and how
@@ -710,7 +717,7 @@ The listing is bounded: at most the newest 200 versions are shown, with a note
 when the cap is reached. Restoring an installed build and large-history
 behaviour are not yet verified.
 
-## Bulk rewind (#81 partial)
+## Bulk rewind (#81)
 
 `GET /rewind/preview` and `POST /rewind` put a folder or the whole account back
 to an earlier date using versions that already exist. For every affected file

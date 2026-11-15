@@ -1,60 +1,151 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import 'sync_controller.dart' show originalConflictPath;
 import 'sync_overview.dart';
+import 'sync_widgets.dart' show ConflictChoiceDialog;
+
+/// Applies one conflict choice to a discovered conflict copy.
+typedef ResolveConflictCallback = Future<void> Function(
+    String folderId, String copyPath, String choice);
 
 /// Device-local overview: what is not fully synchronized and why.
 ///
 /// Every row shows a text status (never colour alone) and a plain-language
-/// reason. Actions are explicit: retry the folder or grant storage access.
+/// reason. Actions are explicit: retry the folder, resolve a conflict or grant
+/// storage access, and the list reloads afterwards so nobody has to guess
+/// whether the action changed anything.
 class SyncOverviewPage extends StatefulWidget {
   const SyncOverviewPage({
     super.key,
     required this.load,
     required this.onSyncFolder,
     this.onGrantAccess,
+    this.onResolveConflict,
+    this.watch,
+    this.isBusy,
   });
 
   final Future<UnsyncedOverview> Function() load;
   final Future<void> Function(String folderId) onSyncFolder;
   final Future<bool> Function(String folderId)? onGrantAccess;
 
+  /// Resolves one conflict copy; when absent the view offers no conflict action.
+  final ResolveConflictCallback? onResolveConflict;
+
+  /// Notifies while sync state changes, so a finished round refreshes the list.
+  final Listenable? watch;
+
+  /// Whether sync is still working; while true a notification does not reload.
+  final bool Function()? isBusy;
+
   @override
   State<SyncOverviewPage> createState() => _SyncOverviewPageState();
 }
 
 class _SyncOverviewPageState extends State<SyncOverviewPage> {
+  static const _refreshDelay = Duration(milliseconds: 300);
+
   UnsyncedOverview? _overview;
   Object? _error;
   bool _loading = true;
   UnsyncedStatus? _status;
   String? _folderId;
 
+  /// Row or folder whose action is running, so its buttons cannot repeat it.
+  String? _acting;
+
+  /// Debounces sync notifications into one reload.
+  Timer? _refreshTimer;
+
+  /// Rejects a reload that finishes after a newer one started.
+  int _loadToken = 0;
+
   @override
   void initState() {
     super.initState();
+    widget.watch?.addListener(_onSyncChanged);
     _refresh();
   }
 
-  Future<void> _refresh() async {
+  @override
+  void didUpdateWidget(SyncOverviewPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.watch != widget.watch) {
+      oldWidget.watch?.removeListener(_onSyncChanged);
+      widget.watch?.addListener(_onSyncChanged);
+    }
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    widget.watch?.removeListener(_onSyncChanged);
+    super.dispose();
+  }
+
+  /// A sync round that finished while this page is open reloads the plan.
+  void _onSyncChanged() {
+    if (widget.isBusy?.call() ?? false) return;
+    if (_refreshTimer?.isActive ?? false) return;
+    _refreshTimer = Timer(_refreshDelay, () {
+      _refreshTimer = null;
+      if (!mounted || _acting != null) return;
+      _refresh(showSpinner: false);
+    });
+  }
+
+  Future<void> _refresh({bool showSpinner = true}) async {
+    final token = ++_loadToken;
     setState(() {
-      _loading = true;
+      if (showSpinner || _overview == null) _loading = true;
       _error = null;
     });
     try {
       final overview = await widget.load();
-      if (!mounted) return;
+      if (!mounted || token != _loadToken) return;
       setState(() {
         _overview = overview;
         _loading = false;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || token != _loadToken) return;
       setState(() {
         _error = e;
         _loading = false;
       });
     }
   }
+
+  /// Runs one row action, reports a failure, and always reloads the plan.
+  Future<void> _runAction(String key, Future<void> Function() action,
+      {String? done}) async {
+    if (_acting != null) return;
+    setState(() => _acting = key);
+    try {
+      await action();
+      if (!mounted) return;
+      if (done != null) _toast(done);
+    } catch (_) {
+      if (!mounted) return;
+      _toast('That action did not finish. Try again.');
+    } finally {
+      if (mounted) {
+        setState(() => _acting = null);
+        await _refresh(showSpinner: false);
+      }
+    }
+  }
+
+  void _toast(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  String _keyFor(UnsyncedEntry entry) => '${entry.folderId}\u0000${entry.path}';
+
 
   @override
   Widget build(BuildContext context) {
@@ -238,11 +329,19 @@ class _SyncOverviewPageState extends State<SyncOverviewPage> {
           if (size != null)
             Text(size, style: theme.textTheme.bodySmall),
           if (entry.retryable)
-            IconButton(
-              tooltip: 'Sync ${entry.folderName} now',
-              onPressed: () => widget.onSyncFolder(entry.folderId),
-              icon: const Icon(Icons.sync),
-            ),
+            _acting == _keyFor(entry)
+                ? const Padding(
+                    padding: EdgeInsets.all(12),
+                    child: SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(strokeWidth: 2)),
+                  )
+                : IconButton(
+                    tooltip: 'Sync ${entry.folderName} now',
+                    onPressed: _acting != null ? null : () => _syncFolder(entry),
+                    icon: const Icon(Icons.sync),
+                  ),
         ],
       ),
       onTap: () => _showDetails(context, entry),
@@ -253,6 +352,8 @@ class _SyncOverviewPageState extends State<SyncOverviewPage> {
     final grant = widget.onGrantAccess;
     final canGrant =
         entry.status == UnsyncedStatus.blocked && grant != null;
+    final canResolve = entry.status == UnsyncedStatus.conflict &&
+        widget.onResolveConflict != null;
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -285,18 +386,32 @@ class _SyncOverviewPageState extends State<SyncOverviewPage> {
                 children: [
                   if (entry.retryable)
                     FilledButton(
-                      onPressed: () {
-                        Navigator.pop(sheet);
-                        widget.onSyncFolder(entry.folderId);
-                      },
+                      onPressed: _acting != null
+                          ? null
+                          : () {
+                              Navigator.pop(sheet);
+                              _syncFolder(entry);
+                            },
                       child: const Text('Sync now'),
+                    ),
+                  if (canResolve)
+                    FilledButton(
+                      onPressed: _acting != null
+                          ? null
+                          : () {
+                              Navigator.pop(sheet);
+                              _resolveConflict(entry);
+                            },
+                      child: const Text('Resolve conflict'),
                     ),
                   if (canGrant)
                     FilledButton(
-                      onPressed: () {
-                        Navigator.pop(sheet);
-                        grant(entry.folderId);
-                      },
+                      onPressed: _acting != null
+                          ? null
+                          : () {
+                              Navigator.pop(sheet);
+                              _grantAccess(entry);
+                            },
                       child: const Text('Grant access'),
                     ),
                   TextButton(
@@ -309,6 +424,42 @@ class _SyncOverviewPageState extends State<SyncOverviewPage> {
           ),
         ),
       ),
+    );
+  }
+
+  Future<void> _syncFolder(UnsyncedEntry entry) => _runAction(
+        _keyFor(entry),
+        () => widget.onSyncFolder(entry.folderId),
+        done: 'Sync finished. The list was refreshed.',
+      );
+
+  Future<void> _grantAccess(UnsyncedEntry entry) {
+    final grant = widget.onGrantAccess;
+    if (grant == null) return Future<void>.value();
+    return _runAction(
+      _keyFor(entry),
+      () async {
+        final granted = await grant(entry.folderId);
+        if (!granted) throw StateError('Storage access was not granted');
+      },
+      done: 'Storage access is granted. Sync this folder again.',
+    );
+  }
+
+  Future<void> _resolveConflict(UnsyncedEntry entry) async {
+    final resolve = widget.onResolveConflict;
+    if (resolve == null) return;
+    final original = originalConflictPath(entry.path) ?? entry.path;
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (_) =>
+          ConflictChoiceDialog(original: original, copy: entry.path),
+    );
+    if (choice == null || !mounted) return;
+    await _runAction(
+      _keyFor(entry),
+      () => resolve(entry.folderId, entry.path, choice),
+      done: 'Conflict resolved. Both versions stay recoverable.',
     );
   }
 
