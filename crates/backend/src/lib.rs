@@ -8,6 +8,7 @@ pub mod error;
 pub mod jobs;
 pub mod roots;
 pub mod state;
+pub mod trash;
 
 use axum::routing::{delete, get, patch, post};
 use axum::Router;
@@ -34,6 +35,8 @@ pub fn app(state: state::AppState) -> Router {
         .route("/roots", get(roots::list_roots).post(roots::bootstrap_root))
         .route("/files", get(api::list_files).post(api::create_file))
         .route("/files/{id}", patch(api::patch_file))
+        .route("/files/{id}/restore", post(trash::restore_file))
+        .route("/trash", get(trash::list_trash))
         .route(
             "/files/{id}/copy-checked",
             post(copy::publish).layer(axum::extract::DefaultBodyLimit::max(2 * 1024 * 1024)),

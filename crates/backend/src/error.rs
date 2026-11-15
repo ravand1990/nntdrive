@@ -15,6 +15,8 @@ pub enum ApiError {
     Forbidden,
     #[error("not found")]
     NotFound,
+    #[error("gone: {0}")]
+    Gone(String),
     #[error("conflict: {0}")]
     Conflict(String),
     #[error("too many requests")]
@@ -40,6 +42,7 @@ impl IntoResponse for ApiError {
             ApiError::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
             ApiError::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
             ApiError::NotFound => (StatusCode::NOT_FOUND, "not_found"),
+            ApiError::Gone(_) => (StatusCode::GONE, "gone"),
             ApiError::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
             ApiError::TooManyRequests => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
             ApiError::QuotaExceeded => (StatusCode::PAYLOAD_TOO_LARGE, "quota_exceeded"),

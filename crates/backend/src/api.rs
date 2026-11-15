@@ -475,9 +475,19 @@ pub async fn patch_file(
         .await?;
     }
     if body.deleted == Some(true) {
+        // Logical delete of the node plus every descendant that is still live,
+        // so a deleted folder never leaves invisible orphaned children behind.
+        // The subtree shares one timestamp and is restored together.
         sqlx::query(
-            "UPDATE files SET deleted = TRUE, updated_at = now(), revision = revision + 1
-             WHERE account_id = $1 AND id = $2",
+            "WITH RECURSIVE subtree AS (
+                 SELECT id FROM files WHERE account_id = $1 AND id = $2
+                 UNION ALL
+                 SELECT f.id FROM files f JOIN subtree s ON f.parent_id = s.id
+                 WHERE f.account_id = $1 AND f.deleted = FALSE
+             )
+             UPDATE files SET deleted = TRUE, deleted_at = now(),
+                              updated_at = now(), revision = revision + 1
+             WHERE account_id = $1 AND id IN (SELECT id FROM subtree) AND deleted = FALSE",
         )
         .bind(auth.account_id)
         .bind(id)

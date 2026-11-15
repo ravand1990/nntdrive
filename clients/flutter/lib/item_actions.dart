@@ -41,10 +41,11 @@ class ItemActionSpec {
   final bool destructive;
 }
 
-/// Folder deletion is not implemented: it would strand the folder's children
-/// because the client has no Trash or recursive delete yet.
-const String folderDeleteUnavailable =
-    'Folder deletion waits for Trash and restore (#81). Empty a folder first to remove it safely.';
+/// What a delete does now that deleted items are restorable from the trash.
+const String folderDeleteSubtitle =
+    'Moves the folder and everything in it to Trash';
+const String fileDeleteSubtitle =
+    'Moves the file to Trash; posted Usenet articles cannot be physically deleted';
 
 /// Why a mutating action cannot start while another operation is running.
 const String busyActionUnavailable = 'Finish the operation that is already running.';
@@ -91,13 +92,14 @@ List<ItemActionSpec> itemActionSpecs({
         icon: Icons.folder_open_outlined,
       ),
       ...mutating,
-      const ItemActionSpec(
+      ItemActionSpec(
         kind: ItemActionKind.delete,
         label: 'Delete folder',
         icon: Icons.delete_outline,
+        subtitle: folderDeleteSubtitle,
         destructive: true,
-        enabled: false,
-        disabledReason: folderDeleteUnavailable,
+        enabled: !busy,
+        disabledReason: busy ? busyActionUnavailable : null,
       ),
     ];
   }
@@ -133,7 +135,7 @@ List<ItemActionSpec> itemActionSpecs({
       kind: ItemActionKind.delete,
       label: 'Delete file',
       icon: Icons.delete_outline,
-      subtitle: 'Posted Usenet articles cannot be physically deleted',
+      subtitle: fileDeleteSubtitle,
       destructive: true,
       enabled: !busy,
       disabledReason: busy ? busyActionUnavailable : null,

@@ -118,7 +118,9 @@ void main() {
 
     final names = <String>[];
     final centers = <Offset>[];
-    for (var i = 0; i < 10; i++) {
+    // Enough stops for every app-bar action, the filter field, both rows, their
+    // action buttons, the trash entry and the primary "New" button.
+    for (var i = 0; i < 14; i++) {
       await tester.sendKeyEvent(LogicalKeyboardKey.tab);
       await tester.pumpAndSettle();
       final context = FocusManager.instance.primaryFocus?.context;
@@ -127,6 +129,8 @@ void main() {
       if (box is! RenderBox || !box.hasSize) continue;
       final center = box.localToGlobal(box.size.center(Offset.zero));
       if (centers.isNotEmpty && centers.last == center) continue;
+      // Tab wraps back to the first control once the walk is complete.
+      if (centers.contains(center)) break;
       centers.add(center);
       names.add(_announcedName(context));
     }

@@ -90,12 +90,60 @@ remain allowed. Copying into a root is normal folder behaviour.
 | POST | `/files` | `{id,parent_id,name_enc,is_dir}` |
 | PATCH | `/files/{id}` | `{name_enc?,favorite?,deleted?}` (delete is a tombstone) |
 | POST | `/files/{id}/move` | `{parent_id}` (cycle-checked) |
+| GET | `/trash` | deleted top-level nodes with their retention deadline |
+| POST | `/files/{id}/restore` | `{parent_id?}` (see Trash below) |
 | GET | `/files/{id}/versions` | revision metadata |
 | POST | `/files/{id}/versions` | `{revision_id,parent_revision,base_revision,size,sealed_manifest}` |
 | GET | `/files/{id}/manifest?revision=<uuid>` | raw sealed manifest bytes |
 
 `base_revision` provides optimistic concurrency: a mismatch returns `409`.
 A version is only visible after commit; clients must upload all chunks first.
+
+## Trash
+
+Deleting is logical and keeps every version. `PATCH /files/{id}` with
+`deleted: true` marks the node and all of its still-live descendants with one
+`deleted_at` timestamp, so a deleted folder never leaves orphaned children in
+the namespace. Nothing is purged: the retention window only bounds what the
+trash view offers to restore.
+
+`GET /trash` returns the account's deleted nodes whose parent is not deleted,
+newest first:
+
+```json
+{
+  "retention_days": 30,
+  "files": [
+    {
+      "id": "uuid",
+      "parent_id": "uuid-or-null",
+      "name_enc": "<sealed envelope>",
+      "is_dir": false,
+      "size": 1048576,
+      "deleted_at": "2026-11-15T00:00:00Z",
+      "expires_at": "2026-12-15T00:00:00Z",
+      "days_left": 30,
+      "expired": false,
+      "parent_present": true
+    }
+  ]
+}
+```
+
+`POST /files/{id}/restore` clears the flag for the node and its deleted
+descendants and publishes a `restore` event. The body is optional:
+
+| Body | Effect |
+|---|---|
+| omitted | keep the original parent; `409` if that parent is gone |
+| `{"parent_id": "<uuid>"}` | restore into that live folder of the same account |
+| `{"parent_id": null}` | restore to the account root |
+
+A destination that is a file, a deleted node, another account's node or inside
+the restored subtree is refused (`400`/`404`/`409`). An item deleted longer ago
+than `retention_days` cannot be restored and returns `410`. Restoring something
+that is not deleted returns `409`. `retention_days` comes from
+`NNTDRIVE_TRASH_RETENTION_DAYS` (default 30); changing it never deletes data.
 
 ## Ciphertext chunks
 
@@ -132,7 +180,7 @@ receives plaintext or keys. The client seals the manifest and commits it.
 | GET | `/events/stream?since=<seq>` | SSE stream (`event: change`, JSON data) |
 
 Use the `seq` of the last processed event as the next cursor. Events cover create,
-move, delete and version commits.
+move, delete, restore and version commits.
 
 ## Admin
 

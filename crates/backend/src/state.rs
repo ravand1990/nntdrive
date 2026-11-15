@@ -24,6 +24,9 @@ pub struct ServerConfig {
     pub health_check_interval_secs: u64,
     pub retention_refresh_days: u32,
     pub retention_interval_secs: u64,
+    /// How long a logically deleted item stays restorable. Nothing is purged by
+    /// this value; it bounds what the trash view offers to restore.
+    pub trash_retention_days: u32,
 }
 
 impl ServerConfig {
@@ -83,6 +86,10 @@ impl ServerConfig {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(24 * 60 * 60),
+            trash_retention_days: std::env::var("NNTDRIVE_TRASH_RETENTION_DAYS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(30),
         })
     }
 }

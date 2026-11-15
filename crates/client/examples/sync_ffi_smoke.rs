@@ -23,6 +23,7 @@ async fn main() -> anyhow::Result<()> {
         health_check_interval_secs: 3600,
         retention_refresh_days: 30,
         retention_interval_secs: 3600,
+        trash_retention_days: 30,
     };
     let state = AppState::new(
         db.store.pool().clone(),

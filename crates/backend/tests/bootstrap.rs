@@ -40,6 +40,7 @@ async fn instance(db: &TestDb, nntp: Arc<NntpPool>, allow_registration: bool) ->
             health_check_interval_secs: 3600,
             retention_refresh_days: 30,
             retention_interval_secs: 3600,
+            trash_retention_days: 30,
         },
     )
     .unwrap()
