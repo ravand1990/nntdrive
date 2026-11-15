@@ -6,6 +6,12 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-11-15
+
+### Features
+
+- Trash restore destination and folder-scoped rewind (#81 partial): when the folder an item was deleted from no longer exists, the Trash page now asks where to put it back — **My files**, or any folder chosen in a picker that lists fresh remote folders and opens their names only on the device — instead of offering only My files. The same picker narrows a **Rewind to an earlier date** from the whole account to one folder, and choosing a different folder plans again so the counts on screen always belong to the scope that would change. Nothing plaintext reaches the server, every listing stays owned by the unlocked session, and nothing changes until the plan is confirmed.
+
 ## [0.21.0] - 2026-11-15
 
 ### Features
