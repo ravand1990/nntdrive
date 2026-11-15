@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nntdrive/api.dart';
+import 'package:nntdrive/folder_picker.dart';
 import 'package:nntdrive/trash_page.dart';
 
 /// A trash page wired to recorded fakes: the backend, the name opener and the
@@ -9,7 +10,7 @@ import 'package:nntdrive/trash_page.dart';
 class _Harness {
   List<TrashEntry> entries;
   List<String>? names;
-  final List<({String id, bool toRoot})> restored = [];
+  final List<({String id, String? parentId, bool toRoot})> restored = [];
   final List<String> purged = [];
   int emptyCalls = 0;
   int loads = 0;
@@ -28,9 +29,10 @@ class _Harness {
   Future<List<String>> decrypt(List<TrashEntry> items) async =>
       names ?? items.map((e) => 'name-${e.id}').toList();
 
-  Future<void> restore(String id, {bool toRoot = false}) async {
+  Future<void> restore(String id,
+      {String? parentId, bool toRoot = false}) async {
     if (restoreError != null) throw restoreError!;
-    restored.add((id: id, toRoot: toRoot));
+    restored.add((id: id, parentId: parentId, toRoot: toRoot));
     entries = entries.where((e) => e.id != id).toList();
   }
 
@@ -67,13 +69,16 @@ TrashEntry _entry(
       parentPresent: parentPresent,
     );
 
-Widget _page(_Harness harness) => MaterialApp(
+Widget _page(_Harness harness,
+        {Future<FolderChoice?> Function()? pickFolder}) =>
+    MaterialApp(
       home: TrashPage(
         load: harness.load,
         decrypt: harness.decrypt,
         restore: harness.restore,
         purge: harness.purge,
         emptyTrash: harness.emptyTrash,
+        pickFolder: pickFolder,
       ),
     );
 
@@ -109,7 +114,7 @@ void main() {
     await tester.tap(find.text('Restore'));
     await tester.pumpAndSettle();
 
-    expect(harness.restored, [(id: 'a', toRoot: false)]);
+    expect(harness.restored, [(id: 'a', parentId: null, toRoot: false)]);
     expect(harness.loads, 2);
     expect(find.text('Nothing in the trash.'), findsOneWidget);
     expect(find.textContaining('Restored name-a'), findsOneWidget);
@@ -134,7 +139,58 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Restore to My files'));
     await tester.pumpAndSettle();
-    expect(harness.restored, [(id: 'a', toRoot: true)]);
+    expect(harness.restored, [(id: 'a', parentId: null, toRoot: true)]);
+  });
+
+  testWidgets('an item whose folder is gone can go into a chosen folder',
+      (tester) async {
+    final harness = _Harness([_entry('a', parentPresent: false)]);
+    await tester.pumpWidget(_page(harness,
+        pickFolder: () async => const FolderChoice('dest-1', 'Archive')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Restore'));
+    await tester.pumpAndSettle();
+    expect(find.text('Choose a folder…'), findsOneWidget);
+    expect(harness.restored, isEmpty, reason: 'nothing happens before a choice');
+
+    await tester.tap(find.text('Choose a folder…'));
+    await tester.pumpAndSettle();
+
+    expect(harness.restored,
+        [(id: 'a', parentId: 'dest-1', toRoot: false)]);
+    expect(find.textContaining('Restored name-a'), findsOneWidget);
+  });
+
+  testWidgets('the folder chooser can still restore to My files',
+      (tester) async {
+    final harness = _Harness([_entry('a', parentPresent: false)]);
+    await tester.pumpWidget(_page(harness,
+        pickFolder: () async => const FolderChoice(null, 'My files')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Restore'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Choose a folder…'));
+    await tester.pumpAndSettle();
+
+    expect(harness.restored, [(id: 'a', parentId: null, toRoot: true)]);
+  });
+
+  testWidgets('cancelling the folder chooser restores nothing',
+      (tester) async {
+    final harness = _Harness([_entry('a', parentPresent: false)]);
+    await tester.pumpWidget(
+        _page(harness, pickFolder: () async => null));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Restore'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Choose a folder…'));
+    await tester.pumpAndSettle();
+
+    expect(harness.restored, isEmpty);
+    expect(find.text('name-a'), findsOneWidget);
   });
 
   testWidgets('an expired item stays listed but offers no restore', (tester) async {
@@ -301,18 +357,22 @@ class _RewindHarness extends _Harness {
   RewindResult? result;
   Object? applyError;
   final List<DateTime> previews = [];
-  final List<({DateTime before, List<RewindItem> items})> applied = [];
+  final List<String?> previewScopes = [];
+  final List<({DateTime before, List<RewindItem> items, String? scope})>
+      applied = [];
 
-  Future<RewindPreview> preview(DateTime before) async {
+  Future<RewindPreview> preview(DateTime before, {String? scopeId}) async {
     previews.add(before);
+    previewScopes.add(scopeId);
     if (previewError != null) throw previewError!;
     return plan ??
-        RewindPreview(before, null, RewindCounts(0, 0, 0, 0), const [], null);
+        RewindPreview(before, scopeId, RewindCounts(0, 0, 0, 0), const [], null);
   }
 
-  Future<RewindResult> apply(DateTime before, List<RewindItem> items) async {
+  Future<RewindResult> apply(DateTime before, List<RewindItem> items,
+      {String? scopeId}) async {
     if (applyError != null) throw applyError!;
-    applied.add((before: before, items: items));
+    applied.add((before: before, items: items, scope: scopeId));
     return result ?? RewindResult(items.length, 0, const []);
   }
 
@@ -320,7 +380,9 @@ class _RewindHarness extends _Harness {
       items.map((i) => 'rewind-${i.id}').toList();
 }
 
-Widget _rewindPage(_RewindHarness harness) => MaterialApp(
+Widget _rewindPage(_RewindHarness harness,
+        {Future<FolderChoice?> Function()? pickFolder}) =>
+    MaterialApp(
       home: TrashPage(
         load: harness.load,
         decrypt: harness.decrypt,
@@ -330,6 +392,7 @@ Widget _rewindPage(_RewindHarness harness) => MaterialApp(
         previewRewind: harness.preview,
         applyRewind: harness.apply,
         decryptRewind: harness.decryptRewind,
+        pickFolder: pickFolder,
       ),
     );
 
@@ -365,6 +428,8 @@ void rewindTests() {
     await tester.pumpAndSettle();
 
     expect(harness.previews, hasLength(1));
+    expect(harness.previewScopes.single, isNull,
+        reason: 'the whole account is the default scope');
     expect(find.textContaining('2 files would go back to an earlier version'),
         findsOneWidget);
     expect(find.textContaining('1 created after that date'), findsOneWidget);
@@ -379,6 +444,7 @@ void rewindTests() {
     expect(harness.applied, hasLength(1));
     expect(harness.applied.single.items.map((i) => i.id), ['x', 'y']);
     expect(harness.applied.single.items.first.targetRevision, 'target-x');
+    expect(harness.applied.single.scope, isNull);
     expect(find.textContaining('Rewound 2 files'), findsOneWidget);
   });
 
@@ -435,5 +501,47 @@ void rewindTests() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('could not be changed'), findsOneWidget);
+  });
+
+  testWidgets('a rewind can be narrowed to one folder and replans for it',
+      (tester) async {
+    final harness = _RewindHarness([_entry('a')])
+      ..plan = RewindPreview(DateTime.utc(2026, 11, 8), null,
+          RewindCounts(1, 0, 0, 0), [_rewindItem('x')], null);
+    await tester.pumpWidget(_rewindPage(harness,
+        pickFolder: () async => const FolderChoice('f-1', 'Archive')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Rewind to an earlier date'));
+    await tester.pumpAndSettle();
+    expect(find.text('Scope: the whole account'), findsOneWidget);
+
+    await tester.tap(find.text('7 days ago'));
+    await tester.pumpAndSettle();
+    expect(harness.previewScopes, [null]);
+
+    await tester.tap(find.text('Change'));
+    await tester.pumpAndSettle();
+    expect(find.text('Scope: Archive'), findsOneWidget);
+    expect(find.textContaining('Puts the files in Archive back'), findsOneWidget);
+    expect(harness.previewScopes, [null, 'f-1'],
+        reason: 'a new scope is planned again, never confirmed against the old plan');
+
+    await tester.tap(find.text('Rewind 1 file'));
+    await tester.pumpAndSettle();
+    expect(harness.applied.single.scope, 'f-1');
+  });
+
+  testWidgets('without a folder chooser a rewind stays account-wide',
+      (tester) async {
+    final harness = _RewindHarness([_entry('a')]);
+    await tester.pumpWidget(_rewindPage(harness));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Rewind to an earlier date'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Scope: the whole account'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, 'Change'), findsNothing);
   });
 }

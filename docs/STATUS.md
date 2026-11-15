@@ -668,9 +668,11 @@ articles.
 
 The client has a **Trash** page in the file browser that decrypts names locally,
 shows folder/size, deletion date and remaining days, offers one explicit
-**Restore** action per row, asks before restoring to My files when the original
-folder is gone, and keeps expired items visible with **Cannot restore**. Folder
-deletion is therefore enabled again: it moves the whole subtree to the trash.
+**Restore** action per row, and — when the original folder is gone — asks where
+to put the item back: My files or any folder chosen in a fresh, locally
+decrypted folder picker. Items past the window stay visible with **Cannot
+restore**. Folder deletion is therefore enabled again: it moves the whole
+subtree to the trash.
 
 Items can also be removed for good: `DELETE /trash/{id}` deletes one trashed
 node with its subtree and versions, and `DELETE /trash` empties the account's
@@ -682,9 +684,9 @@ files. The Trash page has a per-row **Delete permanently** action and an
 metadata-only: articles already posted to Usenet cannot be retracted, and the
 dialogs say so.
 
-This is not completion: restore into an arbitrary folder picker in the UI,
-folder-scoped rewind in the client, a version-history screen and installed
-TalkBack/device acceptance remain open on #81.
+This is not completion: a version-history screen, rewind continuation past the
+first page of changes, and installed TalkBack/device acceptance remain open on
+#81.
 
 ## Bulk rewind (#81 partial)
 
@@ -709,7 +711,10 @@ The client offers **Rewind to an earlier date** from the Trash page with 1-day,
 7-day, 30-day and pick-a-date presets. The plan is always shown first — the
 changed files by decrypted name, the counts and the skipped items — and nothing
 changes until the user confirms. The dialog states that versions after the date
-remain in history and that posted Usenet copies cannot be retracted.
+remain in history and that posted Usenet copies cannot be retracted. Its scope
+is the whole account by default and can be narrowed to one folder through the
+same locally decrypted picker; choosing a different folder plans again, so the
+user never confirms counts that belong to the previous scope.
 
 ## Recent implementation milestones
 
