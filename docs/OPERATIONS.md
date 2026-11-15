@@ -129,6 +129,7 @@ WantedBy=multi-user.target
 | `NNTDRIVE_HEALTH_INTERVAL_SECS` | 21600 | Health sweep cadence |
 | `NNTDRIVE_REFRESH_DAYS` | 180 | Refresh articles older than this |
 | `NNTDRIVE_REFRESH_INTERVAL_SECS` | 86400 | Refresh sweep cadence |
+| `NNTDRIVE_TRASH_RETENTION_DAYS` | 30 | Days a deleted item stays restorable; a daily job then deletes its metadata |
 | `RUST_LOG` | `info,sqlx=warn` | Log filter |
 | `LOG_FORMAT` | text | `json` for structured logs |
 

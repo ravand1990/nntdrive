@@ -658,9 +658,13 @@ so a deleted folder never leaves invisible orphaned children), and publishes a
 top-level nodes with the retention deadline; `POST /files/{id}/restore` restores
 the node and its deleted subtree, either in place, into a chosen live folder of
 the same account, or at the account root when the original folder is gone. The
-window comes from `NNTDRIVE_TRASH_RETENTION_DAYS` (default 30) and only bounds
-what may be restored: nothing is purged, so metadata and version history stay
-intact. A request past the window returns `410`.
+window comes from `NNTDRIVE_TRASH_RETENTION_DAYS` (default 30). A request past
+the window returns `410`, and a daily `trash_purge` background job now enforces
+the same deadline without a client: expired trashed top-level nodes lose their
+metadata, versions and names for good, one account-scoped transaction and one
+`purge` event each. The job skips a fixed account root or a subtree that still
+holds live rows instead of failing the sweep, and it never retracts Usenet
+articles.
 
 The client has a **Trash** page in the file browser that decrypts names locally,
 shows folder/size, deletion date and remaining days, offers one explicit
@@ -678,9 +682,9 @@ files. The Trash page has a per-row **Delete permanently** action and an
 metadata-only: articles already posted to Usenet cannot be retracted, and the
 dialogs say so.
 
-This is not completion: a backend purge job for expired items, restore into an
-arbitrary folder picker in the UI, bulk rewind to an earlier date, and installed
-TalkBack/device acceptance remain open on #81.
+This is not completion: restore into an arbitrary folder picker in the UI, bulk
+rewind to an earlier date, and installed TalkBack/device acceptance remain open
+on #81.
 
 ## Recent implementation milestones
 
