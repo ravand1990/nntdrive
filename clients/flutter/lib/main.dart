@@ -1117,9 +1117,35 @@ class _FilesPageState extends State<FilesPage> {
             widget.operations.run(widget.session.handle, () => _api.purgeFile(id)),
         emptyTrash: () => widget.operations
             .run(widget.session.handle, () => _api.emptyTrash()),
+        previewRewind: (before) => widget.operations.run(
+            widget.session.handle, () => _api.rewindPreview(before: before)),
+        applyRewind: (before, items) => widget.operations.run(
+            widget.session.handle,
+            () => _api.rewind(before: before, items: items)),
+        decryptRewind: _decryptRewindNames,
       ),
     ));
     if (mounted) _refresh();
+  }
+
+  /// Opens the sealed names of rewind rows the same way as trash names.
+  Future<List<String>> _decryptRewindNames(List<RewindItem> items) async {
+    final bridge = NativeBridge.instance;
+    final handle = widget.session.handle;
+    final names = <String>[];
+    for (var start = 0; start < items.length; start += 128) {
+      final batch = items
+          .skip(start)
+          .take(128)
+          .map((item) => (id: item.id, nameEnc: item.nameEnc))
+          .toList();
+      try {
+        names.addAll(await bridge.openNamesAsync(handle, batch));
+      } catch (_) {
+        names.addAll(batch.map((_) => 'Name unavailable'));
+      }
+    }
+    return names;
   }
 
   /// Opens sealed trash names in bounded batches through the session-owned

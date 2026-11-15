@@ -168,6 +168,58 @@ to remove anything while a trashed node still has live children (`409`). This
 is metadata-only: Usenet articles were already posted and cannot be retracted,
 so no response claims that content disappeared.
 
+## Bulk rewind
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/rewind/preview?before=<rfc3339>[&scope=<uuid>][&after=<uuid>]` | plan a rewind |
+| POST | `/rewind` | apply a plan the user confirmed |
+
+Rewind moves files back to the newest version they had at or before `before`.
+It does not upload, download or delete anything: version rows and their chunk
+references stay exactly as they were, and only `current_version`, `size`,
+`content_hash` and the file's namespace revision move. Every applied file
+publishes one `version` event with `{"rewind": true}` so other devices refresh.
+Trashed items are not part of a rewind; restoring them stays the trash feature.
+
+`scope` is a live folder of this account and omitting it covers the whole
+account. A deleted folder (`409`), another account's node (`404`) or a file id
+as the scope (`400`) is refused.
+
+The preview answers counts for the whole scope plus one page (200) of changed
+files. Each item carries `id`, `parent_id`, the sealed `name_enc`, the current
+and target revision ids, both sizes and the target version's `created_at`.
+`next` is the paging cursor and is `null` when the page is the complete plan.
+
+```json
+{
+  "scope": null,
+  "before": "2026-11-08T23:59:59Z",
+  "counts": {
+    "rewind": 1,
+    "unchanged": 3,
+    "created_after": 2,
+    "pending_references": 1
+  },
+  "items": [],
+  "next": null
+}
+```
+
+`rewind` counts files that would change, `unchanged` files that already have
+that content, `created_after` files that did not exist at that date (a rewind
+never deletes them), and `pending_references` files whose stored content
+references are still pending — those are skipped rather than served unsafely.
+
+Applying takes `{"before": ..., "scope": ..., "items": [{"id": ...,
+"target_revision": ...}]}` with at most 200 items. Every item is re-checked
+under the account namespace lock: it must still be a live file inside the
+scope, and `target_revision` must still be the newest version at or before
+`before`. A stale item is refused with a reason instead of changing something
+the user never saw, and the remaining items still apply. Repeating the same
+plan reports `unchanged` instead of failing. Responses carry counts and
+`{id, reason}` pairs only — never names.
+
 ## Ciphertext chunks
 
 | Method | Path | Purpose |

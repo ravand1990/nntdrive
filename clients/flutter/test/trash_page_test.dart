@@ -78,6 +78,8 @@ Widget _page(_Harness harness) => MaterialApp(
     );
 
 void main() {
+  group('rewind', rewindTests);
+
   testWidgets('lists deleted items with their names, age and retention left',
       (tester) async {
     final harness = _Harness([
@@ -277,5 +279,161 @@ void main() {
 
     expect(find.text('name-a'), findsOneWidget);
     expect(find.textContaining('changed or its folder is gone'), findsOneWidget);
+  });
+}
+
+RewindItem _rewindItem(String id, {int targetSize = 10}) => RewindItem(
+      id,
+      'parent-$id',
+      'sealed-name-$id',
+      'current-$id',
+      'target-$id',
+      targetSize,
+      targetSize,
+      DateTime.utc(2026, 11, 10, 12),
+    );
+
+class _RewindHarness extends _Harness {
+  _RewindHarness(super.entries);
+
+  RewindPreview? plan;
+  Object? previewError;
+  RewindResult? result;
+  Object? applyError;
+  final List<DateTime> previews = [];
+  final List<({DateTime before, List<RewindItem> items})> applied = [];
+
+  Future<RewindPreview> preview(DateTime before) async {
+    previews.add(before);
+    if (previewError != null) throw previewError!;
+    return plan ??
+        RewindPreview(before, null, RewindCounts(0, 0, 0, 0), const [], null);
+  }
+
+  Future<RewindResult> apply(DateTime before, List<RewindItem> items) async {
+    if (applyError != null) throw applyError!;
+    applied.add((before: before, items: items));
+    return result ?? RewindResult(items.length, 0, const []);
+  }
+
+  Future<List<String>> decryptRewind(List<RewindItem> items) async =>
+      items.map((i) => 'rewind-${i.id}').toList();
+}
+
+Widget _rewindPage(_RewindHarness harness) => MaterialApp(
+      home: TrashPage(
+        load: harness.load,
+        decrypt: harness.decrypt,
+        restore: harness.restore,
+        purge: harness.purge,
+        emptyTrash: harness.emptyTrash,
+        previewRewind: harness.preview,
+        applyRewind: harness.apply,
+        decryptRewind: harness.decryptRewind,
+      ),
+    );
+
+void rewindTests() {
+  testWidgets('the rewind action is only offered when it can be planned',
+      (tester) async {
+    final harness = _RewindHarness([_entry('a')]);
+    await tester.pumpWidget(_page(harness));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Rewind to an earlier date'), findsNothing);
+
+    await tester.pumpWidget(_rewindPage(harness));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Rewind to an earlier date'), findsOneWidget);
+  });
+
+  testWidgets('a rewind shows what would change and only applies on confirm',
+      (tester) async {
+    final harness = _RewindHarness([_entry('a')])
+      ..plan = RewindPreview(
+        DateTime.utc(2026, 11, 8),
+        null,
+        RewindCounts(2, 3, 1, 0),
+        [_rewindItem('x'), _rewindItem('y')],
+        null,
+      );
+    await tester.pumpWidget(_rewindPage(harness));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Rewind to an earlier date'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('7 days ago'));
+    await tester.pumpAndSettle();
+
+    expect(harness.previews, hasLength(1));
+    expect(find.textContaining('2 files would go back to an earlier version'),
+        findsOneWidget);
+    expect(find.textContaining('1 created after that date'), findsOneWidget);
+    expect(find.text('rewind-x'), findsOneWidget);
+    expect(find.text('rewind-y'), findsOneWidget);
+    expect(find.textContaining('cannot be retracted'), findsOneWidget);
+    expect(harness.applied, isEmpty, reason: 'nothing changes before confirm');
+
+    await tester.tap(find.text('Rewind 2 files'));
+    await tester.pumpAndSettle();
+
+    expect(harness.applied, hasLength(1));
+    expect(harness.applied.single.items.map((i) => i.id), ['x', 'y']);
+    expect(harness.applied.single.items.first.targetRevision, 'target-x');
+    expect(find.textContaining('Rewound 2 files'), findsOneWidget);
+  });
+
+  testWidgets('a date with nothing to change cannot be confirmed',
+      (tester) async {
+    final harness = _RewindHarness([_entry('a')])
+      ..plan = RewindPreview(
+          DateTime.utc(2026, 11, 8), null, RewindCounts(0, 4, 0, 0), const [],
+          null);
+    await tester.pumpWidget(_rewindPage(harness));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Rewind to an earlier date'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('1 day ago'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Nothing would change.'), findsOneWidget);
+    final button = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Rewind'));
+    expect(button.onPressed, isNull);
+  });
+
+  testWidgets('a failed plan explains itself and changes nothing',
+      (tester) async {
+    final harness = _RewindHarness([_entry('a')])
+      ..previewError = ApiException(500, 'boom', 'internal');
+    await tester.pumpWidget(_rewindPage(harness));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Rewind to an earlier date'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('30 days ago'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('could not be read'), findsOneWidget);
+    expect(harness.applied, isEmpty);
+  });
+
+  testWidgets('a partly refused rewind reports what was left alone',
+      (tester) async {
+    final harness = _RewindHarness([_entry('a')])
+      ..plan = RewindPreview(DateTime.utc(2026, 11, 8), null,
+          RewindCounts(1, 0, 0, 0), [_rewindItem('x')], null)
+      ..result = RewindResult(1, 0, [(id: 'x', reason: 'the file changed')]);
+    await tester.pumpWidget(_rewindPage(harness));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Rewind to an earlier date'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('7 days ago'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Rewind 1 file'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('could not be changed'), findsOneWidget);
   });
 }

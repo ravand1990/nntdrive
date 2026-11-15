@@ -8,6 +8,7 @@ use nntdrive_crypto::{derive_auth_verifier, KeyFile, MasterKey};
 use nntdrive_nntp::{MockConfig, MockNntpServer, NntpPool};
 use nntdrive_storage::TestDb;
 use serde_json::{json, Value};
+use sqlx::Row;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -3093,4 +3094,367 @@ async fn retention_purge_skips_a_subtree_with_live_rows() {
         .await
         .unwrap();
     assert_eq!(kept, 2, "an unsafe subtree is kept");
+}
+
+// Rewind moves current content pointers back to versions that already exist.
+// It is account-scoped, lists only real changes, refuses a stale plan, keeps
+// newer versions and their chunk references, and never touches the trash.
+async fn put_version(
+    state: &AppState,
+    account: &Account,
+    file: Uuid,
+    revision: Uuid,
+    size: i64,
+    chunks: Option<Vec<Uuid>>,
+) -> (StatusCode, Value) {
+    let manifest = nntdrive_storage::FileManifest::new(file, revision, size as u64, String::new());
+    let sealed = account
+        .master
+        .seal_manifest(file, revision, &manifest.to_bytes())
+        .unwrap()
+        .to_bytes();
+    let mut body = json!({
+        "revision_id": revision,
+        "size": size,
+        "sealed_manifest": base64_key(&sealed),
+    });
+    if let Some(chunks) = chunks {
+        body["chunk_ids"] = json!(chunks);
+    }
+    call(
+        state,
+        req(
+            "POST",
+            &format!("/api/v1/files/{file}/versions"),
+            Some(&account.token),
+            Some(body),
+        ),
+    )
+    .await
+}
+
+async fn age_version(state: &AppState, file: Uuid, revision: Uuid, days: i64) {
+    sqlx::query(
+        "UPDATE file_versions SET created_at = now() - ($3::bigint * interval '1 day')
+         WHERE file_id = $1 AND revision_id = $2",
+    )
+    .bind(file)
+    .bind(revision)
+    .bind(days)
+    .execute(&state.pool)
+    .await
+    .unwrap();
+}
+
+async fn insert_chunk(state: &AppState, account_id: Uuid, seed: u8) -> Uuid {
+    let id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO chunks(id,account_id,plaintext_hash,plaintext_len,ciphertext_len,created_at)
+         VALUES($1,$2,$3,$4,42,now())",
+    )
+    .bind(id)
+    .bind(account_id)
+    .bind(vec![seed; 32])
+    .bind(10i64)
+    .execute(&state.pool)
+    .await
+    .unwrap();
+    id
+}
+
+async fn rewind_preview(
+    state: &AppState,
+    token: &str,
+    before: &str,
+    scope: Option<Uuid>,
+) -> (StatusCode, Value) {
+    // A literal '+' offset must be percent-encoded, exactly as a client does.
+    let before = before.replace('+', "%2B");
+    let mut uri = format!("/api/v1/rewind/preview?before={before}");
+    if let Some(scope) = scope {
+        uri.push_str(&format!("&scope={scope}"));
+    }
+    call(state, req("GET", &uri, Some(token), None)).await
+}
+
+async fn rewind_apply(
+    state: &AppState,
+    token: &str,
+    before: &str,
+    scope: Option<Uuid>,
+    items: Value,
+) -> (StatusCode, Value) {
+    call(
+        state,
+        req(
+            "POST",
+            "/api/v1/rewind",
+            Some(token),
+            Some(json!({ "before": before, "scope": scope, "items": items })),
+        ),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn rewind_previews_restores_and_rejects_stale_plans() {
+    let Some(env) = env().await else { return };
+    let alice = register(&env.state, "rewind-alice@example.com").await;
+    let bob = register(&env.state, "rewind-bob@example.com").await;
+
+    let folder = Uuid::new_v4();
+    let other = Uuid::new_v4();
+    let edited = Uuid::new_v4();
+    let created_later = Uuid::new_v4();
+    let pending = Uuid::new_v4();
+    let trashed = Uuid::new_v4();
+    for (id, parent, is_dir) in [
+        (folder, None, true),
+        (other, None, true),
+        (edited, Some(folder), false),
+        (created_later, Some(folder), false),
+        (pending, Some(folder), false),
+        (trashed, Some(folder), false),
+    ] {
+        create_node(&env.state, &alice.token, id, parent, is_dir).await;
+    }
+
+    // `edited` has real content on both sides, three days apart.
+    let old_chunk = insert_chunk(&env.state, alice.account_id, 1).await;
+    let new_chunk = insert_chunk(&env.state, alice.account_id, 2).await;
+    let edited_old = Uuid::new_v4();
+    let edited_new = Uuid::new_v4();
+    let (s, body) = put_version(
+        &env.state,
+        &alice,
+        edited,
+        edited_old,
+        10,
+        Some(vec![old_chunk]),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{body}");
+    let (s, body) = put_version(
+        &env.state,
+        &alice,
+        edited,
+        edited_new,
+        20,
+        Some(vec![new_chunk]),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{body}");
+    age_version(&env.state, edited, edited_old, 3).await;
+
+    // Created only after the rewind date: nothing to go back to.
+    let (s, _) = put_version(
+        &env.state,
+        &alice,
+        created_later,
+        Uuid::new_v4(),
+        0,
+        Some(vec![]),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED);
+
+    // An older version whose references were never supplied is never rewound.
+    let pending_old = Uuid::new_v4();
+    let (s, _) = put_version(&env.state, &alice, pending, pending_old, 0, None).await;
+    assert_eq!(s, StatusCode::CREATED);
+    age_version(&env.state, pending, pending_old, 3).await;
+    let pending_new = Uuid::new_v4();
+    let (s, _) = put_version(&env.state, &alice, pending, pending_new, 0, Some(vec![])).await;
+    assert_eq!(s, StatusCode::CREATED);
+
+    // Trashed files belong to the trash feature, not to a rewind.
+    let trashed_old = Uuid::new_v4();
+    let (s, _) = put_version(&env.state, &alice, trashed, trashed_old, 0, Some(vec![])).await;
+    assert_eq!(s, StatusCode::CREATED);
+    age_version(&env.state, trashed, trashed_old, 3).await;
+    let (s, _) = put_version(&env.state, &alice, trashed, Uuid::new_v4(), 0, Some(vec![])).await;
+    assert_eq!(s, StatusCode::CREATED);
+    delete_node(&env.state, &alice.token, trashed).await;
+
+    let before = chrono::Utc::now() - chrono::Duration::days(2);
+    let query = before.to_rfc3339();
+    let (s, preview) = rewind_preview(&env.state, &alice.token, &query, None).await;
+    assert_eq!(s, StatusCode::OK, "{preview}");
+    assert_eq!(preview["counts"]["rewind"], json!(1), "{preview}");
+    assert_eq!(preview["counts"]["unchanged"], json!(0), "{preview}");
+    assert_eq!(preview["counts"]["created_after"], json!(1), "{preview}");
+    assert_eq!(
+        preview["counts"]["pending_references"],
+        json!(1),
+        "{preview}"
+    );
+    let items = preview["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "{preview}");
+    assert_eq!(items[0]["id"], json!(edited));
+    assert_eq!(items[0]["target_revision"], json!(edited_old));
+    assert_eq!(items[0]["target_size"], json!(10));
+    assert!(items[0]["name_enc"].as_str().is_some());
+    assert!(preview["next"].is_null(), "{preview}");
+
+    // Another account sees nothing and cannot apply Alice's plan.
+    let (s, bob_preview) = rewind_preview(&env.state, &bob.token, &query, None).await;
+    assert_eq!(s, StatusCode::OK, "{bob_preview}");
+    assert_eq!(bob_preview["counts"]["rewind"], json!(0), "{bob_preview}");
+    assert_eq!(bob_preview["items"], json!([]), "{bob_preview}");
+    let (s, body) = rewind_apply(
+        &env.state,
+        &bob.token,
+        &query,
+        None,
+        json!([{ "id": edited, "target_revision": edited_old }]),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["applied"], json!(0), "{body}");
+    assert_eq!(body["failed"].as_array().unwrap().len(), 1, "{body}");
+
+    // A plan naming the wrong version is stale and changes nothing.
+    let (s, body) = rewind_apply(
+        &env.state,
+        &alice.token,
+        &query,
+        None,
+        json!([{ "id": edited, "target_revision": edited_new }]),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["applied"], json!(0), "{body}");
+    assert!(
+        body["failed"][0]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("preview the rewind again"),
+        "{body}"
+    );
+    let current: Option<Uuid> =
+        sqlx::query_scalar("SELECT current_version FROM files WHERE id = $1")
+            .bind(edited)
+            .fetch_one(&env.state.pool)
+            .await
+            .unwrap();
+    assert_eq!(current, Some(edited_new));
+
+    // The confirmed plan rewinds content and keeps the newer version intact.
+    let (s, body) = rewind_apply(
+        &env.state,
+        &alice.token,
+        &query,
+        None,
+        json!([{ "id": edited, "target_revision": edited_old }]),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["applied"], json!(1), "{body}");
+    assert_eq!(body["failed"], json!([]), "{body}");
+    let row = sqlx::query("SELECT current_version, size FROM files WHERE id = $1")
+        .bind(edited)
+        .fetch_one(&env.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        row.get::<Option<Uuid>, _>("current_version"),
+        Some(edited_old)
+    );
+    assert_eq!(row.get::<i64, _>("size"), 10);
+    let versions: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM file_versions WHERE account_id = $1 AND file_id = $2",
+    )
+    .bind(alice.account_id)
+    .bind(edited)
+    .fetch_one(&env.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(versions, 2, "history is never deleted by a rewind");
+    let refs: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM version_chunks vc JOIN file_versions v
+           ON v.account_id = vc.account_id AND v.id = vc.version_id
+         WHERE v.file_id = $1 AND v.revision_id = $2",
+    )
+    .bind(edited)
+    .bind(edited_new)
+    .fetch_one(&env.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(refs, 1, "the newer version keeps its chunk references");
+    let events: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM sync_events
+         WHERE account_id = $1 AND file_id = $2 AND kind = 'version'
+           AND payload->>'rewind' = 'true'",
+    )
+    .bind(alice.account_id)
+    .bind(edited)
+    .fetch_one(&env.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(events, 1, "other devices are told to refresh");
+
+    // Repeating the same plan is safe: the file already has that content.
+    let (s, body) = rewind_apply(
+        &env.state,
+        &alice.token,
+        &query,
+        None,
+        json!([{ "id": edited, "target_revision": edited_old }]),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["applied"], json!(0), "{body}");
+    assert_eq!(body["unchanged"], json!(1), "{body}");
+    let (s, preview) = rewind_preview(&env.state, &alice.token, &query, None).await;
+    assert_eq!(s, StatusCode::OK, "{preview}");
+    assert_eq!(preview["counts"]["rewind"], json!(0), "{preview}");
+
+    // A folder-scoped rewind only accepts files inside that folder.
+    let (s, preview) = rewind_preview(&env.state, &alice.token, &query, Some(folder)).await;
+    assert_eq!(s, StatusCode::OK, "{preview}");
+    assert_eq!(preview["counts"]["rewind"], json!(0), "{preview}");
+    let (s, body) = rewind_apply(
+        &env.state,
+        &alice.token,
+        &query,
+        Some(other),
+        json!([{ "id": edited, "target_revision": edited_old }]),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert!(
+        body["failed"][0]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("outside the rewound folder"),
+        "{body}"
+    );
+
+    // A trashed scope folder is refused, and so is a file id as a scope.
+    delete_node(&env.state, &alice.token, other).await;
+    let (s, body) = rewind_preview(&env.state, &alice.token, &query, Some(other)).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{body}");
+    let (s, body) = rewind_preview(&env.state, &alice.token, &query, Some(edited)).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
+
+    // Input is bounded and validated.
+    let (s, body) = rewind_preview(&env.state, &alice.token, "not-a-date", None).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
+    let future = (chrono::Utc::now() + chrono::Duration::days(1)).to_rfc3339();
+    let (s, body) = rewind_preview(&env.state, &alice.token, &future, None).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
+    let (s, body) = rewind_apply(&env.state, &alice.token, &query, None, json!([])).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
+    let (s, body) = rewind_apply(
+        &env.state,
+        &alice.token,
+        &query,
+        None,
+        json!([
+            { "id": edited, "target_revision": edited_old },
+            { "id": edited, "target_revision": edited_old }
+        ]),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
 }

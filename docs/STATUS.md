@@ -682,9 +682,34 @@ files. The Trash page has a per-row **Delete permanently** action and an
 metadata-only: articles already posted to Usenet cannot be retracted, and the
 dialogs say so.
 
-This is not completion: restore into an arbitrary folder picker in the UI, bulk
-rewind to an earlier date, and installed TalkBack/device acceptance remain open
-on #81.
+This is not completion: restore into an arbitrary folder picker in the UI,
+folder-scoped rewind in the client, a version-history screen and installed
+TalkBack/device acceptance remain open on #81.
+
+## Bulk rewind (#81 partial)
+
+`GET /rewind/preview` and `POST /rewind` put a folder or the whole account back
+to an earlier date using versions that already exist. For every affected file
+the current content pointer moves to the newest version committed at or before
+the chosen date; newer versions, their chunk references and the trash are left
+exactly as they were, so a rewind never deletes history, never retracts Usenet
+articles and never resurrects deleted metadata. Files that did not exist yet at
+that date are left alone instead of being deleted, and a version whose content
+references are still pending is skipped rather than served unsafely.
+
+The preview reports how many files would change, stay unchanged, were created
+after the date or cannot be rewound yet, and returns one bounded page of sealed
+names with the current and target revision ids. Applying sends only what the
+user saw: every item is re-checked under the account namespace lock and a file
+that changed meanwhile is refused with a reason instead of being silently
+rewound. Each applied file publishes one `version` event with `rewind: true`, so
+other devices refresh through their normal sync path.
+
+The client offers **Rewind to an earlier date** from the Trash page with 1-day,
+7-day, 30-day and pick-a-date presets. The plan is always shown first — the
+changed files by decrypted name, the counts and the skipped items — and nothing
+changes until the user confirms. The dialog states that versions after the date
+remain in history and that posted Usenet copies cannot be retracted.
 
 ## Recent implementation milestones
 
