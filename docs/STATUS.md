@@ -656,7 +656,7 @@ acceptance remain outstanding. Legacy clients may
 still introduce duplicate names after a guarded
 rename. See [client details](CLIENTS.md#rename-in-the-file-browser-51-partial).
 
-## Trash and restore (#81 partial)
+## Trash and restore (#81)
 
 Deleting is logical and now recoverable. The backend records `deleted_at`, marks
 the deleted node together with its still-live descendants (one shared timestamp,
@@ -691,9 +691,9 @@ files. The Trash page has a per-row **Delete permanently** action and an
 metadata-only: articles already posted to Usenet cannot be retracted, and the
 dialogs say so.
 
-This is not completion: installed TalkBack/device acceptance remains open on #81.
+Trash, restore, version history and rewind are merged. Installed desktop and Android acceptance of these flows is tracked in #138 and has not been run.
 
-## Per-file version history (#81 partial)
+## Per-file version history (#81)
 
 A file's **Version history** action opens a dialog listing that file's sealed
 history newest first: each row shows when the content was committed and how
@@ -717,7 +717,7 @@ The listing is bounded: at most the newest 200 versions are shown, with a note
 when the cap is reached. Restoring an installed build and large-history
 behaviour are not yet verified.
 
-## Bulk rewind (#81 partial)
+## Bulk rewind (#81)
 
 `GET /rewind/preview` and `POST /rewind` put a folder or the whole account back
 to an earlier date using versions that already exist. For every affected file
