@@ -30,6 +30,7 @@ import 'file_move.dart';
 import 'file_copy.dart';
 import 'item_actions.dart';
 import 'move_dialog.dart';
+import 'folder_picker.dart';
 import 'discard_on_back.dart';
 import 'rename_dialog.dart';
 import 'native.dart';
@@ -1110,23 +1111,39 @@ class _FilesPageState extends State<FilesPage> {
       builder: (_) => TrashPage(
         load: _api.trash,
         decrypt: _decryptTrashNames,
-        restore: (id, {bool toRoot = false}) => widget.operations.run(
-            widget.session.handle,
-            () => _api.restoreFile(id, toRoot: toRoot)),
+        restore: (id, {String? parentId, bool toRoot = false}) =>
+            widget.operations.run(widget.session.handle,
+                () => _api.restoreFile(id, parentId: parentId, toRoot: toRoot)),
         purge: (id) =>
             widget.operations.run(widget.session.handle, () => _api.purgeFile(id)),
         emptyTrash: () => widget.operations
             .run(widget.session.handle, () => _api.emptyTrash()),
-        previewRewind: (before) => widget.operations.run(
-            widget.session.handle, () => _api.rewindPreview(before: before)),
-        applyRewind: (before, items) => widget.operations.run(
-            widget.session.handle,
-            () => _api.rewind(before: before, items: items)),
+        previewRewind: (before, {String? scopeId}) =>
+            widget.operations.run(widget.session.handle,
+                () => _api.rewindPreview(before: before, scopeId: scopeId)),
+        applyRewind: (before, items, {String? scopeId}) =>
+            widget.operations.run(widget.session.handle,
+                () => _api.rewind(
+                    before: before, items: items, scopeId: scopeId)),
         decryptRewind: _decryptRewindNames,
+        pickFolder: _pickFolder,
       ),
     ));
     if (mounted) _refresh();
   }
+
+  /// Opens the shared folder chooser for a restore destination or a rewind
+  /// scope. It lists fresh remote folders and returns IDs plus local names only.
+  Future<FolderChoice?> _pickFolder() => showDialog<FolderChoice>(
+        context: context,
+        builder: (_) => FolderPickerDialog(
+          api: _api,
+          handle: widget.session.handle,
+          operations: widget.operations,
+          title: 'Choose a folder',
+          confirmLabel: 'Use this folder',
+        ),
+      );
 
   /// Opens the sealed names of rewind rows the same way as trash names.
   Future<List<String>> _decryptRewindNames(List<RewindItem> items) async {

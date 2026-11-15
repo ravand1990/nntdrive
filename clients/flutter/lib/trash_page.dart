@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'api.dart';
+import 'folder_picker.dart';
 
 /// The device-independent trash view: every deleted item the account can still
 /// restore, how long it stays restorable, and one explicit restore action.
@@ -21,6 +22,7 @@ class TrashPage extends StatefulWidget {
     this.previewRewind,
     this.applyRewind,
     this.decryptRewind,
+    this.pickFolder,
   });
 
   /// Reads the current trash listing from the backend.
@@ -30,8 +32,10 @@ class TrashPage extends StatefulWidget {
   /// names cannot be opened (they are shown as unavailable, never as ciphertext).
   final Future<List<String>> Function(List<TrashEntry> entries) decrypt;
 
-  /// Restores one item. `toRoot` is used when the original folder is gone.
-  final Future<void> Function(String id, {bool toRoot}) restore;
+  /// Restores one item. `toRoot` is used when the original folder is gone;
+  /// `parentId` restores it into another folder the user picked.
+  final Future<void> Function(String id, {String? parentId, bool toRoot})
+      restore;
 
   /// Permanently deletes one item and everything inside it.
   final Future<void> Function(String id) purge;
@@ -39,16 +43,23 @@ class TrashPage extends StatefulWidget {
   /// Permanently deletes every trashed item of this account.
   final Future<void> Function() emptyTrash;
 
-  /// Plans an account-wide rewind to an earlier instant. When null the rewind
-  /// action is not offered at all.
-  final Future<RewindPreview> Function(DateTime before)? previewRewind;
+  /// Plans a rewind to an earlier instant, for the whole account or for one
+  /// folder when [scopeId] is given. When null the rewind action is not
+  /// offered at all.
+  final Future<RewindPreview> Function(DateTime before, {String? scopeId})?
+      previewRewind;
 
   /// Applies a plan that the user has just seen and confirmed.
-  final Future<RewindResult> Function(DateTime before, List<RewindItem> items)?
-      applyRewind;
+  final Future<RewindResult> Function(DateTime before, List<RewindItem> items,
+      {String? scopeId})? applyRewind;
 
   /// Opens the sealed names of rewind rows, in order.
   final Future<List<String>> Function(List<RewindItem> items)? decryptRewind;
+
+  /// Opens a folder chooser for a restore destination or a rewind scope. When
+  /// null, a restore whose folder is gone falls back to My files and a rewind
+  /// always covers the whole account.
+  final Future<FolderChoice?> Function()? pickFolder;
 
   @override
   State<TrashPage> createState() => _TrashPageState();
@@ -106,31 +117,46 @@ class _TrashPageState extends State<TrashPage> {
   }
 
   Future<void> _restore(TrashEntry entry) async {
+    String? destination;
     var toRoot = false;
     if (!entry.parentPresent) {
-      final confirmed = await showDialog<bool>(
+      final pick = widget.pickFolder;
+      final target = await showDialog<_RestoreTarget>(
         context: context,
         builder: (context) => AlertDialog(
           title: const Text('The original folder is gone'),
-          content: const Text(
-              'This item was deleted from a folder that no longer exists. '
-              'Restore it to My files instead?'),
+          content: Text(pick == null
+              ? 'This item was deleted from a folder that no longer exists. '
+                  'Restore it to My files instead?'
+              : 'This item was deleted from a folder that no longer exists. '
+                  'Choose where to put it back.'),
           actions: [
             TextButton(
-                onPressed: () => Navigator.pop(context, false),
+                onPressed: () => Navigator.pop(context),
                 child: const Text('Cancel')),
+            if (pick != null)
+              TextButton(
+                  onPressed: () => Navigator.pop(context, _RestoreTarget.choose),
+                  child: const Text('Choose a folder…')),
             FilledButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('Restore to My files')),
+                onPressed: () => Navigator.pop(context, _RestoreTarget.root),
+                child: Text(pick == null ? 'Restore to My files' : 'My files')),
           ],
         ),
       );
-      if (confirmed != true || !mounted) return;
-      toRoot = true;
+      if (target == null || !mounted) return;
+      if (target == _RestoreTarget.choose) {
+        final choice = await pick?.call();
+        if (choice == null || !mounted) return;
+        destination = choice.id;
+        toRoot = choice.isRoot;
+      } else {
+        toRoot = true;
+      }
     }
     setState(() => _busyId = entry.id);
     try {
-      await widget.restore(entry.id, toRoot: toRoot);
+      await widget.restore(entry.id, parentId: destination, toRoot: toRoot);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Restored ${_name(_entries.indexOf(entry))}')));
@@ -191,6 +217,7 @@ class _TrashPageState extends State<TrashPage> {
         preview: preview,
         apply: apply,
         decrypt: widget.decryptRewind ?? _unavailableRewindNames,
+        pickScope: widget.pickFolder,
       ),
     );
     if (result == null || !mounted) return;
@@ -442,6 +469,9 @@ String _describeError(Object error, {String fallback = _trashActionError}) {
 Future<List<String>> _unavailableRewindNames(List<RewindItem> items) async =>
     items.map((_) => 'Name unavailable').toList();
 
+/// What the user chose when the folder an item was deleted from is gone.
+enum _RestoreTarget { root, choose }
+
 /// Always shows the plan before changing anything: a rewind is only applied
 /// after the user saw which files it would change at which date.
 class _RewindDialog extends StatefulWidget {
@@ -449,12 +479,17 @@ class _RewindDialog extends StatefulWidget {
     required this.preview,
     required this.apply,
     required this.decrypt,
+    this.pickScope,
   });
 
-  final Future<RewindPreview> Function(DateTime before) preview;
-  final Future<RewindResult> Function(DateTime before, List<RewindItem> items)
-      apply;
+  final Future<RewindPreview> Function(DateTime before, {String? scopeId})
+      preview;
+  final Future<RewindResult> Function(DateTime before, List<RewindItem> items,
+      {String? scopeId}) apply;
   final Future<List<String>> Function(List<RewindItem> items) decrypt;
+
+  /// Opens a folder chooser for the scope; null keeps the whole account.
+  final Future<FolderChoice?> Function()? pickScope;
 
   @override
   State<_RewindDialog> createState() => _RewindDialogState();
@@ -475,6 +510,11 @@ class _RewindDialogState extends State<_RewindDialog> {
   bool _applying = false;
   String? _error;
 
+  /// The folder to rewind, or null for the whole account.
+  FolderChoice? _scope;
+
+  String get _scopeName => _scope?.name ?? 'My files';
+
   Future<void> _choose(DateTime before, {int? preset}) async {
     setState(() {
       _presetDays = preset;
@@ -485,7 +525,7 @@ class _RewindDialogState extends State<_RewindDialog> {
       _loading = true;
     });
     try {
-      final plan = await widget.preview(before);
+      final plan = await widget.preview(before, scopeId: _scope?.id);
       List<String> names = const [];
       if (plan.items.isNotEmpty) {
         try {
@@ -526,6 +566,24 @@ class _RewindDialogState extends State<_RewindDialog> {
     await _choose(end);
   }
 
+  /// Picks the folder this rewind covers, then plans again for it so the user
+  /// never confirms a plan that belongs to the previous scope.
+  Future<void> _pickScope() async {
+    final pick = widget.pickScope;
+    if (pick == null) return;
+    final choice = await pick();
+    if (choice == null || !mounted) return;
+    setState(() {
+      _scope = choice.isRoot ? null : choice;
+      _plan = null;
+      _names = const [];
+      _error = null;
+    });
+    final before = _before;
+    if (before == null) return;
+    await _choose(before, preset: _presetDays);
+  }
+
   Future<void> _apply() async {
     final plan = _plan;
     final before = _before;
@@ -535,7 +593,8 @@ class _RewindDialogState extends State<_RewindDialog> {
       _error = null;
     });
     try {
-      final result = await widget.apply(before, plan.items);
+      final result =
+          await widget.apply(before, plan.items, scopeId: _scope?.id);
       if (!mounted) return;
       Navigator.of(context).pop(result);
     } catch (e) {
@@ -571,11 +630,33 @@ class _RewindDialogState extends State<_RewindDialog> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                  'Puts files back to the version they had on that date. '
-                  'Versions after it stay in history, nothing is uploaded or '
-                  'removed, and items in the trash are not touched.',
+                  _scope == null
+                      ? 'Puts your files back to the version they had on that '
+                          'date. Versions after it stay in history, nothing is '
+                          'uploaded or removed, and items in the trash are not '
+                          'touched.'
+                      : 'Puts the files in $_scopeName back to the version they '
+                          'had on that date. Versions after it stay in history, '
+                          'nothing is uploaded or removed, and items in the '
+                          'trash are not touched.',
                   style: theme.textTheme.bodySmall),
-              const SizedBox(height: 12),
+              const SizedBox(height: 4),
+              Row(children: [
+                const Icon(Icons.folder_outlined, size: 16),
+                const SizedBox(width: 6),
+                Expanded(
+                    child: Text(
+                        _scope == null
+                            ? 'Scope: the whole account'
+                            : 'Scope: $_scopeName',
+                        overflow: TextOverflow.ellipsis)),
+                if (widget.pickScope != null)
+                  TextButton(
+                    onPressed: _loading || _applying ? null : _pickScope,
+                    child: const Text('Change'),
+                  ),
+              ]),
+              const SizedBox(height: 8),
               Wrap(
                 spacing: 8,
                 runSpacing: 4,
