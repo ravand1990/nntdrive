@@ -353,25 +353,44 @@ class _RewindHarness extends _Harness {
   _RewindHarness(super.entries);
 
   RewindPreview? plan;
+
+  /// Further plan pages, keyed by the cursor that asks for them.
+  final Map<String, RewindPreview> morePages = {};
   Object? previewError;
   RewindResult? result;
   Object? applyError;
+
+  /// 1-based apply call that throws, to model a connection lost mid-rewind.
+  int? failOnApplyCall;
+  int applyCalls = 0;
   final List<DateTime> previews = [];
   final List<String?> previewScopes = [];
+  final List<String?> previewCursors = [];
   final List<({DateTime before, List<RewindItem> items, String? scope})>
       applied = [];
 
-  Future<RewindPreview> preview(DateTime before, {String? scopeId}) async {
+  Future<RewindPreview> preview(DateTime before,
+      {String? scopeId, String? after}) async {
     previews.add(before);
     previewScopes.add(scopeId);
+    previewCursors.add(after);
     if (previewError != null) throw previewError!;
+    if (after != null) {
+      final page = morePages[after];
+      if (page == null) throw StateError('unexpected rewind cursor $after');
+      return page;
+    }
     return plan ??
         RewindPreview(before, scopeId, RewindCounts(0, 0, 0, 0), const [], null);
   }
 
   Future<RewindResult> apply(DateTime before, List<RewindItem> items,
       {String? scopeId}) async {
+    applyCalls++;
     if (applyError != null) throw applyError!;
+    if (failOnApplyCall != null && applyCalls == failOnApplyCall) {
+      throw ApiException(0, 'connection lost', 'network');
+    }
     applied.add((before: before, items: items, scope: scopeId));
     return result ?? RewindResult(items.length, 0, const []);
   }
@@ -543,5 +562,107 @@ void rewindTests() {
 
     expect(find.text('Scope: the whole account'), findsOneWidget);
     expect(find.widgetWithText(TextButton, 'Change'), findsNothing);
+  });
+
+  testWidgets('a plan read in pages rewinds every changed file at once',
+      (tester) async {
+    final harness = _RewindHarness([_entry('a')])
+      ..plan = RewindPreview(DateTime.utc(2026, 11, 8), null,
+          RewindCounts(3, 0, 0, 0), [_rewindItem('x'), _rewindItem('y')], 'y');
+    harness.morePages['y'] = RewindPreview(DateTime.utc(2026, 11, 8), null,
+        RewindCounts(3, 0, 0, 0), [_rewindItem('z')], null);
+    await tester.pumpWidget(_rewindPage(harness));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Rewind to an earlier date'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('7 days ago'));
+    await tester.pumpAndSettle();
+
+    expect(harness.previewCursors, [null, 'y'],
+        reason: 'the second page is asked for with the first page cursor');
+    expect(find.textContaining('3 files would go back'), findsOneWidget);
+    expect(find.text('rewind-z'), findsOneWidget);
+    expect(find.text('Load more changes'), findsNothing);
+
+    await tester.tap(find.text('Rewind 3 files'));
+    await tester.pumpAndSettle();
+
+    expect(harness.applied, hasLength(1));
+    expect(harness.applied.single.items.map((i) => i.id), ['x', 'y', 'z'],
+        reason: 'one confirmation covers every page of the plan');
+    expect(find.textContaining('Rewound 3 files'), findsOneWidget);
+  });
+
+  testWidgets('a page that repeats itself cannot loop or rewind a file twice',
+      (tester) async {
+    final page = [_rewindItem('x'), _rewindItem('y')];
+    final harness = _RewindHarness([_entry('a')])
+      ..plan = RewindPreview(DateTime.utc(2026, 11, 8), null,
+          RewindCounts(2, 0, 0, 0), page, 'y');
+    harness.morePages['y'] = RewindPreview(DateTime.utc(2026, 11, 8), null,
+        RewindCounts(2, 0, 0, 0), page, 'y');
+    await tester.pumpWidget(_rewindPage(harness));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Rewind to an earlier date'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('1 day ago'));
+    await tester.pumpAndSettle();
+
+    expect(harness.previewCursors, [null, 'y'],
+        reason: 'a page without new rows must stop the paging');
+    expect(find.textContaining('Showing 2 of 2'), findsOneWidget);
+
+    await tester.tap(find.text('Rewind 2 files'));
+    await tester.pumpAndSettle();
+    expect(harness.applied.single.items.map((i) => i.id), ['x', 'y'],
+        reason: 'a repeated row is never sent twice');
+  });
+
+  testWidgets('a plan larger than one request is rewound in batches',
+      (tester) async {
+    final items = List.generate(250, (i) => _rewindItem('f$i'));
+    final harness = _RewindHarness([_entry('a')])
+      ..plan = RewindPreview(DateTime.utc(2026, 11, 8), null,
+          RewindCounts(250, 0, 0, 0), items, null);
+    await tester.pumpWidget(_rewindPage(harness));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Rewind to an earlier date'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('7 days ago'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Rewind 250 files'));
+    await tester.pumpAndSettle();
+
+    expect(harness.applied.map((call) => call.items.length), [200, 50],
+        reason: 'the backend refuses more than 200 files per request');
+    expect(harness.applied.expand((call) => call.items).length, 250);
+    expect(find.textContaining('Rewound 250 files'), findsOneWidget);
+  });
+
+  testWidgets('a rewind that stops partway says how much already changed',
+      (tester) async {
+    final items = List.generate(250, (i) => _rewindItem('f$i'));
+    final harness = _RewindHarness([_entry('a')])
+      ..plan = RewindPreview(DateTime.utc(2026, 11, 8), null,
+          RewindCounts(250, 0, 0, 0), items, null)
+      ..failOnApplyCall = 2;
+    await tester.pumpWidget(_rewindPage(harness));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Rewind to an earlier date'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('7 days ago'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Rewind 250 files'));
+    await tester.pumpAndSettle();
+
+    expect(harness.applied, hasLength(1));
+    expect(find.textContaining('The rewind stopped after 200 files were changed'),
+        findsOneWidget);
+    expect(find.textContaining('Rewound'), findsNothing,
+        reason: 'a partial rewind is never reported as finished');
   });
 }

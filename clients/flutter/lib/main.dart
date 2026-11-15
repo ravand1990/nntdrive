@@ -1119,9 +1119,11 @@ class _FilesPageState extends State<FilesPage> {
             widget.operations.run(widget.session.handle, () => _api.purgeFile(id)),
         emptyTrash: () => widget.operations
             .run(widget.session.handle, () => _api.emptyTrash()),
-        previewRewind: (before, {String? scopeId}) =>
-            widget.operations.run(widget.session.handle,
-                () => _api.rewindPreview(before: before, scopeId: scopeId)),
+        previewRewind: (before, {String? scopeId, String? after}) =>
+            widget.operations.run(
+                widget.session.handle,
+                () => _api.rewindPreview(
+                    before: before, scopeId: scopeId, after: after)),
         applyRewind: (before, items, {String? scopeId}) =>
             widget.operations.run(widget.session.handle,
                 () => _api.rewind(
