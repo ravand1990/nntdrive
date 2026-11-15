@@ -1,8 +1,9 @@
-//! Trash view and restore for logically deleted namespace nodes.
+//! Trash view, restore and permanent deletion for logically deleted nodes.
 //!
-//! Deletion never removes metadata or content here: a node keeps its versions,
-//! and its rows stay restorable until the retention window has passed. This
-//! module never purges anything; it only lists and restores.
+//! Ordinary deletion keeps metadata and versions so an item can be restored
+//! inside its retention window. Permanent deletion ("empty trash" or one item)
+//! drops those rows for good, but it is still metadata-only: articles already
+//! posted to Usenet cannot be retracted and are never claimed to be.
 //!
 //! Everything is account-scoped. Names stay sealed envelopes, so the server
 //! cannot read them and returns exactly the same bytes it stored.
@@ -257,4 +258,228 @@ async fn inside_subtree(
     .fetch_one(&mut **tx)
     .await?;
     Ok(found)
+}
+
+/// `DELETE /trash/{id}` — remove one trashed node and its deleted subtree.
+///
+/// This drops metadata only: rows, versions and their chunk references go away,
+/// while articles already posted to Usenet cannot be retracted and are never
+/// claimed to be. The node must be listed by `GET /trash` itself, so a stale ID
+/// of a nested descendant cannot hollow out a still-restorable ancestor.
+pub async fn purge_file(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path(id): Path<Uuid>,
+) -> ApiResult<impl IntoResponse> {
+    let mut tx = state.pool.begin().await?;
+    lock_namespace(&mut tx, auth.account_id).await?;
+
+    let row = sqlx::query(
+        "SELECT parent_id, deleted FROM files WHERE account_id = $1 AND id = $2 FOR UPDATE",
+    )
+    .bind(auth.account_id)
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(row) = row else {
+        return Err(ApiError::NotFound);
+    };
+    if !row.get::<bool, _>("deleted") {
+        return Err(ApiError::Conflict("this item is not in the trash".into()));
+    }
+    if let Some(parent) = row.get::<Option<Uuid>, _>("parent_id") {
+        let parent_deleted: Option<bool> =
+            sqlx::query_scalar("SELECT deleted FROM files WHERE account_id = $1 AND id = $2")
+                .bind(auth.account_id)
+                .bind(parent)
+                .fetch_optional(&mut *tx)
+                .await?;
+        if parent_deleted == Some(true) {
+            return Err(ApiError::Conflict(
+                "this item is inside another trashed item; delete that one instead".into(),
+            ));
+        }
+    }
+
+    let removed = purge_subtree(&mut tx, auth.account_id, id).await?;
+    append_event(
+        &mut tx,
+        auth.account_id,
+        auth.device_id,
+        id,
+        None,
+        "purge",
+        json!({ "files_removed": removed }),
+    )
+    .await?;
+    tx.commit().await?;
+
+    Ok(Json(json!({
+        "status": "deleted",
+        "id": id,
+        "files_removed": removed,
+    })))
+}
+
+/// `DELETE /trash` — remove every trashed node of this account.
+///
+/// Same metadata-only guarantee as [`purge_file`]. One `purge` event is
+/// published per top-level trashed node so other devices can refresh.
+pub async fn empty_trash(
+    State(state): State<AppState>,
+    auth: Auth,
+) -> ApiResult<impl IntoResponse> {
+    let mut tx = state.pool.begin().await?;
+    lock_namespace(&mut tx, auth.account_id).await?;
+
+    // A fixed root is structural: refuse instead of cascading its space away.
+    let fixed: Option<String> = sqlx::query_scalar(
+        "SELECT r.kind FROM account_roots r
+         JOIN files f ON f.account_id = r.account_id AND f.id = r.node_id
+         WHERE r.account_id = $1 AND f.deleted = TRUE LIMIT 1",
+    )
+    .bind(auth.account_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some(kind) = fixed {
+        return Err(ApiError::Conflict(format!(
+            "the trash holds a fixed account root ({kind}); restore it instead"
+        )));
+    }
+    ensure_no_live_children(&mut tx, auth.account_id, None).await?;
+
+    let roots: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT f.id FROM files f
+         WHERE f.account_id = $1 AND f.deleted = TRUE
+           AND (f.parent_id IS NULL OR NOT EXISTS (
+                 SELECT 1 FROM files p
+                 WHERE p.account_id = f.account_id
+                   AND p.id = f.parent_id
+                   AND p.deleted = TRUE
+           ))
+         ORDER BY f.id",
+    )
+    .bind(auth.account_id)
+    .fetch_all(&mut *tx)
+    .await?;
+
+    let removed = sqlx::query("DELETE FROM files WHERE account_id = $1 AND deleted = TRUE")
+        .bind(auth.account_id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+
+    for root in &roots {
+        append_event(
+            &mut tx,
+            auth.account_id,
+            auth.device_id,
+            *root,
+            None,
+            "purge",
+            json!({}),
+        )
+        .await?;
+    }
+    tx.commit().await?;
+
+    Ok(Json(json!({
+        "status": "emptied",
+        "roots": roots.len(),
+        "files_removed": removed,
+    })))
+}
+
+/// Delete one trashed subtree and report how many metadata rows went away.
+async fn purge_subtree(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    account_id: Uuid,
+    root: Uuid,
+) -> ApiResult<i64> {
+    let fixed: Option<String> = sqlx::query_scalar(
+        "WITH RECURSIVE subtree AS (
+             SELECT id FROM files WHERE account_id = $1 AND id = $2
+             UNION ALL
+             SELECT f.id FROM files f JOIN subtree s ON f.parent_id = s.id
+             WHERE f.account_id = $1
+         )
+         SELECT r.kind FROM account_roots r
+         WHERE r.account_id = $1 AND r.node_id IN (SELECT id FROM subtree) LIMIT 1",
+    )
+    .bind(account_id)
+    .bind(root)
+    .fetch_optional(&mut **tx)
+    .await?;
+    if let Some(kind) = fixed {
+        return Err(ApiError::Conflict(format!(
+            "a fixed account root ({kind}) cannot be deleted permanently"
+        )));
+    }
+    ensure_no_live_children(tx, account_id, Some(root)).await?;
+
+    let removed = sqlx::query(
+        "WITH RECURSIVE subtree AS (
+             SELECT id FROM files WHERE account_id = $1 AND id = $2
+             UNION ALL
+             SELECT f.id FROM files f JOIN subtree s ON f.parent_id = s.id
+             WHERE f.account_id = $1
+         )
+         DELETE FROM files
+         WHERE account_id = $1 AND id IN (SELECT id FROM subtree) AND deleted = TRUE",
+    )
+    .bind(account_id)
+    .bind(root)
+    .execute(&mut **tx)
+    .await?
+    .rows_affected();
+    Ok(removed as i64)
+}
+
+/// A purge never removes live metadata: deleting a parent row would cascade
+/// onto its children, so refuse while a trashed node still has live content.
+/// `root` scopes the check to one subtree; `None` covers the whole account.
+async fn ensure_no_live_children(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    account_id: Uuid,
+    root: Option<Uuid>,
+) -> ApiResult<()> {
+    let unsafe_state: bool = match root {
+        Some(root) => {
+            sqlx::query_scalar(
+                "WITH RECURSIVE subtree AS (
+                     SELECT id FROM files WHERE account_id = $1 AND id = $2
+                     UNION ALL
+                     SELECT f.id FROM files f JOIN subtree s ON f.parent_id = s.id
+                     WHERE f.account_id = $1
+                 )
+                 SELECT EXISTS (
+                     SELECT 1 FROM files
+                     WHERE account_id = $1 AND deleted = FALSE
+                       AND id IN (SELECT id FROM subtree)
+                 )",
+            )
+            .bind(account_id)
+            .bind(root)
+            .fetch_one(&mut **tx)
+            .await?
+        }
+        None => {
+            sqlx::query_scalar(
+                "SELECT EXISTS (
+                     SELECT 1 FROM files c
+                     JOIN files p ON p.account_id = c.account_id AND p.id = c.parent_id
+                     WHERE c.account_id = $1 AND c.deleted = FALSE AND p.deleted = TRUE
+                 )",
+            )
+            .bind(account_id)
+            .fetch_one(&mut **tx)
+            .await?
+        }
+    };
+    if unsafe_state {
+        return Err(ApiError::Conflict(
+            "the trash still holds live files; restore or delete them first".into(),
+        ));
+    }
+    Ok(())
 }

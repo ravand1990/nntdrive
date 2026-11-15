@@ -1113,6 +1113,10 @@ class _FilesPageState extends State<FilesPage> {
         restore: (id, {bool toRoot = false}) => widget.operations.run(
             widget.session.handle,
             () => _api.restoreFile(id, toRoot: toRoot)),
+        purge: (id) =>
+            widget.operations.run(widget.session.handle, () => _api.purgeFile(id)),
+        emptyTrash: () => widget.operations
+            .run(widget.session.handle, () => _api.emptyTrash()),
       ),
     ));
     if (mounted) _refresh();

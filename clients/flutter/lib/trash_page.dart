@@ -16,6 +16,8 @@ class TrashPage extends StatefulWidget {
     required this.load,
     required this.decrypt,
     required this.restore,
+    required this.purge,
+    required this.emptyTrash,
   });
 
   /// Reads the current trash listing from the backend.
@@ -28,6 +30,12 @@ class TrashPage extends StatefulWidget {
   /// Restores one item. `toRoot` is used when the original folder is gone.
   final Future<void> Function(String id, {bool toRoot}) restore;
 
+  /// Permanently deletes one item and everything inside it.
+  final Future<void> Function(String id) purge;
+
+  /// Permanently deletes every trashed item of this account.
+  final Future<void> Function() emptyTrash;
+
   @override
   State<TrashPage> createState() => _TrashPageState();
 }
@@ -39,6 +47,7 @@ class _TrashPageState extends State<TrashPage> {
   bool _loading = true;
   String? _error;
   String? _busyId;
+  bool _emptying = false;
 
   @override
   void initState() {
@@ -65,6 +74,8 @@ class _TrashPageState extends State<TrashPage> {
         _names = names;
         _retentionDays = listing.retentionDays;
         _loading = false;
+        _busyId = null;
+        _emptying = false;
       });
     } catch (e) {
       if (!mounted) return;
@@ -118,6 +129,79 @@ class _TrashPageState extends State<TrashPage> {
     }
   }
 
+  Future<void> _purge(TrashEntry entry) async {
+    final name = _name(_entries.indexOf(entry));
+    final what =
+        entry.isDir ? 'the folder "$name" and everything inside it' : '"$name"';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete permanently?'),
+        content: Text('This removes $what from your account for good and '
+            'cannot be undone. Files already posted to Usenet cannot be '
+            'retracted.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Delete permanently')),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _busyId = entry.id);
+    try {
+      await widget.purge(entry.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Deleted $name permanently')));
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _busyId = null);
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(_describe(e))));
+    }
+  }
+
+  Future<void> _emptyTrash() async {
+    final count = _entries.length;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Empty the trash?'),
+        content: Text('This permanently removes $count deleted '
+            '${count == 1 ? 'item' : 'items'} from your account for good and '
+            'cannot be undone. Files already posted to Usenet cannot be '
+            'retracted.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Empty trash')),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _emptying = true);
+    try {
+      await widget.emptyTrash();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Trash emptied')));
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _emptying = false);
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(_describe(e))));
+    }
+  }
+
   String _describe(Object error) {
     if (error is ApiException) {
       if (error.status == 410) {
@@ -138,6 +222,22 @@ class _TrashPageState extends State<TrashPage> {
       appBar: AppBar(
         title: const Text('Trash'),
         actions: [
+          if (_emptying)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16),
+              child: Center(
+                  child: SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2))),
+            )
+          else
+            IconButton(
+                onPressed: _loading || _entries.isEmpty || _busyId != null
+                    ? null
+                    : _emptyTrash,
+                tooltip: 'Empty trash',
+                icon: const Icon(Icons.delete_sweep)),
           IconButton(
               onPressed: _loading ? null : _load,
               tooltip: 'Refresh trash',
@@ -196,6 +296,9 @@ class _TrashPageState extends State<TrashPage> {
                             onRestore: entry.expired || _busyId != null
                                 ? null
                                 : () => _restore(entry),
+                            onPurge: _busyId != null || _emptying
+                                ? null
+                                : () => _purge(entry),
                           );
                         },
                       ),
@@ -210,12 +313,14 @@ class _TrashRow extends StatelessWidget {
     required this.entry,
     required this.busy,
     required this.onRestore,
+    required this.onPurge,
   });
 
   final String name;
   final TrashEntry entry;
   final bool busy;
   final VoidCallback? onRestore;
+  final VoidCallback? onPurge;
 
   String get _status {
     if (entry.expired) return 'Retention passed';
@@ -246,13 +351,24 @@ class _TrashRow extends StatelessWidget {
       trailing: busy
           ? const SizedBox(
               width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
-          : entry.expired
-              ? const Text('Cannot restore')
-              : TextButton.icon(
-                  onPressed: onRestore,
-                  icon: const Icon(Icons.restore),
-                  label: const Text('Restore'),
+          : Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (entry.expired)
+                  const Text('Cannot restore')
+                else
+                  TextButton.icon(
+                    onPressed: onRestore,
+                    icon: const Icon(Icons.restore),
+                    label: const Text('Restore'),
+                  ),
+                IconButton(
+                  onPressed: onPurge,
+                  tooltip: 'Delete permanently',
+                  icon: const Icon(Icons.delete_forever),
                 ),
+              ],
+            ),
     );
   }
 }

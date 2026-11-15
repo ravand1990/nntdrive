@@ -104,8 +104,8 @@ A version is only visible after commit; clients must upload all chunks first.
 Deleting is logical and keeps every version. `PATCH /files/{id}` with
 `deleted: true` marks the node and all of its still-live descendants with one
 `deleted_at` timestamp, so a deleted folder never leaves orphaned children in
-the namespace. Nothing is purged: the retention window only bounds what the
-trash view offers to restore.
+the namespace. The retention window bounds what the trash view offers to
+restore; ordinary deletion never purges anything.
 
 `GET /trash` returns the account's deleted nodes whose parent is not deleted,
 newest first:
@@ -144,6 +144,22 @@ the restored subtree is refused (`400`/`404`/`409`). An item deleted longer ago
 than `retention_days` cannot be restored and returns `410`. Restoring something
 that is not deleted returns `409`. `retention_days` comes from
 `NNTDRIVE_TRASH_RETENTION_DAYS` (default 30); changing it never deletes data.
+
+Permanent deletion removes the account's metadata for good and is separate from
+the retention window:
+
+| Method | Path | Effect |
+|---|---|---|
+| DELETE | `/trash/{id}` | remove one trashed node, its deleted subtree and its versions |
+| DELETE | `/trash` | remove every trashed node of the account |
+
+Both publish a `purge` event per removed top-level node and answer with the
+number of metadata rows removed. They are tenant-scoped, refuse an item that is
+not in the trash (`409`), refuse a nested descendant while its listed ancestor
+is still in the trash (`409`), refuse a fixed account root (`409`), and refuse
+to remove anything while a trashed node still has live children (`409`). This
+is metadata-only: Usenet articles were already posted and cannot be retracted,
+so no response claims that content disappeared.
 
 ## Ciphertext chunks
 

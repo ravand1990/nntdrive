@@ -2594,6 +2594,18 @@ async fn trash(state: &AppState, token: &str) -> Value {
     body
 }
 
+async fn purge(state: &AppState, token: &str, id: Uuid) -> (StatusCode, Value) {
+    call(
+        state,
+        req("DELETE", &format!("/api/v1/trash/{id}"), Some(token), None),
+    )
+    .await
+}
+
+async fn empty_trash(state: &AppState, token: &str) -> (StatusCode, Value) {
+    call(state, req("DELETE", "/api/v1/trash", Some(token), None)).await
+}
+
 async fn child_ids(state: &AppState, token: &str, parent: Uuid) -> Vec<Uuid> {
     let (s, body) = call(
         state,
@@ -2784,4 +2796,133 @@ async fn trash_lists_restores_and_expires_deleted_subtrees() {
     assert_eq!(entry["days_left"], json!(0));
     let (s, body) = restore(&env.state, &alice.token, stale, None).await;
     assert_eq!(s, StatusCode::GONE, "{body}");
+}
+
+// Permanent deletion drops trashed metadata for good: it is tenant-scoped,
+// refuses live and nested items, removes versions with the rows, and can empty
+// the whole trash without touching another account.
+#[tokio::test]
+async fn purge_removes_trashed_metadata_and_empties_the_trash() {
+    let Some(env) = env().await else { return };
+    let alice = register(&env.state, "purge-alice@example.com").await;
+    let bob = register(&env.state, "purge-bob@example.com").await;
+
+    let folder = Uuid::new_v4();
+    let child = Uuid::new_v4();
+    let keeper = Uuid::new_v4();
+    create_node(&env.state, &alice.token, folder, None, true).await;
+    create_node(&env.state, &alice.token, child, Some(folder), false).await;
+    create_node(&env.state, &alice.token, keeper, None, false).await;
+
+    // A committed version must disappear with the file it belongs to.
+    let revision = Uuid::new_v4();
+    let manifest = nntdrive_storage::FileManifest::new(child, revision, 0, String::new());
+    let sealed = alice
+        .master
+        .seal_manifest(child, revision, &manifest.to_bytes())
+        .unwrap()
+        .to_bytes();
+    let (s, body) = call(
+        &env.state,
+        req(
+            "POST",
+            &format!("/api/v1/files/{child}/versions"),
+            Some(&alice.token),
+            Some(json!({
+                "revision_id": revision,
+                "size": 0,
+                "sealed_manifest": base64_key(&sealed)
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{body}");
+
+    // A live item is not purgeable, and another account cannot purge at all.
+    let (s, body) = purge(&env.state, &alice.token, keeper).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{body}");
+    delete_node(&env.state, &alice.token, folder).await;
+    let (s, _) = purge(&env.state, &bob.token, folder).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    // Only the item the trash lists may be purged, never a nested descendant.
+    let (s, body) = purge(&env.state, &alice.token, child).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{body}");
+
+    // Purging the listed folder removes its subtree and the file versions.
+    let (s, body) = purge(&env.state, &alice.token, folder).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["files_removed"], json!(2));
+    assert!(trash(&env.state, &alice.token).await["files"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    let rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM files WHERE account_id = $1 AND id IN ($2, $3)")
+            .bind(alice.account_id)
+            .bind(folder)
+            .bind(child)
+            .fetch_one(&env.state.pool)
+            .await
+            .unwrap();
+    assert_eq!(rows, 0, "purged rows are gone");
+    let versions: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM file_versions WHERE account_id = $1 AND file_id = $2",
+    )
+    .bind(alice.account_id)
+    .bind(child)
+    .fetch_one(&env.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(versions, 0, "versions go with the row");
+    let (_, live) = call(
+        &env.state,
+        req("GET", "/api/v1/files", Some(&alice.token), None),
+    )
+    .await;
+    assert!(
+        live["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["id"] == json!(keeper)),
+        "the live sibling survives: {live}"
+    );
+
+    // Emptying the trash removes the rest, publishes purge events and leaves
+    // another account's trash alone.
+    let other = Uuid::new_v4();
+    create_node(&env.state, &bob.token, other, None, false).await;
+    delete_node(&env.state, &bob.token, other).await;
+    let gone = Uuid::new_v4();
+    create_node(&env.state, &alice.token, gone, None, false).await;
+    delete_node(&env.state, &alice.token, gone).await;
+    let (s, body) = empty_trash(&env.state, &alice.token).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["roots"], json!(1));
+    assert_eq!(body["files_removed"], json!(1));
+    assert!(trash(&env.state, &alice.token).await["files"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        trash(&env.state, &bob.token).await["files"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1,
+        "another account's trash is untouched"
+    );
+    let (_, events) = call(
+        &env.state,
+        req("GET", "/api/v1/events", Some(&alice.token), None),
+    )
+    .await;
+    assert!(
+        events["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["kind"] == json!("purge") && e["file_id"] == json!(gone)),
+        "{events}"
+    );
 }
