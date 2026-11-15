@@ -6,6 +6,8 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-11-15
+
 ### Features
 
 - Bulk rewind (#81 partial): a **Rewind to an earlier date** action in the Trash page puts the account back to the newest version each file had on a chosen date, with 1-day, 7-day, 30-day and pick-a-date presets. The plan is always shown first — how many files would change, stay unchanged, were created after that date or cannot be rewound yet, plus the changed files by locally decrypted name — and nothing changes until you confirm. Rewinding only moves which existing version a file points at: versions after the date stay in history, nothing is uploaded or downloaded, items in the trash are untouched, and posted Usenet copies cannot be retracted. The server re-checks every item against a fresh preview, so a file that changed meanwhile is refused instead of being silently rewound, and files whose content references are still pending are skipped rather than served unsafely.
