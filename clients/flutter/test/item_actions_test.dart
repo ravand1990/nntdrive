@@ -34,7 +34,7 @@ ItemActionSpec _spec(List<ItemActionSpec> specs, ItemActionKind kind) =>
 
 void main() {
   group('item action specs', () {
-    test('a folder offers opening and renaming but explains missing delete', () {
+    test('a folder offers opening, renaming and a recoverable delete', () {
       final specs = itemActionSpecs(isDir: true, favorite: false, busy: false);
       expect(_spec(specs, ItemActionKind.open).label, 'Open folder');
       expect(_spec(specs, ItemActionKind.rename).enabled, isTrue);
@@ -42,12 +42,12 @@ void main() {
       expect(_spec(specs, ItemActionKind.copy).enabled, isTrue);
       // No content actions apply to a folder.
       expect(specs.map((s) => s.kind), isNot(contains(ItemActionKind.download)));
-      // Deleting a folder would strand its children until Trash exists (#81).
+      // Deleting a folder moves its whole subtree to the trash (#81).
       final delete = _spec(specs, ItemActionKind.delete);
-      expect(delete.enabled, isFalse);
+      expect(delete.enabled, isTrue);
       expect(delete.destructive, isTrue);
-      expect(delete.disabledReason, folderDeleteUnavailable);
-      expect(delete.disabledReason, contains('#81'));
+      expect(delete.subtitle, folderDeleteSubtitle);
+      expect(delete.subtitle, contains('Trash'));
     });
 
     test('a file offers its content actions and a confirmed delete', () {
@@ -79,17 +79,11 @@ void main() {
           ItemActionKind.copy,
           if (!isDir) ItemActionKind.uploadVersion,
           if (!isDir) ItemActionKind.favorite,
-          if (!isDir) ItemActionKind.delete,
+          ItemActionKind.delete,
         ]) {
           final spec = _spec(specs, kind);
           expect(spec.enabled, isFalse, reason: '$kind must wait for the run');
           expect(spec.disabledReason, busyActionUnavailable);
-        }
-        // A folder's delete explains the missing Trash feature, not the run.
-        if (isDir) {
-          final folderDelete = _spec(specs, ItemActionKind.delete);
-          expect(folderDelete.enabled, isFalse);
-          expect(folderDelete.disabledReason, folderDeleteUnavailable);
         }
         // Read-only actions stay available; a folder offers opening instead.
         expect(specs.where((s) => s.kind == ItemActionKind.open).length,
@@ -208,7 +202,7 @@ void main() {
       expect(api.deleted, ['5c1d3e5a-7f2b-4c8d-9e0f-1a2b3c4d5e6f']);
     });
 
-    testWidgets('a folder menu opens it and explains why delete is unavailable',
+    testWidgets('a folder menu opens it and deletes the whole folder on confirm',
         (tester) async {
       await pumpBrowser(tester);
 
@@ -218,12 +212,24 @@ void main() {
       expect(find.text('Open folder'), findsOneWidget);
       final deleteRow = find.widgetWithText(ListTile, 'Delete folder');
       expect(deleteRow, findsOneWidget);
-      expect(tester.widget<ListTile>(deleteRow).enabled, isFalse);
-      expect(find.text(folderDeleteUnavailable), findsOneWidget);
+      expect(tester.widget<ListTile>(deleteRow).enabled, isTrue);
+      expect(find.text(folderDeleteSubtitle), findsOneWidget);
 
       await tester.tap(find.text('Open folder'));
       await tester.pumpAndSettle();
       expect(find.byTooltip('Up one folder'), findsOneWidget);
+      await tester.tap(find.byTooltip('Up one folder'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('More actions for Docs'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete folder'));
+      await tester.pumpAndSettle();
+      expect(find.text('Delete folder?'), findsOneWidget);
+      expect(find.textContaining('moves to the Trash'), findsOneWidget);
+      await tester.tap(find.text('Delete'));
+      await tester.pumpAndSettle();
+      expect(api.deleted, ['2b9e6b0e-6d3e-4c2a-9c1e-2b1c0d1e2f30']);
     });
   });
 }

@@ -34,6 +34,7 @@ async fn env() -> Option<Env> {
         health_check_interval_secs: 3600,
         retention_refresh_days: 30,
         retention_interval_secs: 3600,
+        trash_retention_days: 30,
     };
     let state = AppState::new(db.store.pool().clone(), nntp, config).unwrap();
     Some(Env {
@@ -2547,4 +2548,240 @@ async fn concurrent_bootstrap_creates_one_global_root() {
         .unwrap();
     assert_eq!(count, 1);
     assert_eq!(listed_roots(&env.state, &alice.token).await.len(), 1);
+}
+
+fn sorted(mut ids: Vec<Uuid>) -> Vec<Uuid> {
+    ids.sort();
+    ids
+}
+
+async fn create_node(state: &AppState, token: &str, id: Uuid, parent: Option<Uuid>, is_dir: bool) {
+    let (s, body) = call(
+        state,
+        req(
+            "POST",
+            "/api/v1/files",
+            Some(token),
+            Some(json!({
+                "id": id,
+                "parent_id": parent,
+                "name_enc": base64_key(b"opaque-sealed-name"),
+                "is_dir": is_dir
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{body}");
+}
+
+async fn delete_node(state: &AppState, token: &str, id: Uuid) {
+    let (s, body) = call(
+        state,
+        req(
+            "PATCH",
+            &format!("/api/v1/files/{id}"),
+            Some(token),
+            Some(json!({ "deleted": true })),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+}
+
+async fn trash(state: &AppState, token: &str) -> Value {
+    let (s, body) = call(state, req("GET", "/api/v1/trash", Some(token), None)).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    body
+}
+
+async fn child_ids(state: &AppState, token: &str, parent: Uuid) -> Vec<Uuid> {
+    let (s, body) = call(
+        state,
+        req(
+            "GET",
+            &format!("/api/v1/files?parent_id={parent}"),
+            Some(token),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    body["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| serde_json::from_value::<Uuid>(f["id"].clone()).unwrap())
+        .collect()
+}
+
+async fn restore(
+    state: &AppState,
+    token: &str,
+    id: Uuid,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
+    call(
+        state,
+        req(
+            "POST",
+            &format!("/api/v1/files/{id}/restore"),
+            Some(token),
+            Some(body.unwrap_or_else(|| json!({}))),
+        ),
+    )
+    .await
+}
+
+// Trash keeps everything restorable: the listing is account-scoped, a folder
+// and its children come back together, a missing original parent needs a
+// destination, and an item past the retention window cannot be restored.
+#[tokio::test]
+async fn trash_lists_restores_and_expires_deleted_subtrees() {
+    let Some(env) = env().await else { return };
+    let alice = register(&env.state, "trash-alice@example.com").await;
+    let bob = register(&env.state, "trash-bob@example.com").await;
+
+    let folder = Uuid::new_v4();
+    let inner = Uuid::new_v4();
+    let loose = Uuid::new_v4();
+    create_node(&env.state, &alice.token, folder, None, true).await;
+    create_node(&env.state, &alice.token, inner, Some(folder), false).await;
+    create_node(&env.state, &alice.token, loose, None, false).await;
+
+    // A deleted file shows up once, with its retention deadline.
+    delete_node(&env.state, &alice.token, loose).await;
+    let listed = trash(&env.state, &alice.token).await;
+    assert_eq!(listed["retention_days"], json!(30));
+    let files = listed["files"].as_array().unwrap();
+    assert_eq!(files.len(), 1, "{listed}");
+    assert_eq!(files[0]["id"], json!(loose));
+    assert_eq!(files[0]["expired"], json!(false));
+    assert_eq!(files[0]["parent_present"], json!(true));
+    assert_eq!(files[0]["days_left"], json!(30));
+    assert!(files[0]["name_enc"].as_str().unwrap().len() > 8);
+
+    // The trash is tenant-scoped: Bob sees nothing and cannot restore it.
+    assert!(trash(&env.state, &bob.token).await["files"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    let (s, _) = restore(&env.state, &bob.token, loose, None).await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+
+    // Restoring returns the file to its original folder and publishes an event.
+    let (s, body) = restore(&env.state, &alice.token, loose, None).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["restored"], json!(1));
+    let (_, list) = call(
+        &env.state,
+        req("GET", "/api/v1/files", Some(&alice.token), None),
+    )
+    .await;
+    assert!(list["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["id"] == json!(loose)));
+    let (s, _) = restore(&env.state, &alice.token, loose, None).await;
+    assert_eq!(s, StatusCode::CONFLICT);
+    let (_, events) = call(
+        &env.state,
+        req("GET", "/api/v1/events", Some(&alice.token), None),
+    )
+    .await;
+    assert!(
+        events["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["kind"] == json!("restore") && e["file_id"] == json!(loose)),
+        "{events}"
+    );
+
+    // Deleting a folder takes its children with it and lists one entry.
+    delete_node(&env.state, &alice.token, folder).await;
+    let listed = trash(&env.state, &alice.token).await;
+    let files = listed["files"].as_array().unwrap();
+    assert_eq!(files.len(), 1, "{listed}");
+    assert_eq!(files[0]["id"], json!(folder));
+    assert_eq!(files[0]["is_dir"], json!(true));
+    assert!(child_ids(&env.state, &alice.token, folder).await.is_empty());
+    let (s, body) = restore(&env.state, &alice.token, folder, None).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["restored"], json!(2));
+    assert_eq!(
+        sorted(child_ids(&env.state, &alice.token, folder).await),
+        sorted(vec![inner])
+    );
+
+    // A deleted parent that is gone needs an explicit destination.
+    let old_folder = Uuid::new_v4();
+    let orphan = Uuid::new_v4();
+    create_node(&env.state, &alice.token, old_folder, None, true).await;
+    create_node(&env.state, &alice.token, orphan, Some(old_folder), false).await;
+    delete_node(&env.state, &alice.token, orphan).await;
+    delete_node(&env.state, &alice.token, old_folder).await;
+    let (s, body) = restore(&env.state, &alice.token, orphan, None).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{body}");
+    // Restoring to the account root is an explicit null destination.
+    let (s, body) = restore(
+        &env.state,
+        &alice.token,
+        orphan,
+        Some(json!({"parent_id": null})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["parent_id"], json!(null));
+    // A file is not a destination, and an unknown one is not found.
+    delete_node(&env.state, &alice.token, orphan).await;
+    let (s, _) = restore(
+        &env.state,
+        &alice.token,
+        orphan,
+        Some(json!({"parent_id": loose})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::BAD_REQUEST);
+    let (s, _) = restore(
+        &env.state,
+        &alice.token,
+        orphan,
+        Some(json!({"parent_id": Uuid::new_v4()})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (s, body) = restore(
+        &env.state,
+        &alice.token,
+        orphan,
+        Some(json!({"parent_id": folder})),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(
+        sorted(child_ids(&env.state, &alice.token, folder).await),
+        sorted(vec![inner, orphan])
+    );
+
+    // Past the retention window the item is listed as expired and cannot return.
+    let stale = Uuid::new_v4();
+    create_node(&env.state, &alice.token, stale, None, false).await;
+    delete_node(&env.state, &alice.token, stale).await;
+    sqlx::query("UPDATE files SET deleted_at = now() - interval '31 days' WHERE id = $1")
+        .bind(stale)
+        .execute(&env.state.pool)
+        .await
+        .unwrap();
+    let listed = trash(&env.state, &alice.token).await;
+    let entry = listed["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["id"] == json!(stale))
+        .expect("expired entry is still listed");
+    assert_eq!(entry["expired"], json!(true));
+    assert_eq!(entry["days_left"], json!(0));
+    let (s, body) = restore(&env.state, &alice.token, stale, None).await;
+    assert_eq!(s, StatusCode::GONE, "{body}");
 }

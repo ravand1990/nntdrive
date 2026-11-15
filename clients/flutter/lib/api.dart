@@ -66,6 +66,59 @@ class RemoteFile {
       );
 }
 
+/// One deleted node as the backend's trash view reports it.
+///
+/// The name is still a sealed envelope: the page decrypts it locally and the
+/// server never learns it.
+class TrashEntry {
+  TrashEntry(
+    this.id,
+    this.parentId,
+    this.nameEnc,
+    this.isDir,
+    this.size,
+    this.deletedAt,
+    this.expiresAt,
+    this.daysLeft, {
+    required this.expired,
+    required this.parentPresent,
+  });
+
+  final String id;
+  final String? parentId;
+  final String nameEnc;
+  final bool isDir;
+  final int size;
+  final DateTime? deletedAt;
+  final DateTime? expiresAt;
+  final int daysLeft;
+  final bool expired;
+
+  /// Whether the folder this item was deleted from is still there. When it is
+  /// not, restoring needs an explicit destination.
+  final bool parentPresent;
+
+  factory TrashEntry.fromJson(Map<String, dynamic> j) => TrashEntry(
+        j['id'] as String,
+        j['parent_id'] as String?,
+        j['name_enc'] as String? ?? '',
+        j['is_dir'] as bool? ?? false,
+        j['size'] as int? ?? 0,
+        DateTime.tryParse(j['deleted_at'] as String? ?? ''),
+        DateTime.tryParse(j['expires_at'] as String? ?? ''),
+        j['days_left'] as int? ?? 0,
+        expired: j['expired'] as bool? ?? false,
+        parentPresent: j['parent_present'] as bool? ?? true,
+      );
+}
+
+/// The account's trash plus the retention window it is measured against.
+class TrashListing {
+  TrashListing(this.retentionDays, this.files);
+  final int retentionDays;
+  final List<TrashEntry> files;
+}
+
 class DeviceInfo {
   DeviceInfo(this.id, this.name, this.platform, this.revoked, this.current);
   final String id;
@@ -326,6 +379,31 @@ class ApiClient {
 
   Future<void> deleteFile(String id) =>
       _send('PATCH', '/files/$id', body: {'deleted': true});
+
+  Future<TrashListing> trash() async {
+    final j = await _send('GET', '/trash');
+    return TrashListing(
+      j['retention_days'] as int? ?? 0,
+      (j['files'] as List? ?? [])
+          .map((f) => TrashEntry.fromJson(f as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+
+  /// Restore one deleted item.
+  ///
+  /// Without arguments the item returns to the folder it was deleted from;
+  /// [parentId] picks another folder and [toRoot] restores it to the account
+  /// root, which is the only option once that folder is gone.
+  Future<void> restoreFile(String id, {String? parentId, bool toRoot = false}) {
+    final body = <String, dynamic>{};
+    if (toRoot) {
+      body['parent_id'] = null;
+    } else if (parentId != null) {
+      body['parent_id'] = parentId;
+    }
+    return _send('POST', '/files/$id/restore', body: body);
+  }
 
   Future<void> setFavorite(String id, bool favorite) =>
       _send('PATCH', '/files/$id', body: {'favorite': favorite});

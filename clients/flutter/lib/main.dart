@@ -41,6 +41,7 @@ import 'update_checks.dart';
 import 'update_prompt.dart';
 import 'android_update.dart';
 import 'android_update_prompt.dart';
+import 'trash_page.dart';
 
 const _uuid = Uuid();
 
@@ -1104,6 +1105,36 @@ class _FilesPageState extends State<FilesPage> {
     if (mounted) _refresh();
   }
 
+  Future<void> _openTrash() async {
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => TrashPage(
+        load: _api.trash,
+        decrypt: _decryptTrashNames,
+        restore: (id, {bool toRoot = false}) => widget.operations.run(
+            widget.session.handle,
+            () => _api.restoreFile(id, toRoot: toRoot)),
+      ),
+    ));
+    if (mounted) _refresh();
+  }
+
+  /// Opens sealed trash names in bounded batches through the session-owned
+  /// native runner, so nothing blocks the UI isolate for long.
+  Future<List<String>> _decryptTrashNames(List<TrashEntry> entries) async {
+    final bridge = NativeBridge.instance;
+    final handle = widget.session.handle;
+    final names = <String>[];
+    for (var start = 0; start < entries.length; start += 128) {
+      final batch = entries
+          .skip(start)
+          .take(128)
+          .map((entry) => (id: entry.id, nameEnc: entry.nameEnc))
+          .toList();
+      names.addAll(await bridge.openNamesAsync(handle, batch));
+    }
+    return names;
+  }
+
   Future<void> _refresh() => _fileOperation(_refreshNow);
 
   Future<void> _refreshNow() async {
@@ -1541,15 +1572,16 @@ class _FilesPageState extends State<FilesPage> {
     }
   }
 
-  /// Deleting is irreversible for the client, so it always asks first.
+  /// Deleting is recoverable from the trash, but it always asks first.
   Future<void> _confirmDelete(RemoteFile file) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text(file.isDir ? 'Delete folder?' : 'Delete file?'),
-        content: const Text(
-            'This removes the entry and its versions from the index. '
-            'Posted Usenet articles cannot be physically deleted.'),
+        content: Text(
+            'It moves to the Trash with everything inside it and can be '
+            'restored from there while the retention window lasts. '
+            '${file.isDir ? '' : 'Posted Usenet articles cannot be physically deleted.'}'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -1978,6 +2010,8 @@ class _FilesPageState extends State<FilesPage> {
             ),
           ),
           IconButton(onPressed: _refresh, icon: const Icon(Icons.refresh), tooltip: 'Refresh'),
+          IconButton(onPressed: _openTrash, icon: const Icon(Icons.delete_outline),
+            tooltip: 'Trash'),
           IconButton(
             onPressed: _showAccountMenu,
             icon: const Icon(Icons.account_circle_outlined),

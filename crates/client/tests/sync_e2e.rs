@@ -37,6 +37,7 @@ async fn stack() -> Option<Stack> {
         health_check_interval_secs: 3600,
         retention_refresh_days: 30,
         retention_interval_secs: 3600,
+        trash_retention_days: 30,
     };
     let state = AppState::new(db.store.pool().clone(), pool, config).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

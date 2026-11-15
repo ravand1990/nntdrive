@@ -649,6 +649,29 @@ acceptance remain outstanding. Legacy clients may
 still introduce duplicate names after a guarded
 rename. See [client details](CLIENTS.md#rename-in-the-file-browser-51-partial).
 
+## Trash and restore (#81 partial)
+
+Deleting is logical and now recoverable. The backend records `deleted_at`, marks
+the deleted node together with its still-live descendants (one shared timestamp,
+so a deleted folder never leaves invisible orphaned children), and publishes a
+`restore` event when an item comes back. `GET /trash` lists the account's deleted
+top-level nodes with the retention deadline; `POST /files/{id}/restore` restores
+the node and its deleted subtree, either in place, into a chosen live folder of
+the same account, or at the account root when the original folder is gone. The
+window comes from `NNTDRIVE_TRASH_RETENTION_DAYS` (default 30) and only bounds
+what may be restored: nothing is purged, so metadata and version history stay
+intact. A request past the window returns `410`.
+
+The client has a **Trash** page in the file browser that decrypts names locally,
+shows folder/size, deletion date and remaining days, offers one explicit
+**Restore** action per row, asks before restoring to My files when the original
+folder is gone, and keeps expired items visible with **Cannot restore**. Folder
+deletion is therefore enabled again: it moves the whole subtree to the trash.
+
+This is not completion: empty-trash/permanent delete, a backend purge job for
+expired items, restore into an arbitrary folder picker in the UI, bulk rewind to
+an earlier date, and installed TalkBack/device acceptance remain open on #81.
+
 ## Recent implementation milestones
 
 - Multi-folder sync integrated end-to-end: HTTP `Remote` adapter, per-folder
