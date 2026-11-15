@@ -6,6 +6,7 @@ pub mod api;
 pub mod auth;
 pub mod error;
 pub mod jobs;
+pub mod rewind;
 pub mod roots;
 pub mod state;
 pub mod trash;
@@ -38,6 +39,8 @@ pub fn app(state: state::AppState) -> Router {
         .route("/files/{id}/restore", post(trash::restore_file))
         .route("/trash", get(trash::list_trash).delete(trash::empty_trash))
         .route("/trash/{id}", delete(trash::purge_file))
+        .route("/rewind/preview", get(rewind::preview))
+        .route("/rewind", post(rewind::apply))
         .route(
             "/files/{id}/copy-checked",
             post(copy::publish).layer(axum::extract::DefaultBodyLimit::max(2 * 1024 * 1024)),

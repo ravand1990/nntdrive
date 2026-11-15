@@ -18,6 +18,9 @@ class TrashPage extends StatefulWidget {
     required this.restore,
     required this.purge,
     required this.emptyTrash,
+    this.previewRewind,
+    this.applyRewind,
+    this.decryptRewind,
   });
 
   /// Reads the current trash listing from the backend.
@@ -35,6 +38,17 @@ class TrashPage extends StatefulWidget {
 
   /// Permanently deletes every trashed item of this account.
   final Future<void> Function() emptyTrash;
+
+  /// Plans an account-wide rewind to an earlier instant. When null the rewind
+  /// action is not offered at all.
+  final Future<RewindPreview> Function(DateTime before)? previewRewind;
+
+  /// Applies a plan that the user has just seen and confirmed.
+  final Future<RewindResult> Function(DateTime before, List<RewindItem> items)?
+      applyRewind;
+
+  /// Opens the sealed names of rewind rows, in order.
+  final Future<List<String>> Function(List<RewindItem> items)? decryptRewind;
 
   @override
   State<TrashPage> createState() => _TrashPageState();
@@ -80,7 +94,7 @@ class _TrashPageState extends State<TrashPage> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = _describe(e);
+        _error = _describeError(e, fallback: _trashLoadError);
         _loading = false;
       });
     }
@@ -125,7 +139,7 @@ class _TrashPageState extends State<TrashPage> {
       if (!mounted) return;
       setState(() => _busyId = null);
       ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(_describe(e))));
+          .showSnackBar(SnackBar(content: Text(_describeError(e))));
     }
   }
 
@@ -162,8 +176,32 @@ class _TrashPageState extends State<TrashPage> {
       if (!mounted) return;
       setState(() => _busyId = null);
       ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(_describe(e))));
+          .showSnackBar(SnackBar(content: Text(_describeError(e))));
     }
+  }
+
+  /// Plans a rewind, shows the plan and applies only what the user confirmed.
+  Future<void> _openRewind() async {
+    final preview = widget.previewRewind;
+    final apply = widget.applyRewind;
+    if (preview == null || apply == null) return;
+    final result = await showDialog<RewindResult>(
+      context: context,
+      builder: (_) => _RewindDialog(
+        preview: preview,
+        apply: apply,
+        decrypt: widget.decryptRewind ?? _unavailableRewindNames,
+      ),
+    );
+    if (result == null || !mounted) return;
+    final applied = result.applied;
+    final failed = result.failed.length;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(failed == 0
+            ? 'Rewound $applied ${applied == 1 ? 'file' : 'files'} to '
+                '${applied == 1 ? 'its' : 'their'} earlier version'
+            : 'Rewound $applied files; $failed could not be changed. '
+                'Preview again to see what is left.')));
   }
 
   Future<void> _emptyTrash() async {
@@ -198,22 +236,10 @@ class _TrashPageState extends State<TrashPage> {
       if (!mounted) return;
       setState(() => _emptying = false);
       ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(_describe(e))));
+          .showSnackBar(SnackBar(content: Text(_describeError(e))));
     }
   }
 
-  String _describe(Object error) {
-    if (error is ApiException) {
-      if (error.status == 410) {
-        return 'This item passed the retention window and cannot be restored.';
-      }
-      if (error.status == 409) {
-        return 'This item changed or its folder is gone. Refresh and try again.';
-      }
-      return error.message;
-    }
-    return 'The trash could not be loaded. Check the connection and try again.';
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -222,6 +248,11 @@ class _TrashPageState extends State<TrashPage> {
       appBar: AppBar(
         title: const Text('Trash'),
         actions: [
+          if (widget.previewRewind != null && widget.applyRewind != null)
+            IconButton(
+                onPressed: _loading || _busyId != null ? null : _openRewind,
+                tooltip: 'Rewind to an earlier date',
+                icon: const Icon(Icons.history)),
           if (_emptying)
             const Padding(
               padding: EdgeInsets.symmetric(horizontal: 16),
@@ -383,4 +414,266 @@ String _formatBytes(int bytes) {
   }
   final text = unit == 0 ? value.toStringAsFixed(0) : value.toStringAsFixed(1);
   return '$text ${units[unit]}';
+}
+
+const _trashLoadError =
+    'The trash could not be loaded. Check the connection and try again.';
+const _trashActionError =
+    'This item could not be changed. Check the connection and try again.';
+
+/// Plain-language reasons; never a raw status line, stack detail or ciphertext.
+String _describeError(Object error, {String fallback = _trashActionError}) {
+  if (error is ApiException) {
+    if (error.status == 410) {
+      return 'This item passed the retention window and cannot be restored.';
+    }
+    if (error.status == 409) {
+      return 'This item changed or its folder is gone. Refresh and try again.';
+    }
+    // Network failures and server faults carry no useful text for a user.
+    if (error.status == 0 || error.status >= 500) return fallback;
+    return error.message;
+  }
+  return fallback;
+}
+
+/// Rewind rows whose sealed names could not be opened stay unreadable rather
+/// than showing ciphertext.
+Future<List<String>> _unavailableRewindNames(List<RewindItem> items) async =>
+    items.map((_) => 'Name unavailable').toList();
+
+/// Always shows the plan before changing anything: a rewind is only applied
+/// after the user saw which files it would change at which date.
+class _RewindDialog extends StatefulWidget {
+  const _RewindDialog({
+    required this.preview,
+    required this.apply,
+    required this.decrypt,
+  });
+
+  final Future<RewindPreview> Function(DateTime before) preview;
+  final Future<RewindResult> Function(DateTime before, List<RewindItem> items)
+      apply;
+  final Future<List<String>> Function(List<RewindItem> items) decrypt;
+
+  @override
+  State<_RewindDialog> createState() => _RewindDialogState();
+}
+
+class _RewindDialogState extends State<_RewindDialog> {
+  static const _presets = <({String label, int days})>[
+    (label: '1 day ago', days: 1),
+    (label: '7 days ago', days: 7),
+    (label: '30 days ago', days: 30),
+  ];
+
+  int? _presetDays;
+  DateTime? _before;
+  RewindPreview? _plan;
+  List<String> _names = const [];
+  bool _loading = false;
+  bool _applying = false;
+  String? _error;
+
+  Future<void> _choose(DateTime before, {int? preset}) async {
+    setState(() {
+      _presetDays = preset;
+      _before = before;
+      _plan = null;
+      _names = const [];
+      _error = null;
+      _loading = true;
+    });
+    try {
+      final plan = await widget.preview(before);
+      List<String> names = const [];
+      if (plan.items.isNotEmpty) {
+        try {
+          names = await widget.decrypt(plan.items);
+        } catch (_) {
+          names = const []; // Unreadable names are never shown as ciphertext.
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _plan = plan;
+        _names = names;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = _describeError(e,
+            fallback: 'The rewind plan could not be read. Check the connection '
+                'and try again.');
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _pickDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: now.subtract(const Duration(days: 7)),
+      firstDate: DateTime(2000),
+      lastDate: now,
+      helpText: 'Rewind to the end of this day',
+    );
+    if (picked == null || !mounted) return;
+    // The end of the chosen day, so that day's versions are included.
+    final end = DateTime(picked.year, picked.month, picked.day, 23, 59, 59);
+    await _choose(end);
+  }
+
+  Future<void> _apply() async {
+    final plan = _plan;
+    final before = _before;
+    if (plan == null || before == null || plan.items.isEmpty) return;
+    setState(() {
+      _applying = true;
+      _error = null;
+    });
+    try {
+      final result = await widget.apply(before, plan.items);
+      if (!mounted) return;
+      Navigator.of(context).pop(result);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = _describeError(e,
+            fallback: 'The rewind could not be applied. Nothing was changed by '
+                'this attempt; preview again.');
+        _applying = false;
+      });
+    }
+  }
+
+  String _when(DateTime before) {
+    final local = before.toLocal();
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${local.year.toString().padLeft(4, '0')}-${two(local.month)}-'
+        '${two(local.day)} ${two(local.hour)}:${two(local.minute)}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final plan = _plan;
+    final changes = plan?.items.length ?? 0;
+    return AlertDialog(
+      title: const Text('Rewind to an earlier date'),
+      content: SizedBox(
+        width: 420,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                  'Puts files back to the version they had on that date. '
+                  'Versions after it stay in history, nothing is uploaded or '
+                  'removed, and items in the trash are not touched.',
+                  style: theme.textTheme.bodySmall),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                children: [
+                  for (final preset in _presets)
+                    ChoiceChip(
+                      label: Text(preset.label),
+                      selected: _presetDays == preset.days,
+                      onSelected: _loading || _applying
+                          ? null
+                          : (_) => _choose(
+                              DateTime.now()
+                                  .subtract(Duration(days: preset.days)),
+                              preset: preset.days),
+                    ),
+                  ActionChip(
+                    avatar: const Icon(Icons.event, size: 18),
+                    label: const Text('Pick a date'),
+                    onPressed: _loading || _applying ? null : _pickDate,
+                  ),
+                ],
+              ),
+              if (_loading) ...[
+                const SizedBox(height: 16),
+                const LinearProgressIndicator(),
+              ],
+              if (_error != null) ...[
+                const SizedBox(height: 12),
+                Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
+              ],
+              if (plan != null) ...[
+                const SizedBox(height: 16),
+                Text('As of ${_when(_before ?? DateTime.now())}',
+                    style: theme.textTheme.titleSmall),
+                const SizedBox(height: 4),
+                Text(changes == 0
+                    ? 'Nothing would change.'
+                    : '$changes ${changes == 1 ? 'file would' : 'files would'} '
+                        'go back to an earlier version.'),
+                if (plan.counts.createdAfter > 0)
+                  Text('${plan.counts.createdAfter} created after that date '
+                      'stay as they are.'),
+                if (plan.counts.pendingReferences > 0)
+                  Text('${plan.counts.pendingReferences} cannot be rewound yet '
+                      'because their content references are still pending.'),
+                if (changes > 0) ...[
+                  const SizedBox(height: 8),
+                  for (var i = 0; i < changes && i < 50; i++)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Row(children: [
+                        const Icon(Icons.insert_drive_file_outlined, size: 16),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            i < _names.length && _names[i].isNotEmpty
+                                ? _names[i]
+                                : 'Name unavailable',
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ]),
+                    ),
+                  if (changes > 50)
+                    Text('and ${changes - 50} more',
+                        style: theme.textTheme.bodySmall),
+                  if (plan.next != null)
+                    Text(
+                        'Only the first $changes changed files are shown. '
+                        'Rewind again afterwards to continue with the rest.',
+                        style: theme.textTheme.bodySmall),
+                  const SizedBox(height: 8),
+                  Text('Already posted Usenet copies cannot be retracted; '
+                      'this changes your account view only.',
+                      style: theme.textTheme.bodySmall),
+                ],
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _applying ? null : () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _applying || changes == 0 ? null : _apply,
+          child: _applying
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2))
+              : Text(changes == 0
+                  ? 'Rewind'
+                  : 'Rewind $changes ${changes == 1 ? 'file' : 'files'}'),
+        ),
+      ],
+    );
+  }
 }

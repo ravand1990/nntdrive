@@ -119,6 +119,100 @@ class TrashListing {
   final List<TrashEntry> files;
 }
 
+/// How many files a rewind date would change, leave alone or skip.
+class RewindCounts {
+  RewindCounts(this.rewind, this.unchanged, this.createdAfter,
+      this.pendingReferences);
+  final int rewind;
+  final int unchanged;
+
+  /// Files that did not exist yet at that date; a rewind never deletes them.
+  final int createdAfter;
+
+  /// Files whose stored content references are still pending, so the core
+  /// cannot serve that older version safely yet.
+  final int pendingReferences;
+
+  factory RewindCounts.fromJson(Map<String, dynamic> j) => RewindCounts(
+        j['rewind'] as int? ?? 0,
+        j['unchanged'] as int? ?? 0,
+        j['created_after'] as int? ?? 0,
+        j['pending_references'] as int? ?? 0,
+      );
+}
+
+/// One file a rewind would put back to an earlier version.
+class RewindItem {
+  RewindItem(this.id, this.parentId, this.nameEnc, this.currentVersion,
+      this.targetRevision, this.currentSize, this.targetSize,
+      this.targetCreatedAt);
+  final String id;
+  final String? parentId;
+
+  /// Sealed name envelope; opened only on the device.
+  final String nameEnc;
+  final String? currentVersion;
+  final String targetRevision;
+  final int currentSize;
+  final int targetSize;
+  final DateTime? targetCreatedAt;
+
+  factory RewindItem.fromJson(Map<String, dynamic> j) => RewindItem(
+        j['id'] as String,
+        j['parent_id'] as String?,
+        j['name_enc'] as String? ?? '',
+        j['current_version'] as String?,
+        j['target_revision'] as String,
+        j['current_size'] as int? ?? 0,
+        j['target_size'] as int? ?? 0,
+        DateTime.tryParse(j['target_created_at'] as String? ?? ''),
+      );
+}
+
+/// A rewind plan: the counts for the whole scope and one page of changes.
+class RewindPreview {
+  RewindPreview(this.before, this.scopeId, this.counts, this.items, this.next);
+  final DateTime? before;
+  final String? scopeId;
+  final RewindCounts counts;
+  final List<RewindItem> items;
+
+  /// Cursor for the next page of changes, or null when this page is all of it.
+  final String? next;
+
+  factory RewindPreview.fromJson(Map<String, dynamic> j) => RewindPreview(
+        DateTime.tryParse(j['before'] as String? ?? ''),
+        j['scope'] as String?,
+        RewindCounts.fromJson(
+            (j['counts'] as Map<String, dynamic>?) ?? const {}),
+        (j['items'] as List? ?? [])
+            .map((i) => RewindItem.fromJson(i as Map<String, dynamic>))
+            .toList(),
+        j['next'] as String?,
+      );
+}
+
+/// What a confirmed rewind actually changed.
+class RewindResult {
+  RewindResult(this.applied, this.unchanged, this.failed);
+  final int applied;
+  final int unchanged;
+
+  /// Items the server refused, with a short reason and no file names.
+  final List<({String id, String reason})> failed;
+
+  factory RewindResult.fromJson(Map<String, dynamic> j) => RewindResult(
+        j['applied'] as int? ?? 0,
+        j['unchanged'] as int? ?? 0,
+        (j['failed'] as List? ?? [])
+            .map((f) => (
+                  id: (f as Map<String, dynamic>)['id'] as String? ?? '',
+                  reason: f['reason'] as String? ?? 'not changed',
+                ))
+            .toList(),
+      );
+}
+
 class DeviceInfo {
   DeviceInfo(this.id, this.name, this.platform, this.revoked, this.current);
   final String id;
@@ -413,6 +507,43 @@ class ApiClient {
 
   /// Permanently remove every trashed item in the account.
   Future<void> emptyTrash() => _send('DELETE', '/trash');
+
+  /// What a rewind to [before] would change.
+  ///
+  /// [scopeId] limits the plan to one live folder; omitting it covers the whole
+  /// account. Only names, sizes and revision ids cross this call — the sealed
+  /// name envelopes are opened on the device.
+  Future<RewindPreview> rewindPreview(
+      {String? scopeId, required DateTime before, String? after}) async {
+    final query = <String, String>{
+      'before': before.toUtc().toIso8601String(),
+      if (scopeId != null) 'scope': scopeId,
+      if (after != null) 'after': after,
+    };
+    final j = await _send(
+        'GET', '/rewind/preview?${Uri(queryParameters: query).query}');
+    return RewindPreview.fromJson(j);
+  }
+
+  /// Apply a confirmed rewind plan.
+  ///
+  /// Only the [items] the preview returned are sent, and the server re-checks
+  /// each one, so a file that changed meanwhile is refused instead of being
+  /// silently rewound. Nothing is uploaded, downloaded or retracted.
+  Future<RewindResult> rewind({
+    String? scopeId,
+    required DateTime before,
+    required List<RewindItem> items,
+  }) async {
+    final j = await _send('POST', '/rewind', body: {
+      'before': before.toUtc().toIso8601String(),
+      'scope': scopeId,
+      'items': items
+          .map((i) => {'id': i.id, 'target_revision': i.targetRevision})
+          .toList(),
+    });
+    return RewindResult.fromJson(j);
+  }
 
   Future<void> setFavorite(String id, bool favorite) =>
       _send('PATCH', '/files/$id', body: {'favorite': favorite});
