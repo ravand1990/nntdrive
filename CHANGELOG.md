@@ -6,10 +6,11 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-15
+
 ### Features
 
 - Trash retention is now enforced by the server (#81 partial): a daily background job permanently deletes the metadata of items that have been in the Trash longer than the retention window (30 days by default), so the deadline shown in the Trash page is real rather than only a limit on Restore. Each item is removed in its own account-scoped transaction and publishes a `purge` event, a still-restorable item is never touched, and a fixed account root or a folder that still holds live files is skipped instead of failing the sweep. This is metadata-only: articles already posted to Usenet cannot be retracted, and nothing claims that content disappeared.
-
 
 ## [0.19.0] - 2026-11-15
 
