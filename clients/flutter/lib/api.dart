@@ -296,6 +296,24 @@ class VersionInfo {
       );
 }
 
+/// What a version restore changed on the server.
+///
+/// [restored] is false when the requested revision was already current; the
+/// history is never modified either way.
+class RestoreVersionResult {
+  RestoreVersionResult(this.restored, this.unchanged, this.revisionId);
+  final bool restored;
+  final bool unchanged;
+  final String? revisionId;
+
+  factory RestoreVersionResult.fromJson(Map<String, dynamic> j) =>
+      RestoreVersionResult(
+        j['restored'] as bool? ?? false,
+        j['unchanged'] as bool? ?? false,
+        j['revision'] as String?,
+      );
+}
+
 class SyncEvent {
   SyncEvent(this.seq, this.kind, this.fileId, this.revisionId);
   final int seq;
@@ -633,6 +651,19 @@ class ApiClient {
     return (j['versions'] as List? ?? [])
         .map((v) => VersionInfo.fromJson(v as Map<String, dynamic>))
         .toList();
+  }
+
+  /// Make an earlier version the file's current content again.
+  ///
+  /// Every version stays in the history, so the content that was current before
+  /// the restore can be restored in turn. The server re-checks that the
+  /// revision belongs to this file and account, and it never needs the sealed
+  /// manifest to answer, so no name or content leaves the device here.
+  Future<RestoreVersionResult> restoreVersion(
+      String fileId, String revisionId) async {
+    final j =
+        await _send('POST', '/files/$fileId/versions/$revisionId/restore');
+    return RestoreVersionResult.fromJson(j);
   }
 
   Future<List<DeviceInfo>> devices() async {

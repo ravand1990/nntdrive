@@ -665,6 +665,90 @@ pub async fn list_versions(
     Ok(Json(json!({ "versions": versions })))
 }
 
+/// `POST /files/{id}/versions/{revision}/restore` — make an earlier version the
+/// current content again.
+///
+/// Only the pointer moves: every version row stays, so the content that was
+/// current before this restore can itself be restored later. The account
+/// namespace lock serializes this against the other writers, and a sync event
+/// tells the account's other devices to refresh. Nothing is decrypted here; the
+/// sealed manifest of the restored revision is served exactly as committed.
+pub async fn restore_version(
+    State(state): State<AppState>,
+    auth: Auth,
+    Path((id, revision)): Path<(Uuid, Uuid)>,
+) -> ApiResult<impl IntoResponse> {
+    let mut tx = state.pool.begin().await?;
+    lock_namespace(&mut tx, auth.account_id).await?;
+    let file = sqlx::query(
+        "SELECT is_dir, deleted, current_version FROM files
+         WHERE account_id = $1 AND id = $2 FOR UPDATE",
+    )
+    .bind(auth.account_id)
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or(ApiError::NotFound)?;
+    if file.get::<bool, _>("is_dir") {
+        return Err(ApiError::BadRequest("this item is a folder".into()));
+    }
+    if file.get::<bool, _>("deleted") {
+        return Err(ApiError::Conflict(
+            "this file is in the trash; restore it first".into(),
+        ));
+    }
+    let target = sqlx::query(
+        "SELECT size, content_hash, references_complete FROM file_versions
+         WHERE account_id = $1 AND file_id = $2 AND revision_id = $3 AND NOT deleted",
+    )
+    .bind(auth.account_id)
+    .bind(id)
+    .bind(revision)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or(ApiError::NotFound)?;
+    if !target.get::<bool, _>("references_complete") {
+        return Err(ApiError::Conflict(
+            "this version's content references are still pending".into(),
+        ));
+    }
+    if file.get::<Option<Uuid>, _>("current_version") == Some(revision) {
+        return Ok(Json(json!({
+            "restored": false,
+            "unchanged": true,
+            "revision": revision,
+        })));
+    }
+    sqlx::query(
+        "UPDATE files SET current_version = $3, size = $4, content_hash = $5,
+                          revision = revision + 1, updated_at = now()
+         WHERE account_id = $1 AND id = $2",
+    )
+    .bind(auth.account_id)
+    .bind(id)
+    .bind(revision)
+    .bind(target.get::<i64, _>("size"))
+    .bind(target.get::<Option<Vec<u8>>, _>("content_hash"))
+    .execute(&mut *tx)
+    .await?;
+    append_event(
+        &mut tx,
+        auth.account_id,
+        auth.device_id,
+        id,
+        Some(revision),
+        "version",
+        json!({ "restore": true }),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(Json(json!({
+        "restored": true,
+        "unchanged": false,
+        "revision": revision,
+    })))
+}
+
 #[derive(Deserialize)]
 pub struct RevisionQuery {
     pub revision: Option<Uuid>,

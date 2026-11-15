@@ -48,7 +48,7 @@ update automation are outside
 - Encrypted password unlock; recovery code shown once at registration.
 - Browse folders, decrypt names locally, search/filter.
 - Create folders, upload files, download + verify, version history with
-  per-revision download, delete, favorites.
+  per-revision download and restore, delete, favorites.
 - Multi-folder bidirectional sync: select a base folder plus additional folders,
   automatic runs every 5 minutes while the app is open, pause/resume, per-folder
   and global “Sync now”, conflict copies preserved, selective sync per folder

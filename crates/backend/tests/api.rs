@@ -3458,3 +3458,160 @@ async fn rewind_previews_restores_and_rejects_stale_plans() {
     .await;
     assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
 }
+
+async fn restore_version_call(
+    state: &AppState,
+    token: &str,
+    file: Uuid,
+    revision: Uuid,
+) -> (StatusCode, Value) {
+    call(
+        state,
+        req(
+            "POST",
+            &format!("/api/v1/files/{file}/versions/{revision}/restore"),
+            Some(token),
+            None,
+        ),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn restore_version_moves_only_the_pointer() {
+    let Some(env) = env().await else { return };
+    let alice = register(&env.state, "restore-version-alice@example.com").await;
+    let bob = register(&env.state, "restore-version-bob@example.com").await;
+
+    let folder = Uuid::new_v4();
+    let file = Uuid::new_v4();
+    let pending = Uuid::new_v4();
+    let trashed = Uuid::new_v4();
+    for (id, parent, is_dir) in [
+        (folder, None, true),
+        (file, Some(folder), false),
+        (pending, Some(folder), false),
+        (trashed, Some(folder), false),
+    ] {
+        create_node(&env.state, &alice.token, id, parent, is_dir).await;
+    }
+
+    let old_chunk = insert_chunk(&env.state, alice.account_id, 7).await;
+    let new_chunk = insert_chunk(&env.state, alice.account_id, 8).await;
+    let first = Uuid::new_v4();
+    let second = Uuid::new_v4();
+    let (s, body) = put_version(&env.state, &alice, file, first, 40, Some(vec![old_chunk])).await;
+    assert_eq!(s, StatusCode::CREATED, "{body}");
+    let (s, body) = put_version(&env.state, &alice, file, second, 90, Some(vec![new_chunk])).await;
+    assert_eq!(s, StatusCode::CREATED, "{body}");
+
+    // Restoring an older version moves only the current pointer.
+    let (s, body) = restore_version_call(&env.state, &alice.token, file, first).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["restored"], json!(true), "{body}");
+    assert_eq!(body["revision"], json!(first), "{body}");
+    let row = sqlx::query("SELECT current_version, size FROM files WHERE id = $1")
+        .bind(file)
+        .fetch_one(&env.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(row.get::<Option<Uuid>, _>("current_version"), Some(first));
+    assert_eq!(row.get::<i64, _>("size"), 40);
+    let versions: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM file_versions WHERE account_id = $1 AND file_id = $2",
+    )
+    .bind(alice.account_id)
+    .bind(file)
+    .fetch_one(&env.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(versions, 2, "restoring never deletes history");
+    let refs: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM version_chunks vc JOIN file_versions v
+           ON v.account_id = vc.account_id AND v.id = vc.version_id
+         WHERE v.file_id = $1 AND v.revision_id = $2",
+    )
+    .bind(file)
+    .bind(second)
+    .fetch_one(&env.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        refs, 1,
+        "the version replaced by the restore keeps its chunks"
+    );
+    let events: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM sync_events
+         WHERE account_id = $1 AND file_id = $2 AND kind = 'version'
+           AND payload->>'restore' = 'true'",
+    )
+    .bind(alice.account_id)
+    .bind(file)
+    .fetch_one(&env.state.pool)
+    .await
+    .unwrap();
+    assert_eq!(events, 1, "other devices are told to refresh");
+
+    // Restoring the version that is already current changes nothing.
+    let (s, body) = restore_version_call(&env.state, &alice.token, file, first).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["restored"], json!(false), "{body}");
+    assert_eq!(body["unchanged"], json!(true), "{body}");
+
+    // Another account cannot restore this file, and an unknown revision is a
+    // plain not-found rather than a hint that another account owns it.
+    let (s, body) = restore_version_call(&env.state, &bob.token, file, first).await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "{body}");
+    let (s, body) = restore_version_call(&env.state, &alice.token, file, Uuid::new_v4()).await;
+    assert_eq!(s, StatusCode::NOT_FOUND, "{body}");
+
+    // A folder has no content version to restore.
+    let (s, body) = restore_version_call(&env.state, &alice.token, folder, first).await;
+    assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
+
+    // A version whose content references never arrived is never restored.
+    let pending_first = Uuid::new_v4();
+    let (s, body) = put_version(&env.state, &alice, pending, pending_first, 0, None).await;
+    assert_eq!(s, StatusCode::CREATED, "{body}");
+    let (s, body) = put_version(&env.state, &alice, pending, Uuid::new_v4(), 0, Some(vec![])).await;
+    assert_eq!(s, StatusCode::CREATED, "{body}");
+    let (s, body) = restore_version_call(&env.state, &alice.token, pending, pending_first).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{body}");
+    let current: Option<Uuid> =
+        sqlx::query_scalar("SELECT current_version FROM files WHERE id = $1")
+            .bind(pending)
+            .fetch_one(&env.state.pool)
+            .await
+            .unwrap();
+    assert_ne!(current, Some(pending_first), "{body}");
+
+    // Trashed files belong to the trash feature, not to a version restore.
+    let trashed_chunk = insert_chunk(&env.state, alice.account_id, 9).await;
+    let trashed_first = Uuid::new_v4();
+    let (s, body) = put_version(
+        &env.state,
+        &alice,
+        trashed,
+        trashed_first,
+        10,
+        Some(vec![trashed_chunk]),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{body}");
+    let (s, body) = put_version(&env.state, &alice, trashed, Uuid::new_v4(), 0, Some(vec![])).await;
+    assert_eq!(s, StatusCode::CREATED, "{body}");
+    delete_node(&env.state, &alice.token, trashed).await;
+    let (s, body) = restore_version_call(&env.state, &alice.token, trashed, trashed_first).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{body}");
+
+    // The same guarded path goes forward again to the newer version.
+    let (s, body) = restore_version_call(&env.state, &alice.token, file, second).await;
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["restored"], json!(true), "{body}");
+    let size: i64 = sqlx::query_scalar("SELECT size FROM files WHERE id = $1")
+        .bind(file)
+        .fetch_one(&env.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(size, 90);
+}

@@ -684,9 +684,33 @@ files. The Trash page has a per-row **Delete permanently** action and an
 metadata-only: articles already posted to Usenet cannot be retracted, and the
 dialogs say so.
 
-This is not completion: a version-history screen, rewind continuation past the
-first page of changes, and installed TalkBack/device acceptance remain open on
+This is not completion: rewind continuation past the
+first page of changes and installed TalkBack/device acceptance remain open on
 #81.
+
+## Per-file version history (#81 partial)
+
+A file's **Version history** action opens a dialog listing that file's sealed
+history newest first: each row shows when the content was committed and how
+large it is, and the version the file currently points at is marked **Current
+version**. Every earlier row can be downloaded under its own dated name, or
+restored after an explicit confirmation that says the content current now stays
+in the list.
+
+Restoring moves only the file's current pointer through
+`POST /files/{id}/versions/{revision}/restore`; nothing is uploaded, downloaded
+or deleted, no version row or chunk reference is touched, so the content that
+was current before can be restored in turn. The server re-checks that the
+revision belongs to this file and account under the account namespace lock, and
+publishes one `version` event with `restore: true` so other devices refresh
+through their normal sync path. A folder, a trashed file and a version whose
+content references are still pending are refused with a reason instead of being
+restored. Names are still opened only on the device; the dialog receives the
+decrypted name from the browser and the server only ever sees sealed envelopes.
+
+The listing is bounded: at most the newest 200 versions are shown, with a note
+when the cap is reached. Restoring an installed build and large-history
+behaviour are not yet verified.
 
 ## Bulk rewind (#81 partial)
 

@@ -72,6 +72,10 @@ pub fn app(state: state::AppState) -> Router {
             "/files/{id}/versions/{revision}/references",
             axum::routing::put(api::backfill_references),
         )
+        .route(
+            "/files/{id}/versions/{revision}/restore",
+            post(api::restore_version),
+        )
         .route("/files/{id}/manifest", get(api::get_manifest))
         .route("/reference-backfill", get(api::incomplete_references))
         .route("/chunks/lookup", get(api::lookup_chunk))
