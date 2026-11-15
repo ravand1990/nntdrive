@@ -405,6 +405,15 @@ class ApiClient {
     return _send('POST', '/files/$id/restore', body: body);
   }
 
+  /// Permanently remove one trashed item and everything inside it.
+  ///
+  /// This drops the account's metadata and versions only; articles already
+  /// posted to Usenet cannot be retracted.
+  Future<void> purgeFile(String id) => _send('DELETE', '/trash/$id');
+
+  /// Permanently remove every trashed item in the account.
+  Future<void> emptyTrash() => _send('DELETE', '/trash');
+
   Future<void> setFavorite(String id, bool favorite) =>
       _send('PATCH', '/files/$id', body: {'favorite': favorite});
 

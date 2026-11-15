@@ -668,9 +668,19 @@ shows folder/size, deletion date and remaining days, offers one explicit
 folder is gone, and keeps expired items visible with **Cannot restore**. Folder
 deletion is therefore enabled again: it moves the whole subtree to the trash.
 
-This is not completion: empty-trash/permanent delete, a backend purge job for
-expired items, restore into an arbitrary folder picker in the UI, bulk rewind to
-an earlier date, and installed TalkBack/device acceptance remain open on #81.
+Items can also be removed for good: `DELETE /trash/{id}` deletes one trashed
+node with its subtree and versions, and `DELETE /trash` empties the account's
+trash. Both are tenant-scoped, take the account namespace lock, publish a
+`purge` event per removed top-level node, and refuse a fixed account root, a
+nested descendant of another trashed item, or a subtree that still holds live
+files. The Trash page has a per-row **Delete permanently** action and an
+**Empty trash** app-bar action, each behind its own confirmation dialog. This is
+metadata-only: articles already posted to Usenet cannot be retracted, and the
+dialogs say so.
+
+This is not completion: a backend purge job for expired items, restore into an
+arbitrary folder picker in the UI, bulk rewind to an earlier date, and installed
+TalkBack/device acceptance remain open on #81.
 
 ## Recent implementation milestones
 

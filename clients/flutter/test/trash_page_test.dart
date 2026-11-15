@@ -10,9 +10,12 @@ class _Harness {
   List<TrashEntry> entries;
   List<String>? names;
   final List<({String id, bool toRoot})> restored = [];
+  final List<String> purged = [];
+  int emptyCalls = 0;
   int loads = 0;
   Object? loadError;
   Object? restoreError;
+  Object? purgeError;
 
   _Harness(this.entries);
 
@@ -29,6 +32,17 @@ class _Harness {
     if (restoreError != null) throw restoreError!;
     restored.add((id: id, toRoot: toRoot));
     entries = entries.where((e) => e.id != id).toList();
+  }
+
+  Future<void> purge(String id) async {
+    if (purgeError != null) throw purgeError!;
+    purged.add(id);
+    entries = entries.where((e) => e.id != id).toList();
+  }
+
+  Future<void> emptyTrash() async {
+    emptyCalls++;
+    entries = [];
   }
 }
 
@@ -58,6 +72,8 @@ Widget _page(_Harness harness) => MaterialApp(
         load: harness.load,
         decrypt: harness.decrypt,
         restore: harness.restore,
+        purge: harness.purge,
+        emptyTrash: harness.emptyTrash,
       ),
     );
 
@@ -162,5 +178,104 @@ void main() {
 
     expect(find.text('Name unavailable'), findsOneWidget);
     expect(find.textContaining('sealed-name'), findsNothing);
+  });
+
+  testWidgets('permanent delete asks first and sends nothing on cancel',
+      (tester) async {
+    final harness = _Harness([_entry('a', isDir: true, size: 0)]);
+    await tester.pumpWidget(_page(harness));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Delete permanently'));
+    await tester.pumpAndSettle();
+    expect(find.text('Delete permanently?'), findsOneWidget);
+    expect(find.textContaining('cannot be retracted'), findsOneWidget);
+
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(harness.purged, isEmpty, reason: 'cancel purges nothing');
+    expect(find.text('name-a'), findsOneWidget);
+  });
+
+  testWidgets('a confirmed permanent delete removes the item and reloads',
+      (tester) async {
+    final harness = _Harness([_entry('a'), _entry('b')]);
+    await tester.pumpWidget(_page(harness));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Delete permanently').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Delete permanently'));
+    await tester.pumpAndSettle();
+
+    expect(harness.purged, ['a']);
+    expect(harness.loads, 2);
+    expect(find.text('name-a'), findsNothing);
+    expect(find.text('name-b'), findsOneWidget);
+    expect(find.textContaining('Deleted name-a permanently'), findsOneWidget);
+  });
+
+  testWidgets('an expired item can still be deleted permanently',
+      (tester) async {
+    final harness = _Harness([_entry('a', expired: true, daysLeft: 0)]);
+    await tester.pumpWidget(_page(harness));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Cannot restore'), findsOneWidget);
+    await tester.tap(find.byTooltip('Delete permanently'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Delete permanently'));
+    await tester.pumpAndSettle();
+    expect(harness.purged, ['a']);
+    expect(find.text('Nothing in the trash.'), findsOneWidget);
+  });
+
+  testWidgets('empty trash asks first, then clears everything', (tester) async {
+    final harness = _Harness([_entry('a'), _entry('b')]);
+    await tester.pumpWidget(_page(harness));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Empty trash'));
+    await tester.pumpAndSettle();
+    expect(find.text('Empty the trash?'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(harness.emptyCalls, 0, reason: 'cancel empties nothing');
+
+    await tester.tap(find.byTooltip('Empty trash'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Empty trash'));
+    await tester.pumpAndSettle();
+    expect(harness.emptyCalls, 1);
+    expect(find.text('Nothing in the trash.'), findsOneWidget);
+    expect(find.textContaining('Trash emptied'), findsOneWidget);
+  });
+
+  testWidgets('empty trash is unavailable once the trash is empty',
+      (tester) async {
+    final harness = _Harness([]);
+    await tester.pumpWidget(_page(harness));
+    await tester.pumpAndSettle();
+
+    final button = tester.widget<IconButton>(
+        find.widgetWithIcon(IconButton, Icons.delete_sweep));
+    expect(button.onPressed, isNull,
+        reason: 'an empty trash offers nothing to empty');
+  });
+
+  testWidgets('a failed permanent delete explains itself and keeps the item',
+      (tester) async {
+    final harness = _Harness([_entry('a')])
+      ..purgeError = ApiException(409, 'conflict', 'changed');
+    await tester.pumpWidget(_page(harness));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Delete permanently'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Delete permanently'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('name-a'), findsOneWidget);
+    expect(find.textContaining('changed or its folder is gone'), findsOneWidget);
   });
 }
