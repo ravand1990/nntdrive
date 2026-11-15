@@ -6,6 +6,8 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-11-15
+
 ### Features
 
 - Complete paged rewind (#81 partial): a **Rewind to an earlier date** now covers every changed file, not only the first 200. The client reads the plan page by page (stopping after 25 pages so one confirmation stays bounded, with a **Load more changes** button for anything left), shows the whole plan before anything happens, and applies it in server-sized batches of up to 200 files in one confirmation. A page that repeats rows is never applied twice, and if the connection drops partway the dialog says how many files were already changed instead of claiming nothing happened.
