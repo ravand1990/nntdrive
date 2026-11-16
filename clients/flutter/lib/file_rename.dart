@@ -48,6 +48,12 @@ class RenameFailure implements Exception {
   String toString() => message;
 }
 
+/// A definite rejected guarded write, not an ambiguous transport failure.
+class RenameSnapshotConflict extends RenameFailure {
+  RenameSnapshotConflict()
+      : super('This folder changed. Refresh the list and try again.');
+}
+
 /// Decrypt collision candidates locally, then send only node-bound envelopes.
 /// The server compares this complete sibling snapshot while holding the account
 /// namespace lock. Concurrent changes require a fresh collision check, not retry
@@ -58,12 +64,15 @@ Future<void> renameRemoteEntry({
   required int handle,
   required RemoteFile file,
   required String name,
+  List<RemoteFile>? snapshot,
 }) async {
   final invalid = renameValidationError(name);
   if (invalid != null) throw RenameFailure(invalid);
   final bridge = NativeBridge.instance;
   final comparison = bridge.nameCollisionKey(name);
-  final siblings = await api.listFiles(parentId: file.parentId);
+  // Onboarding already obtained the source from this same fresh listing.
+  // General browser renames retain their independent stale-source check.
+  final siblings = snapshot ?? await api.listFiles(parentId: file.parentId);
   if (siblings.length > 4096) {
     throw RenameFailure(
         'This folder is too large for a safe rename (4096 entries maximum).');
@@ -94,8 +103,7 @@ Future<void> renameRemoteEntry({
         parentId: file.parentId, siblings: siblings);
   } on ApiException catch (e) {
     if (e.status == 409) {
-      throw RenameFailure(
-          'This folder changed. Refresh the list and try again.');
+      throw RenameSnapshotConflict();
     }
     rethrow;
   }

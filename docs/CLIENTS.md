@@ -529,6 +529,27 @@ upgrade needs the stable signing key tracked in #77.
 
 ## Rename in the file browser (#51 partial)
 
+### Recovering device-name onboarding (#144)
+
+**Name this device** shows existing account spaces and root entries, decrypted
+locally, and marks the entry whose name conflicts with your input. The initial
+suggestion avoids existing canonical/case-equivalent names (for example
+`Laptop (2)`). **Suggest an unused name** is available after editing or an error;
+it does not silently replace an edited name. **Reload** refreshes the account
+view without overwriting input or clearing a confirmation error. Choose a new
+label and confirm again directly; no restart is needed to enter files/sync.
+
+A definite guarded-rename 409 triggers one retry with freshly read root identity
+and a complete newly decrypted sibling snapshot. A second rejection stays on the
+page. Timeouts, disconnects, other HTTP errors and failed verification are not
+automatically retried: their outcome may be ambiguous. Confirmation requires an
+acknowledged write followed by opening the target's freshly listed sealed name.
+The existing device root is reused; confirmation never bootstraps a root. Labels
+and collision keys remain local, with only the existing opaque confirmation
+boolean persisted. Global and legacy root entries also reserve their names.
+
+### File and folder rename
+
 Use the edit icon beside a file or folder to **Rename** it; Cancel leaves it
 unchanged. Names are sealed by the native client for the existing node ID; only
 `name_enc` changes via `POST /files/{id}/rename`, so contents and immutable revision history are retained.
