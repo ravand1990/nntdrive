@@ -46,8 +46,19 @@ reads an existing journal read-only and may refresh the device-local remote-hash
 cache. A pending or identity-based folder move yields the move notice and no
 per-file items, because a plain path comparison would misreport a rename. Names,
 paths and reasons stay on the device; the backend only serves the opaque listing
-it already serves. The overview covers one device; cross-device presence, reveal
-of a local copy from this view and installed-device timing remain unimplemented.
+it already serves. On desktop, row details offer **Show local copy** after a
+fresh check of the configured root, its ancestors and every relative component.
+The click revalidates membership and the file/directory type, rejects links and
+unsafe portable names, and opens only the containing directory (the directory
+itself for a folder/root). Excluded local items can be revealed without syncing.
+Missing or unsafe copies disable the action with a text explanation; Android
+and iOS do not offer this desktop action. The older conflict-copy Show action
+uses the same guarded, session-owned controller operation. Shutdown rejects
+late launches and drains an already admitted launch attempt. The external file
+manager can still race a hostile filesystem writer after validation; this is
+local presence, not journal/revision equality. The overview covers one device;
+cross-device presence is outside #79 scope and installed-device timing remains
+unverified (follow-up #65).
 
 Focused verification: `cargo test -p nntdrive-sync inspect` passed four new
 engine regressions (plan without writes, clean result after a real sync, pending
@@ -59,6 +70,16 @@ counts/filtering/truncation, the widget list/filter/empty/retry states, the
 post-action reload, the finished-round reload (and that a running round does not
 trigger one), resolving a conflict through the shared choice dialog, a failed
 action, and no conflict action without a resolver.
+
+Reveal verification: the pinned canonical Flutter wrapper passed analysis and
+386 tests (four Windows-only skips). Nineteen new filesystem/controller/widget
+tests cover confined file/folder/root targets, absolute/traversal/portable-name
+rejection, missing/wrong-type/link substitutions, removed folders, late session
+admission and launch drain, redacted failure, exact row dispatch and refresh,
+disabled missing-copy reveal and unsupported-platform UI. Replacing confinement
+with the legacy unchecked join failed seven tests; ignoring the disabled-state
+guard failed its widget regression. Both sabotages were restored. Injected
+launchers do not establish installed Windows/Linux file-manager acceptance.
 
 ## Account-wide encrypted-name search (#80 partial)
 

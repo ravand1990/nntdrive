@@ -15,12 +15,14 @@ import 'package:uuid/uuid.dart';
 
 import 'account_roots.dart';
 import 'api.dart';
+import 'local_availability.dart';
 import 'native.dart';
 import 'pending_moves.dart';
 import 'session_operations.dart';
 import 'space_migration.dart';
 import 'space_subscription.dart';
 import 'storage_access.dart';
+import 'sync_local_reveal.dart';
 
 typedef SyncRunner = Future<Map<String, dynamic>> Function(
     int handle,
@@ -879,6 +881,46 @@ class SyncController extends ChangeNotifier {
       'journalPath': await _journalPath(folder),
       'deviceName': Platform.localHostname,
       'excluded': folder.excluded,
+    });
+  }
+
+  /// Local-only evidence for an overview row, owned until inspection completes.
+  Future<bool> canRevealLocal(SyncFolderConfig folder, String relativePath,
+      {required bool isDirectory}) async {
+    if (_stopped) return false;
+    return _operations.run(0, () async {
+      final root = folder.localPath;
+      final state = await inspectSyncLocalPath(
+          folder: folder, relativePath: relativePath, isDirectory: isDirectory);
+      return !_stopped && folders.contains(folder) &&
+          folder.localPath == root && state.path != null;
+    });
+  }
+
+  /// Recheck the actual path at click time; never trust a cached plan status.
+  /// No network, key access, journal changes or permission requests are needed.
+  Future<void> revealLocal(SyncFolderConfig folder, String relativePath,
+      {required bool isDirectory,
+      Future<ProcessResult> Function(String, List<String>)? launch}) {
+    if (_stopped) return Future.error(StateError('Session is closing'));
+    return _operations.run(0, () async {
+      final root = folder.localPath;
+      void check() {
+        if (_stopped || !folders.contains(folder) || folder.localPath != root) {
+          throw StateError('Local folder is no longer available');
+        }
+      }
+      check();
+      await revealLocalAvailability(() async {
+        final state = await inspectSyncLocalPath(
+            folder: folder, relativePath: relativePath, isDirectory: isDirectory);
+        check();
+        return state;
+      }, launch: (command, arguments) {
+        check();
+        return (launch ?? ((cmd, args) => Process.run(cmd, args)))(
+            command, arguments);
+      });
     });
   }
 

@@ -192,6 +192,85 @@ void main() {
     expect(find.text('Resolve conflict'), findsNothing);
   });
 
+  testWidgets('local copy reveal uses the exact row and reloads afterwards',
+      (tester) async {
+    final item = entry(UnsyncedStatus.localOnly, 'nested/local.txt');
+    var loads = 0;
+    final inspected = <UnsyncedEntry>[];
+    final revealed = <UnsyncedEntry>[];
+    await tester.pumpWidget(host(SyncOverviewPage(
+      load: () async {
+        loads++;
+        return overviewOf([item]);
+      },
+      onSyncFolder: (_) async => fail('Reveal must not sync'),
+      canRevealLocal: (entry) async {
+        inspected.add(entry);
+        return true;
+      },
+      onRevealLocal: (entry) async => revealed.add(entry),
+    )));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('local.txt'));
+    await tester.pumpAndSettle();
+    expect(inspected, [same(item)]);
+    await tester.tap(find.text('Show local copy'));
+    await tester.pumpAndSettle();
+    expect(revealed, [same(item)]);
+    expect(loads, 2);
+  });
+
+  testWidgets('missing local copy disables reveal with a text explanation',
+      (tester) async {
+    await tester.pumpWidget(host(SyncOverviewPage(
+      load: () async => overviewOf([entry(UnsyncedStatus.cloudOnly, 'cloud.txt')]),
+      onSyncFolder: (_) async {},
+      canRevealLocal: (_) async => false,
+      onRevealLocal: (_) async => fail('Missing copy must not launch'),
+    )));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('cloud.txt'));
+    await tester.pumpAndSettle();
+    final button = tester.widget<OutlinedButton>(find.widgetWithText(
+        OutlinedButton, 'Show local copy'));
+    expect(button.onPressed, isNull);
+    expect(find.textContaining('No safe local copy'), findsOneWidget);
+  });
+
+  testWidgets('stale reveal failure is redacted and reloads the list',
+      (tester) async {
+    var loads = 0;
+    await tester.pumpWidget(host(SyncOverviewPage(
+      load: () async {
+        loads++;
+        return overviewOf([entry(UnsyncedStatus.failed, 'file.txt')]);
+      },
+      onSyncFolder: (_) async {},
+      canRevealLocal: (_) async => true,
+      onRevealLocal: (_) async => throw StateError('PRIVATE PATH'),
+    )));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('file.txt'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Show local copy'));
+    await tester.pumpAndSettle();
+    expect(find.text('That action did not finish. Try again.'), findsOneWidget);
+    expect(find.textContaining('PRIVATE'), findsNothing);
+    expect(loads, 2);
+  });
+
+  testWidgets('unsupported platforms offer no local reveal action',
+      (tester) async {
+    await tester.pumpWidget(host(SyncOverviewPage(
+      load: () async => overviewOf([entry(UnsyncedStatus.localOnly, 'local.txt')]),
+      onSyncFolder: (_) async {},
+    )));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('local.txt'));
+    await tester.pumpAndSettle();
+    expect(find.text('Show local copy'), findsNothing);
+  });
+
   testWidgets('folder-level problems are visible, not an empty list',
       (tester) async {
     await tester.pumpWidget(host(SyncOverviewPage(

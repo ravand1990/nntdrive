@@ -224,6 +224,23 @@ class _SyncPageState extends State<SyncPage> {
           if (match.isEmpty) return;
           await c.resolveConflict(match.first, copyPath, choice);
         },
+        canRevealLocal: Platform.isWindows || Platform.isLinux || Platform.isMacOS
+            ? (entry) async {
+                final folder = c.folders
+                    .where((folder) => folder.id == entry.folderId).firstOrNull;
+                return folder != null && await c.canRevealLocal(folder, entry.path,
+                    isDirectory: entry.isDirectory);
+              }
+            : null,
+        onRevealLocal: Platform.isWindows || Platform.isLinux || Platform.isMacOS
+            ? (entry) async {
+                final folder = c.folders
+                    .where((folder) => folder.id == entry.folderId).firstOrNull;
+                if (folder == null) throw StateError('Folder was removed');
+                await c.revealLocal(folder, entry.path,
+                    isDirectory: entry.isDirectory);
+              }
+            : null,
         watch: c,
         isBusy: () => c.syncing,
       ),
@@ -424,17 +441,11 @@ class _SyncPageState extends State<SyncPage> {
     }
   }
 
-  Future<void> _reveal(String absolutePath) async {
+  Future<void> _reveal(SyncFolderConfig folder, String path) async {
     try {
-      if (Platform.isWindows) {
-        await Process.run('explorer', ['/select,', absolutePath]);
-      } else if (Platform.isMacOS) {
-        await Process.run('open', ['-R', absolutePath]);
-      } else {
-        await Process.run('xdg-open', [p.dirname(absolutePath)]);
-      }
-    } catch (e) {
-      _toast('Could not open file manager: $e');
+      await c.revealLocal(folder, path, isDirectory: false);
+    } catch (_) {
+      _toast('No safe local copy could be opened. Refresh and check the sync folder.');
     }
   }
 
@@ -457,15 +468,16 @@ class _SyncPageState extends State<SyncPage> {
                   separatorBuilder: (_, __) => const Divider(height: 1),
                   itemBuilder: (context, i) {
                     final (folder, path) = conflicts[i];
-                    final absolute = p.join(folder.localPath, path);
+
                     return ListTile(
                       dense: true,
                       title: Text(path),
                       subtitle: Text('${folder.name} · conflict copy'),
                       trailing: Wrap(children: [
-                        TextButton(
-                            onPressed: () => _reveal(absolute),
-                            child: const Text('Show')),
+                        if (Platform.isWindows || Platform.isLinux || Platform.isMacOS)
+                          TextButton(
+                              onPressed: () => _reveal(folder, path),
+                              child: const Text('Show')),
                         TextButton(
                             onPressed: folder.running || c.syncing
                                 ? null
