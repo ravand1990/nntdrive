@@ -108,6 +108,16 @@ four new native/controller regressions failed against the intercepted preflight;
 the OS-gate regression covers denied/granted/revoked/absent channel responses.
 The old engine failed two regressions and old overview mapping failed two;
 the native fixture also exposed and verified the fixed unsendable bridge capture.
+The bounded result is ordered once by folder name, status and relative path on
+an entry-only worker isolate; redundant UI-isolate per-folder sorts are removed.
+The builder waits for ordering before publishing rows. Five focused tests cover
+worker execution, real builder dispatch without pre-sorting or inspector capture,
+suspended publication, a 20,001-input/20,000-retained-row event-loop turn, and
+empty/single-row metadata preservation. The original builder failed the yield
+regression; replacing worker dispatch with caller-side `Future.sync` failed both
+worker-location and yield regressions. This is not a whole-build performance
+claim: native inspection is not incremental, and report indexing, plan mapping,
+counts/filtering, isolate input copying and publication remain caller-side.
 Large-tree incremental inspection/responsiveness is still unfinished under #79;
 installed permission/revocation and TalkBack acceptance remain #65.
 

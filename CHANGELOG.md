@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Bug fixes
+
+- **Not synced** orders its bounded result on a worker isolate instead of sorting each folder and the final list on the UI isolate. Folder/status/path order, retained-row counts and the truncation warning are preserved. Native inspection, row mapping and input copying still need separate incremental/responsiveness work (#79).
+
 ## [0.27.2] - 2026-11-16
 
 ### Bug fixes
