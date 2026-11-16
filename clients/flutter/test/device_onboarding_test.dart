@@ -28,6 +28,11 @@ class _Naming extends DeviceNaming {
   bool fail = false;
   bool collide = false;
   final names = <String>[];
+  List<DeviceSpaceName> spaces = [];
+  @override
+  Future<List<DeviceSpaceName>> existingSpaces() async => spaces;
+  @override
+  String collisionKey(String name) => name.toLowerCase();
   @override
   Future<AccountRoot> currentRoot() async {
     if (fail) throw StateError('private native diagnostic');
@@ -87,6 +92,11 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.textContaining('Choose another name'), findsOneWidget);
       expect(ready, 0);
+      await tester.tap(find.text('Reload'));
+      await tester.pumpAndSettle();
+      expect(tester.widget<TextField>(find.byType(TextField)).controller!.text,
+          'My laptop');
+      expect(find.textContaining('Choose another name'), findsOneWidget);
       naming.collide = false;
       await tester.enterText(find.byType(TextField), 'My laptop 2');
       await tester.tap(find.text('Confirm device name'));
@@ -95,6 +105,30 @@ void main() {
       expect(ready, 1);
     },
   );
+
+  testWidgets('collision is visible and unused suggestion completes without reload', (tester) async {
+    naming.spaces = const [
+      DeviceSpaceName('other', 'FAMILY LAPTOP'),
+      DeviceSpaceName('another', 'Family laptop (2)'),
+      DeviceSpaceName('root', 'Old label'),
+    ];
+    await tester.pumpWidget(page());
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        'Family laptop (3)');
+    expect(find.text('FAMILY LAPTOP'), findsOneWidget);
+    await tester.enterText(find.byType(TextField), 'Family laptop');
+    await tester.pump();
+    expect(find.text('FAMILY LAPTOP · Name already in use'), findsOneWidget);
+    await tester.ensureVisible(find.text('Suggest an unused name'));
+    await tester.tap(find.text('Suggest an unused name'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Confirm device name'));
+    await tester.tap(find.text('Confirm device name'));
+    await tester.pumpAndSettle();
+    expect(naming.names, ['Family laptop (3)']);
+    expect(ready, 1);
+  });
 
   testWidgets(
     'existing identity resumes once, explicit rename never skips prompt',

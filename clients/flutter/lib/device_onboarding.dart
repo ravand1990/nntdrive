@@ -19,6 +19,13 @@ String deviceConfirmationKey(
 ) =>
     'deviceNameConfirmed.v1.${base64Url.encode(utf8.encode(jsonEncode([server, accountId, deviceId, rootId])))}';
 
+/// Authenticated labels exist only in this unlocked page's memory.
+class DeviceSpaceName {
+  const DeviceSpaceName(this.nodeId, this.name);
+  final String nodeId;
+  final String name;
+}
+
 class DeviceNaming {
   DeviceNaming({
     required this.api,
@@ -52,31 +59,80 @@ class DeviceNaming {
   String key(AccountRoot root) =>
       deviceConfirmationKey(server, accountId, root.deviceId!, root.nodeId);
 
+  String collisionKey(String name) => NativeBridge.instance.nameCollisionKey(name);
+
+  Future<List<DeviceSpaceName>> existingSpaces() async {
+    final files = await api.listFiles();
+    if (files.length > 4096) {
+      throw RenameFailure('Too many account entries to check names safely.');
+    }
+    return files.map((file) => DeviceSpaceName(file.id,
+      NativeBridge.instance.openName(handle, file.id, file.nameEnc))).toList();
+  }
+
+  String uniqueSuggestion(String preferred, List<DeviceSpaceName> spaces,
+      String rootId) {
+    final used = spaces.where((space) => space.nodeId != rootId)
+        .map((space) => collisionKey(space.name)).toSet();
+    final base = deviceNameValidationError(preferred) == null
+        ? preferred : deviceRootFallbackName;
+    if (!used.contains(collisionKey(base))) return base;
+    // At most one more candidate than occupied names, with portable byte/code
+    // point limits applied to every suffix (never split a surrogate pair).
+    for (var n = 2; n <= used.length + 2; n++) {
+      final suffix = ' ($n)';
+      final runes = base.runes.toList();
+      while (runes.isNotEmpty &&
+          deviceNameValidationError('${String.fromCharCodes(runes)}$suffix') != null) {
+        runes.removeLast();
+      }
+      final candidate = '${String.fromCharCodes(runes).trimRight()}$suffix';
+      if (deviceNameValidationError(candidate) == null &&
+          !used.contains(collisionKey(candidate))) {
+        return candidate;
+      }
+    }
+    throw RenameFailure('Could not suggest an unused name. Choose another name.');
+  }
+
   Future<void> confirm(AccountRoot root, String name) async {
     final invalid = deviceNameValidationError(name);
     if (invalid != null) throw RenameFailure(invalid);
-    // Refresh source identity and use the existing encrypted, guarded rename.
-    // No move, recreate, manifest rewrite or journal reset is involved.
-    final current = await currentRoot();
-    if (current.nodeId != root.nodeId || current.deviceId != root.deviceId) {
-      throw RenameFailure('The device space changed. Reload and try again.');
+    for (var attempt = 0; attempt < 2; attempt++) {
+      // Read-only identity refresh: never bootstrap during confirmation/retry.
+      final current = (await roots.refresh())
+          .where((entry) => entry.nodeId == root.nodeId).firstOrNull;
+      if (current == null || current.deviceId != root.deviceId ||
+          current.kind != 'device') {
+        throw RenameFailure('The device space changed. Reload and try again.');
+      }
+      final siblings = await api.listFiles();
+      final file = siblings.where((f) => f.id == root.nodeId).firstOrNull;
+      if (file == null || !file.isDir || file.parentId != null) {
+        throw RenameFailure(
+          'The device space is unavailable. Reload and try again.',
+        );
+      }
+      try {
+        await renameRemoteEntry(api: api, handle: handle, file: file,
+            name: name, snapshot: siblings);
+      } on RenameSnapshotConflict {
+        if (attempt == 0) continue;
+        rethrow;
+      }
+      // Only a definitely acknowledged write reaches read-back. Read the actual
+      // target envelope, not a potentially stale bootstrap/roots display object.
+      final updated = (await api.listFiles())
+          .where((entry) => entry.id == root.nodeId).firstOrNull;
+      if (updated == null || !updated.isDir || updated.parentId != null ||
+          NativeBridge.instance.openName(handle, root.nodeId, updated.nameEnc) != name) {
+        throw RenameFailure(
+          'The label could not be verified. Reload and try again.',
+        );
+      }
+      await (await SharedPreferences.getInstance()).setBool(key(root), true);
+      return;
     }
-    final siblings = await api.listFiles();
-    final file = siblings.where((f) => f.id == root.nodeId).firstOrNull;
-    if (file == null || !file.isDir || file.parentId != null) {
-      throw RenameFailure(
-        'The device space is unavailable. Reload and try again.',
-      );
-    }
-    await renameRemoteEntry(api: api, handle: handle, file: file, name: name);
-    // Read the exact target back before marking this identity confirmed.
-    final updated = await currentRoot();
-    if (updated.nodeId != root.nodeId || updated.deviceName != name) {
-      throw RenameFailure(
-        'The label could not be verified. Reload and try again.',
-      );
-    }
-    await (await SharedPreferences.getInstance()).setBool(key(root), true);
   }
 }
 
@@ -106,6 +162,8 @@ class DeviceOnboardingPage extends StatefulWidget {
 class _DeviceOnboardingPageState extends State<DeviceOnboardingPage> {
   final _name = TextEditingController();
   AccountRoot? _root;
+  List<DeviceSpaceName> _spaces = [];
+  bool _initializedName = false;
   bool _busy = true;
   String? _error;
 
@@ -118,7 +176,6 @@ class _DeviceOnboardingPageState extends State<DeviceOnboardingPage> {
   Future<void> _load() async {
     setState(() {
       _busy = true;
-      _error = null;
     });
     try {
       await widget.operations.run(widget.naming.handle, () async {
@@ -131,13 +188,18 @@ class _DeviceOnboardingPageState extends State<DeviceOnboardingPage> {
           await widget.onReady();
           return;
         }
-        final suggested = widget.force
-            ? root.deviceName ?? ''
-            : await widget.defaultName();
+        final spaces = await widget.naming.existingSpaces();
+        final suggested = _initializedName ? null : widget.naming.uniqueSuggestion(
+            widget.force ? root.deviceName ?? '' : await widget.defaultName(),
+            spaces, root.nodeId);
         if (!mounted) return;
         setState(() {
           _root = root;
-          _name.text = suggested;
+          _spaces = spaces;
+          if (suggested != null) {
+            _name.text = suggested;
+            _initializedName = true;
+          }
         });
       });
     } catch (_) {
@@ -164,7 +226,19 @@ class _DeviceOnboardingPageState extends State<DeviceOnboardingPage> {
     });
     try {
       await widget.operations.run(widget.naming.handle, () async {
-        await widget.naming.confirm(_root!, _name.text);
+        try {
+          await widget.naming.confirm(_root!, _name.text);
+        } on RenameFailure {
+          // A racing sibling can explain the rejected name immediately, without
+          // resetting input or requiring Reload. Keep this read inside drain.
+          try {
+            final spaces = await widget.naming.existingSpaces();
+            if (mounted) setState(() => _spaces = spaces);
+          } catch (_) {
+            // Retain the previous authenticated list and the original error.
+          }
+          rethrow;
+        }
         if (mounted) await widget.onReady();
       });
     } on RenameFailure catch (e) {
@@ -213,6 +287,7 @@ class _DeviceOnboardingPageState extends State<DeviceOnboardingPage> {
                 controller: _name,
                 enabled: !_busy && _root != null,
                 autofocus: true,
+                onChanged: (_) => setState(() {}),
                 decoration: const InputDecoration(labelText: 'Device name'),
                 onSubmitted: (_) => _confirm(),
               ),
@@ -221,6 +296,26 @@ class _DeviceOnboardingPageState extends State<DeviceOnboardingPage> {
                 'Only the space label changes. Existing files, folder locations '
                 'and version history are kept. Moving legacy folders is a separate, explicit action.',
               ),
+              if (_spaces.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                const Text('Existing account spaces and root entries (decrypted on this device)'),
+                for (final space in _spaces)
+                  Text(space.nodeId == _root?.nodeId
+                      ? '${space.name} · This device'
+                      : deviceNameValidationError(_name.text) == null &&
+                            widget.naming.collisionKey(space.name) == widget.naming.collisionKey(_name.text)
+                          ? '${space.name} · Name already in use'
+                          : space.name),
+                TextButton(
+                  onPressed: _busy || _root == null ? null : () {
+                    setState(() {
+                      _name.text = widget.naming.uniqueSuggestion(
+                          _name.text, _spaces, _root!.nodeId);
+                    });
+                  },
+                  child: const Text('Suggest an unused name'),
+                ),
+              ],
               if (_error != null)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 16),

@@ -387,6 +387,18 @@ device space. Renaming changes the encrypted label only, preserving node IDs,
 content versions, sync relationships and existing local paths; legacy folders
 still require the separate explicit move action below.
 
+Onboarding recovery (#144) lists client-decrypted account spaces/root entries,
+marks names colliding with the typed label, and offers an unused suggestion using
+the native canonical collision comparison. Suggestions respect both the 64-code-
+point and 255-UTF-8-byte limits; the exact chosen spelling is encrypted. Reload
+and rejected confirmations retain typed input. Only a definite rename HTTP 409
+is retried, once, after fresh read-only root identity and sibling snapshots;
+other HTTP/transport errors and failed read-back are not retried. An acknowledged
+write is confirmed only after opening the target envelope from a fresh file
+listing, not a stale bootstrap label. Retries do not create roots or change node
+IDs. These regressions do not establish affected-account or installed two-device
+acceptance; no production account was accessed.
+
 Migration 0008 scrubs live `devices.name` values to `Device` and installs a trigger
 that normalizes legacy writers to that placeholder. Compatibility columns/API
 fields remain, existing sealed root labels are preserved, and clients decrypt
