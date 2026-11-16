@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nntdrive/sync_controller.dart';
 import 'package:nntdrive/sync_overview.dart';
 import 'package:nntdrive/sync_overview_page.dart';
 
@@ -33,6 +34,47 @@ UnsyncedOverview overviewOf(List<UnsyncedEntry> entries,
 Widget host(Widget child) => MaterialApp(home: child);
 
 void main() {
+  testWidgets('mapped filesystem block is a filterable root with access and refresh',
+      (tester) async {
+    final grants = <String>[];
+    var blocked = true;
+    final folder = SyncFolderConfig(
+      id: 'root', name: 'Documents', localPath: '/private/root', remoteRootId: 'remote',
+    );
+    await tester.pumpWidget(host(SyncOverviewPage(
+      load: () => buildUnsyncedOverview(
+        folders: [folder],
+        inspect: (_) async => blocked
+            ? {'filesystem_blocked': 'permission_denied', 'items': []}
+            : {'items': [], 'journal_available': true},
+      ),
+      onSyncFolder: (_) async => fail('a blocked root must not retry a partial plan'),
+      onGrantAccess: (id) async {
+        grants.add(id);
+        blocked = false;
+        return true;
+      },
+    )));
+    await tester.pumpAndSettle();
+    expect(find.text('Everything is in sync.'), findsNothing);
+    expect(find.widgetWithText(FilterChip, 'Blocked (1)'), findsOneWidget);
+    expect(find.text('Blocked · Documents'), findsOneWidget);
+    expect(find.textContaining('Check storage permissions'), findsOneWidget);
+    expect(find.byTooltip('Sync Documents now'), findsNothing);
+    expect(find.textContaining('/private/root'), findsNothing);
+    await tester.tap(find.widgetWithText(FilterChip, 'Blocked (1)'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Documents').last);
+    await tester.pumpAndSettle();
+    expect(find.text('Grant access'), findsOneWidget);
+    expect(find.text('Sync now'), findsNothing);
+    await tester.tap(find.text('Grant access'));
+    await tester.pumpAndSettle();
+    expect(grants, ['root']);
+    expect(find.text('Blocked · Documents'), findsNothing);
+    expect(find.text('Everything is in sync.'), findsOneWidget);
+  });
+
   testWidgets('shows the total, status text and filters by status',
       (tester) async {
     final overview = overviewOf([

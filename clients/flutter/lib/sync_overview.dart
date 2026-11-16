@@ -221,6 +221,25 @@ Future<UnsyncedOverview> buildUnsyncedOverview({
 
     try {
       final plan = await inspect(folder);
+      final blockReason = _filesystemBlockReason(plan['filesystem_blocked']);
+      if (blockReason != null) {
+        // No partial plan or historical skip list describes an unreadable tree.
+        // Count one root row, not unobserved files or inferred deletions.
+        folderEntries.clear();
+        add(UnsyncedEntry(
+          status: UnsyncedStatus.blocked,
+          folderId: folder.id,
+          folderName: folder.name,
+          path: '',
+          isDirectory: true,
+          retryable: false,
+          reason: blockReason,
+          lastAttempt: folder.lastSync,
+        ));
+        entries.addAll(folderEntries);
+        summaries.add(_summary(folder, folderEntries));
+        continue;
+      }
       final blockedPaths = <String>{
         for (final pair in _stringPairs(plan['case_collisions'])) ...[pair.$1, pair.$2]
       };
@@ -345,6 +364,18 @@ String _reasonFor(String kind, String? pathTo) => switch (kind) {
       'conflict' =>
         'Both sides changed. Choose keep mine, keep theirs or keep both in Sync.',
       _ => 'Waiting for the next sync.',
+    };
+
+String? _filesystemBlockReason(Object? code) => switch (code) {
+      'permission_denied' =>
+        'This folder or a path inside it cannot be read. Check storage permissions, grant access if needed, then refresh.',
+      'not_found' =>
+        'This folder or a path inside it is missing. Check that the folder is available, then refresh.',
+      'not_a_directory' =>
+        'The configured folder or a path inside it is no longer a directory. Check the local folder location, then refresh.',
+      'io' =>
+        'The complete folder could not be read. Check the drive and local folder access, then refresh.',
+      _ => null,
     };
 
 String _errorReason(String? code) => switch (code) {

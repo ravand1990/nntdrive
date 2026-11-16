@@ -465,9 +465,6 @@ pub unsafe extern "C" fn nntdrive_sync_inspect(handle: u64, request: *const c_ch
             .map_err(|_| "invalid remote root id")?;
         let local = text("localPath")?;
         let journal_path = text("journalPath")?;
-        if !Path::new(local).is_dir() {
-            return Err("sync folder is missing".into());
-        }
         let mut api = ApiClient::new(text("baseUrl")?).map_err(|e| e.to_string())?;
         api.set_token(text("token")?);
         let mut remote = nntdrive_client::HttpRemote::with_cache(

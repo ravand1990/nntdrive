@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Bug fixes
+
+- **Not synced** now counts an unreadable, missing or invalid local sync tree as one **Blocked** folder row, with storage/drive guidance and the existing access action where available. Filesystem failures use diagnostic-free typed inspection codes rather than parsing errors; incomplete scans never produce deletion plans or contact the remote tree. Network and journal failures remain separate comparison notices. Fixed the inspection worker capturing an unsendable native library so these outcomes reach the overview.
+
 ## [0.26.0] - 2026-11-16
 
 ### Features

@@ -189,6 +189,49 @@ void main() {
         .setMockMethodCallHandler(StorageAccess.channel, null);
   });
 
+  test('inspection rechecks Android OS permission before every native admission',
+      () async {
+    final calls = <MethodCall>[];
+    bool? required = true;
+    var inspections = 0;
+    final messenger = TestDefaultBinaryMessengerBinding
+        .instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(StorageAccess.channel, (call) async {
+      calls.add(call);
+      return required;
+    });
+    addTearDown(() =>
+        messenger.setMockMethodCallHandler(StorageAccess.channel, null));
+    final inspecting = SyncController(
+        server: 'http://unused', token: 'private-token', handle: 0,
+        api: ApiClient(baseUrl: 'http://unused'),
+        storageAccess: AndroidAccess(),
+        inspectRunner: (_, request) async {
+          inspections++;
+          return {'filesystem_blocked': 'not_found', 'items': []};
+        });
+    addTearDown(inspecting.dispose);
+    // A missing path must not bypass OS permission admission either.
+    folder.localPath = '${root.path}/missing';
+    inspecting.folders.add(folder);
+    for (final status in [true, false, true, null]) {
+      required = status;
+      if (status == false) {
+        expect((await inspecting.inspectFolder(folder))['filesystem_blocked'],
+            'not_found');
+      } else {
+        await expectLater(inspecting.inspectFolder(folder),
+            throwsA(isA<StorageAccessException>()
+                .having((e) => e.permissionRequired, 'OS permission', isTrue)));
+      }
+    }
+    expect(inspections, 1);
+    expect(calls.map((c) => c.method), ['status', 'status', 'status', 'status']);
+    expect(calls.every((c) => (c.arguments as Map)['path'] == folder.localPath),
+        isTrue);
+    expect(await File('${root.path}/sync/id.sqlite').exists(), isFalse);
+  });
+
   testWidgets(
       'permission error offers explicit retry and private alternative without prompting',
       (tester) async {
