@@ -5,7 +5,31 @@
 // every write. Names, paths and reasons stay on this device; the backend only
 // ever sees the opaque listing it already serves.
 
+import 'dart:isolate';
+
 import 'sync_controller.dart';
+
+/// Orders one already bounded, device-local result without blocking UI sorting.
+/// Only entries cross the isolate boundary: never a controller, inspector,
+/// native handle or session. Input copying and plan mapping remain caller-side.
+Future<List<UnsyncedEntry>> orderUnsyncedEntries(
+    List<UnsyncedEntry> entries) async {
+  // No comparator work exists for these cases, so avoid a worker startup.
+  if (entries.length < 2) return List<UnsyncedEntry>.of(entries);
+  return Isolate.run(() {
+    final ordered = List<UnsyncedEntry>.of(entries);
+    ordered.sort((a, b) {
+      final byFolder = a.folderName.compareTo(b.folderName);
+      if (byFolder != 0) return byFolder;
+      final byStatus = a.status.index.compareTo(b.status.index);
+      return byStatus != 0 ? byStatus : a.path.compareTo(b.path);
+    });
+    return ordered;
+  });
+}
+
+typedef OverviewEntryOrderer = Future<List<UnsyncedEntry>> Function(
+    List<UnsyncedEntry> entries);
 
 /// One item that is not fully in sync, with the reason a user can act on.
 enum UnsyncedStatus { cloudOnly, localOnly, pending, failed, conflict, skipped, blocked }
@@ -132,6 +156,7 @@ Future<UnsyncedOverview> buildUnsyncedOverview({
   required List<SyncFolderConfig> folders,
   required FolderInspector inspect,
   int maxEntries = 20000,
+  OverviewEntryOrderer orderEntries = orderUnsyncedEntries,
 }) async {
   final entries = <UnsyncedEntry>[];
   final summaries = <UnsyncedFolderSummary>[];
@@ -301,23 +326,16 @@ Future<UnsyncedOverview> buildUnsyncedOverview({
       ));
     }
 
-    folderEntries.sort((a, b) {
-      final byStatus = a.status.index.compareTo(b.status.index);
-      return byStatus != 0 ? byStatus : a.path.compareTo(b.path);
-    });
+    // Keep mapping order until the single final worker sort. Sorting each
+    // folder here would still block the UI and duplicate the final ordering.
     entries.addAll(folderEntries);
     summaries.add(_summary(folder, folderEntries));
   }
 
-  entries.sort((a, b) {
-    final byFolder = a.folderName.compareTo(b.folderName);
-    if (byFolder != 0) return byFolder;
-    final byStatus = a.status.index.compareTo(b.status.index);
-    return byStatus != 0 ? byStatus : a.path.compareTo(b.path);
-  });
+  final ordered = await orderEntries(entries);
 
   return UnsyncedOverview(
-    entries: entries,
+    entries: ordered,
     folders: summaries,
     notices: notices,
     inspectedAt: DateTime.now(),
