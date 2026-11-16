@@ -6,6 +6,8 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-11-16
+
 ### Features
 
 - Private device naming (#140): after unlock, confirm an editable device name before the file browser, uploads or scheduled sync become available. Suggestions use Android's device name/model, Windows computer name or a meaningful desktop hostname, with a platform fallback. Labels are sealed in the existing device-root name; authentication sends only a generic device name. Confirmation is remembered for that server/account/device/root identity, not for a new device ID after sign-in.
