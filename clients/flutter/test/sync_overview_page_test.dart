@@ -55,6 +55,12 @@ void main() {
         return true;
       },
     )));
+    // Real worker messages need real event turns; fake frame settling alone
+    // cannot deliver an isolate result.
+    for (var i = 0; i < 100 && find.text('Blocked · Documents').evaluate().isEmpty; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 10)));
+      await tester.pump();
+    }
     await tester.pumpAndSettle();
     expect(find.text('Everything is in sync.'), findsNothing);
     expect(find.widgetWithText(FilterChip, 'Blocked (1)'), findsOneWidget);
@@ -69,6 +75,10 @@ void main() {
     expect(find.text('Grant access'), findsOneWidget);
     expect(find.text('Sync now'), findsNothing);
     await tester.tap(find.text('Grant access'));
+    for (var i = 0; i < 100 && find.text('Everything is in sync.').evaluate().isEmpty; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 10)));
+      await tester.pump();
+    }
     await tester.pumpAndSettle();
     expect(grants, ['root']);
     expect(find.text('Blocked · Documents'), findsNothing);

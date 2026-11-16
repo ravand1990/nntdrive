@@ -115,11 +115,34 @@ worker execution, real builder dispatch without pre-sorting or inspector capture
 suspended publication, a 20,001-input/20,000-retained-row event-loop turn, and
 empty/single-row metadata preservation. The original builder failed the yield
 regression; replacing worker dispatch with caller-side `Future.sync` failed both
-worker-location and yield regressions. This is not a whole-build performance
-claim: native inspection is not incremental, and report indexing, plan mapping,
-counts/filtering, isolate input copying and publication remain caller-side.
-Large-tree incremental inspection/responsiveness is still unfinished under #79;
-installed permission/revocation and TalkBack acceptance remain #65.
+worker-location and yield regressions.
+
+Plan-to-row mapping now also uses a separate top-level worker with only explicit
+sendable config/report data, the native JSON plan and the remaining global row
+budget. All folders' display config and relevant nested reports are frozen before
+the first await. Mapping includes error-path indexing, exclusions, engine skips,
+collision/status/reason selection, notices and retained-row folder counts. Folder
+workers run sequentially; their retained output is bounded by the existing
+20,000-row global default, then the existing single ordering worker sorts once.
+No controller, inspector, session or native bridge is transferred. Publication
+awaits mapping and ordering. New whole-builder tests cover a worker-only plan
+getter with an unsendable inspector context, a single-row event turn (no ordering
+worker), config/report mutation during inspection, and suspended mapping with
+remaining-cap/folder-count preservation. The original caller-side builder failed
+the location regression; caller-side `Future.sync` sabotage failed both location
+and event-turn regressions, then the real worker was restored. Widget access /
+refresh fixtures now explicitly allow real isolate event turns. The focused
+mapping/ordering/overview/widget/native-inspection run passed 42 tests. Canonical
+`bash scripts/dev-check.sh flutter` passed the release FFI build, clean analysis
+and 443 Flutter tests (4 existing skips) on the pinned Linux toolchain.
+
+This is bounded retained output, not bounded input streaming or a whole-build
+performance claim: native inspection is not incremental; complete report freezing
+and plan/report isolate copying still occur, while result merging, overview
+counts/filtering and publication remain caller-side. Worker startup/copy costs
+and whole-plan temporary memory remain; no installed frame-time/speedup claim was
+measured. Large-tree incremental inspection/responsiveness is still unfinished
+under #79; installed permission/revocation and TalkBack acceptance remain #65.
 
 ## Account-wide encrypted-name search (#80 partial)
 
