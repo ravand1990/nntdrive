@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Bug fixes
+
+- **Not synced** folder totals no longer include storage-permission Blocked rows hidden by the global row limit; folder counts, status filters and the displayed total now describe the same retained rows. The existing truncation warning still signals omitted items (#79).
+
 ## [0.27.0] - 2026-11-16
 
 ### Features
