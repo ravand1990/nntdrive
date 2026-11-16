@@ -11,7 +11,7 @@ import 'sync_controller.dart';
 
 /// Orders one already bounded, device-local result without blocking UI sorting.
 /// Only entries cross the isolate boundary: never a controller, inspector,
-/// native handle or session. Input copying and plan mapping remain caller-side.
+/// native handle or session. Input copying remains caller-side.
 Future<List<UnsyncedEntry>> orderUnsyncedEntries(
     List<UnsyncedEntry> entries) async {
   // No comparator work exists for these cases, so avoid a worker startup.
@@ -157,183 +157,35 @@ Future<UnsyncedOverview> buildUnsyncedOverview({
   required FolderInspector inspect,
   int maxEntries = 20000,
   OverviewEntryOrderer orderEntries = orderUnsyncedEntries,
+  OverviewFolderMapper mapFolder = mapUnsyncedFolder,
 }) async {
+  // Freeze every folder before the first await, including later folders' reports.
+  // No live config, controller, inspector closure or session reaches a worker.
+  final frozen = [for (final folder in folders) _freezeOverviewFolder(folder)];
+  final sources = List<SyncFolderConfig>.of(folders);
   final entries = <UnsyncedEntry>[];
   final summaries = <UnsyncedFolderSummary>[];
   final notices = <UnsyncedNotice>[];
   var truncated = false;
-
-  for (final folder in folders) {
-    final failed = <String, String>{};
-    final report = folder.lastReport;
-    final itemErrors = report?['item_errors'];
-    if (itemErrors is List) {
-      for (final error in itemErrors) {
-        if (error is! Map) continue;
-        final paths = error['paths'];
-        if (paths is! List) continue;
-        final code = error['code'];
-        final reason = _errorReason(code is String ? code : null);
-        for (final path in paths) {
-          if (path is String) failed[path] = reason;
-        }
+  for (var i = 0; i < frozen.length; i++) {
+    final folder = frozen[i];
+    Map<String, dynamic> plan = const {};
+    var inspectionFailed = false;
+    if (!folder.storageAccessRequired) {
+      try {
+        plan = await inspect(sources[i]);
+      } catch (_) {
+        inspectionFailed = true;
       }
     }
-
-    if (folder.storageAccessRequired) {
-      final blocked = UnsyncedEntry(
-        status: UnsyncedStatus.blocked,
-        folderId: folder.id,
-        folderName: folder.name,
-        path: '',
-        isDirectory: true,
-        retryable: false,
-        reason:
-            'Storage access is needed for this folder. Grant access and sync again.',
-        lastAttempt: folder.lastSync,
-      );
-      if (entries.length < maxEntries) {
-        entries.add(blocked);
-        summaries.add(_summary(folder, [blocked]));
-      } else {
-        truncated = true;
-        summaries.add(_summary(folder, const []));
-      }
-      continue;
-    }
-
-    final folderEntries = <UnsyncedEntry>[];
-    void add(UnsyncedEntry entry) {
-      if (entries.length + folderEntries.length >= maxEntries) {
-        truncated = true;
-        return;
-      }
-      folderEntries.add(entry);
-    }
-
-    for (final excluded in folder.excluded) {
-      final clean = excluded.replaceAll('\\', '/');
-      if (clean.isEmpty) continue;
-      add(UnsyncedEntry(
-        status: UnsyncedStatus.skipped,
-        folderId: folder.id,
-        folderName: folder.name,
-        path: clean,
-        isDirectory: !clean.contains('.'),
-        retryable: false,
-        reason: 'Excluded from sync on this device (selective sync).',
-        lastAttempt: folder.lastSync,
-      ));
-    }
-
-    final skipped = report?['skipped'];
-    if (skipped is List) {
-      for (final item in skipped) {
-        if (item is! List || item.isEmpty || item.first is! String) continue;
-        final reason = item.length > 1 ? item[1] : null;
-        add(UnsyncedEntry(
-          status: UnsyncedStatus.skipped,
-          folderId: folder.id,
-          folderName: folder.name,
-          path: item.first as String,
-          reason: reason is String && reason.isNotEmpty
-              ? 'Skipped: $reason.'
-              : 'Skipped by the sync engine.',
-          retryable: false,
-          lastAttempt: folder.lastSync,
-        ));
-      }
-    }
-
-    try {
-      final plan = await inspect(folder);
-      final blockReason = _filesystemBlockReason(plan['filesystem_blocked']);
-      if (blockReason != null) {
-        // No partial plan or historical skip list describes an unreadable tree.
-        // Count one root row, not unobserved files or inferred deletions.
-        folderEntries.clear();
-        add(UnsyncedEntry(
-          status: UnsyncedStatus.blocked,
-          folderId: folder.id,
-          folderName: folder.name,
-          path: '',
-          isDirectory: true,
-          retryable: false,
-          reason: blockReason,
-          lastAttempt: folder.lastSync,
-        ));
-        entries.addAll(folderEntries);
-        summaries.add(_summary(folder, folderEntries));
-        continue;
-      }
-      final blockedPaths = <String>{
-        for (final pair in _stringPairs(plan['case_collisions'])) ...[pair.$1, pair.$2]
-      };
-      for (final item in _planItems(plan['items'])) {
-        final kind = item.$1;
-        final path = item.$2;
-        final pathTo = item.$3;
-        final size = item.$4;
-        final isDirectory = item.$5;
-        final mapped = _statusFor(kind);
-        if (mapped == null) continue;
-
-        if (blockedPaths.contains(path)) {
-          add(UnsyncedEntry(
-            status: UnsyncedStatus.blocked,
-            folderId: folder.id,
-            folderName: folder.name,
-            path: path,
-            size: size,
-            isDirectory: isDirectory,
-            reason:
-                'Two names differ only by letter case; one path is blocked until they are renamed.',
-            lastAttempt: folder.lastSync,
-          ));
-          continue;
-        }
-
-        final failure = failed[path];
-        add(UnsyncedEntry(
-          status: failure != null ? UnsyncedStatus.failed : mapped,
-          folderId: folder.id,
-          folderName: folder.name,
-          path: path,
-          pathTo: pathTo,
-          size: size,
-          isDirectory: isDirectory,
-          reason: failure ?? _reasonFor(kind, pathTo),
-          lastAttempt: folder.lastSync,
-        ));
-      }
-      if (plan['folder_moves_pending'] == true) {
-        notices.add(UnsyncedNotice(
-          folder.name,
-          'A folder move is still pending. Sync this folder first so every item can be listed at its new path.',
-        ));
-      }
-      if (plan['journal_available'] == false) {
-        notices.add(UnsyncedNotice(
-          folder.name,
-          'No completed sync exists for this folder yet, so every item is compared as new.',
-        ));
-      }
-      if (plan['truncated'] == true) truncated = true;
-    } catch (_) {
-      notices.add(UnsyncedNotice(
-        folder.name,
-        'This folder could not be compared right now. Sync it and refresh; it is not reported as in sync.',
-      ));
-    }
-
-    // Keep mapping order until the single final worker sort. Sorting each
-    // folder here would still block the UI and duplicate the final ordering.
-    entries.addAll(folderEntries);
-    summaries.add(_summary(folder, folderEntries));
+    final mapped = await mapFolder(
+        folder, plan, maxEntries - entries.length, inspectionFailed);
+    entries.addAll(mapped.entries);
+    summaries.add(mapped.summary);
+    notices.addAll(mapped.notices);
+    truncated = truncated || mapped.truncated;
   }
-
   final ordered = await orderEntries(entries);
-
   return UnsyncedOverview(
     entries: ordered,
     folders: summaries,
@@ -343,13 +195,244 @@ Future<UnsyncedOverview> buildUnsyncedOverview({
   );
 }
 
-UnsyncedFolderSummary _summary(
-    SyncFolderConfig folder, List<UnsyncedEntry> entries) {
+/// Immutable, device-local mapping input; deliberately contains no native or UI
+/// objects. Reports are frozen before inspection can suspend or mutate config.
+class OverviewFolderInput {
+  const OverviewFolderInput(this.id, this.name, this.lastSync,
+      this.storageAccessRequired, this.excluded, this.lastReport);
+
+  final String id;
+  final String name;
+  final String? lastSync;
+  final bool storageAccessRequired;
+  final List<String> excluded;
+  final Map<String, dynamic>? lastReport;
+}
+
+// Copy only JSON-shaped report values; unrelated diagnostics/objects are omitted.
+Object? _freezeReportValue(Object? value) {
+  if (value is String || value is num || value is bool || value == null) return value;
+  if (value is List) {
+    return [for (final item in value) _freezeReportValue(item)];
+  }
+  if (value is Map) {
+    return <String, dynamic>{
+      for (final key in value.keys)
+        if (key is String) key: _freezeReportValue(value[key]),
+    };
+  }
+  return null;
+}
+
+OverviewFolderInput _freezeOverviewFolder(SyncFolderConfig folder) =>
+    OverviewFolderInput(
+      folder.id, folder.name, folder.lastSync, folder.storageAccessRequired,
+      List<String>.unmodifiable(folder.excluded),
+      folder.lastReport == null ? null : <String, dynamic>{
+        'item_errors': _freezeReportValue(folder.lastReport!['item_errors']),
+        'skipped': _freezeReportValue(folder.lastReport!['skipped']),
+      });
+
+class OverviewFolderMapping {
+  const OverviewFolderMapping(this.entries, this.summary, this.notices, this.truncated);
+  final List<UnsyncedEntry> entries;
+  final UnsyncedFolderSummary summary;
+  final List<UnsyncedNotice> notices;
+  final bool truncated;
+}
+
+typedef OverviewFolderMapper = Future<OverviewFolderMapping> Function(
+    OverviewFolderInput folder, Map<String, dynamic> plan,
+    int maxEntries, bool inspectionFailed);
+
+/// One sequential worker per inspected folder, with a retained-row budget. The
+/// existing native plan/report are still copied in full, not streamed batches.
+/// The top-level dispatch captures only explicit sendable mapping inputs.
+Future<OverviewFolderMapping> mapUnsyncedFolder(
+    OverviewFolderInput folder, Map<String, dynamic> plan,
+    int maxEntries, bool inspectionFailed) =>
+    Isolate.run(() => _mapUnsyncedFolder(folder, plan, maxEntries, inspectionFailed));
+
+OverviewFolderMapping _mapUnsyncedFolder(
+    OverviewFolderInput folder, Map<String, dynamic> plan,
+    int maxEntries, bool inspectionFailed) {
+  final entries = <UnsyncedEntry>[];
+  final notices = <UnsyncedNotice>[];
+  var truncated = false;
+  final failed = <String, String>{};
+  final report = folder.lastReport;
+  final itemErrors = report?['item_errors'];
+  if (itemErrors is List) {
+    for (final error in itemErrors) {
+      if (error is! Map) continue;
+      final paths = error['paths'];
+      if (paths is! List) continue;
+      final code = error['code'];
+      final reason = _errorReason(code is String ? code : null);
+      for (final path in paths) {
+        if (path is String) failed[path] = reason;
+      }
+    }
+  }
+
+  if (folder.storageAccessRequired) {
+    final blocked = UnsyncedEntry(
+      status: UnsyncedStatus.blocked,
+      folderId: folder.id,
+      folderName: folder.name,
+      path: '',
+      isDirectory: true,
+      retryable: false,
+      reason:
+          'Storage access is needed for this folder. Grant access and sync again.',
+      lastAttempt: folder.lastSync,
+    );
+    if (entries.length < maxEntries) {
+      entries.add(blocked);
+    } else {
+      truncated = true;
+    }
+    return _mappedFolder(folder, entries, notices, truncated);
+  }
+
+  final folderEntries = <UnsyncedEntry>[];
+  void add(UnsyncedEntry entry) {
+    if (entries.length + folderEntries.length >= maxEntries) {
+      truncated = true;
+      return;
+    }
+    folderEntries.add(entry);
+  }
+
+  for (final excluded in folder.excluded) {
+    final clean = excluded.replaceAll('\\', '/');
+    if (clean.isEmpty) continue;
+    add(UnsyncedEntry(
+      status: UnsyncedStatus.skipped,
+      folderId: folder.id,
+      folderName: folder.name,
+      path: clean,
+      isDirectory: !clean.contains('.'),
+      retryable: false,
+      reason: 'Excluded from sync on this device (selective sync).',
+      lastAttempt: folder.lastSync,
+    ));
+  }
+
+  final skipped = report?['skipped'];
+  if (skipped is List) {
+    for (final item in skipped) {
+      if (item is! List || item.isEmpty || item.first is! String) continue;
+      final reason = item.length > 1 ? item[1] : null;
+      add(UnsyncedEntry(
+        status: UnsyncedStatus.skipped,
+        folderId: folder.id,
+        folderName: folder.name,
+        path: item.first as String,
+        reason: reason is String && reason.isNotEmpty
+            ? 'Skipped: $reason.'
+            : 'Skipped by the sync engine.',
+        retryable: false,
+        lastAttempt: folder.lastSync,
+      ));
+    }
+  }
+
+  try {
+    if (inspectionFailed) throw const FormatException();
+    final blockReason = _filesystemBlockReason(plan['filesystem_blocked']);
+    if (blockReason != null) {
+      // No partial plan or historical skip list describes an unreadable tree.
+      // Count one root row, not unobserved files or inferred deletions.
+      folderEntries.clear();
+      add(UnsyncedEntry(
+        status: UnsyncedStatus.blocked,
+        folderId: folder.id,
+        folderName: folder.name,
+        path: '',
+        isDirectory: true,
+        retryable: false,
+        reason: blockReason,
+        lastAttempt: folder.lastSync,
+      ));
+      entries.addAll(folderEntries);
+      return _mappedFolder(folder, entries, notices, truncated);
+    }
+    final blockedPaths = <String>{
+      for (final pair in _stringPairs(plan['case_collisions'])) ...[pair.$1, pair.$2]
+    };
+    for (final item in _planItems(plan['items'])) {
+      final kind = item.$1;
+      final path = item.$2;
+      final pathTo = item.$3;
+      final size = item.$4;
+      final isDirectory = item.$5;
+      final mapped = _statusFor(kind);
+      if (mapped == null) continue;
+
+      if (blockedPaths.contains(path)) {
+        add(UnsyncedEntry(
+          status: UnsyncedStatus.blocked,
+          folderId: folder.id,
+          folderName: folder.name,
+          path: path,
+          size: size,
+          isDirectory: isDirectory,
+          reason:
+              'Two names differ only by letter case; one path is blocked until they are renamed.',
+          lastAttempt: folder.lastSync,
+        ));
+        continue;
+      }
+
+      final failure = failed[path];
+      add(UnsyncedEntry(
+        status: failure != null ? UnsyncedStatus.failed : mapped,
+        folderId: folder.id,
+        folderName: folder.name,
+        path: path,
+        pathTo: pathTo,
+        size: size,
+        isDirectory: isDirectory,
+        reason: failure ?? _reasonFor(kind, pathTo),
+        lastAttempt: folder.lastSync,
+      ));
+    }
+    if (plan['folder_moves_pending'] == true) {
+      notices.add(UnsyncedNotice(
+        folder.name,
+        'A folder move is still pending. Sync this folder first so every item can be listed at its new path.',
+      ));
+    }
+    if (plan['journal_available'] == false) {
+      notices.add(UnsyncedNotice(
+        folder.name,
+        'No completed sync exists for this folder yet, so every item is compared as new.',
+      ));
+    }
+    if (plan['truncated'] == true) truncated = true;
+  } catch (_) {
+    notices.add(UnsyncedNotice(
+      folder.name,
+      'This folder could not be compared right now. Sync it and refresh; it is not reported as in sync.',
+    ));
+  }
+
+  // Keep mapping order until the single final worker sort. Sorting each
+  // folder here would duplicate the final ordering.
+  entries.addAll(folderEntries);
+
+  return _mappedFolder(folder, entries, notices, truncated);
+}
+
+OverviewFolderMapping _mappedFolder(OverviewFolderInput folder,
+    List<UnsyncedEntry> entries, List<UnsyncedNotice> notices, bool truncated) {
   final counts = <UnsyncedStatus, int>{};
   for (final entry in entries) {
     counts[entry.status] = (counts[entry.status] ?? 0) + 1;
   }
-  return UnsyncedFolderSummary(folder.id, folder.name, counts);
+  return OverviewFolderMapping(entries,
+      UnsyncedFolderSummary(folder.id, folder.name, counts), notices, truncated);
 }
 
 UnsyncedStatus? _statusFor(String kind) => switch (kind) {
