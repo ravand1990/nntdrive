@@ -13,7 +13,8 @@ pub mod reconcile;
 pub mod scanner;
 
 pub use engine::{
-    InspectItem, Remote, SyncEngine, SyncError, SyncInspection, SyncReport, INSPECT_ITEM_LIMIT,
+    FilesystemBlock, InspectItem, Remote, SyncEngine, SyncError, SyncInspection, SyncReport,
+    INSPECT_ITEM_LIMIT,
 };
 pub use journal::{Journal, JournalError, JournalSnapshot};
 pub use reconcile::{

@@ -27,13 +27,18 @@ text status and a plain-language reason: **Cloud only**, **Local only**,
 **Pending** (queued deletion, move, rename or revision adoption), **Failed**
 (the exact path failed in the last completed attempt, with its coded reason),
 **Conflict**, **Skipped** (selective-sync exclusion or engine skip) and
-**Blocked** (storage access, or two names that differ only by letter case).
+**Blocked** (storage access, unreadable/missing/invalid local trees, or two names
+that differ only by letter case).
 Counts per status and per folder drive filter chips and a folder filter; the
-list is virtualised, refreshed explicitly, and an empty result states that
-nothing is waiting to sync. A folder that cannot be compared right now, a
-first-ever folder without a completed sync, and a pending folder move are shown
-as notices instead of being reported as in sync. Every row offers a folder
-sync, blocked storage offers an access grant, and a conflict row offers
+list is virtualised and refreshed explicitly. Filesystem root/scan failures
+return diagnostic-free typed codes and one counted **Blocked** root row with
+access/drive guidance; no partial items, inferred deletions or remote snapshot
+are produced. An unreadable descendant blocks its whole tree, not an invented
+per-file count. Network/journal comparison failures, a first-ever folder without
+a completed sync, and pending folder moves remain notices, not filesystem
+blocks or in-sync claims. Successful empty comparisons state that nothing is
+waiting to sync. Retryable item rows offer a folder sync; blocked storage offers
+an access grant where supported, and a conflict row offers
 **Resolve conflict**, which reuses the Sync review choice (keep mine, keep
 theirs or keep both) and applies it through the existing sync engine after
 both sides are named. Each action reloads the plan, and the view reloads by
@@ -80,6 +85,28 @@ disabled missing-copy reveal and unsupported-platform UI. Replacing confinement
 with the legacy unchecked join failed seven tests; ignoring the disabled-state
 guard failed its widget regression. Both sabotages were restored. Injected
 launchers do not establish installed Windows/Linux file-manager acceptance.
+
+Filesystem-block verification: the pinned canonical Rust checks passed fmt,
+workspace check, Clippy and 175 tests (one subprocess helper ignored; no database
+skips); the canonical Flutter wrapper rebuilt the release FFI and passed analysis
+and 398 tests (four Windows-only skips). Three new Rust tests cover actual
+missing/file roots and chmod-denied roots/directories/files, no remote snapshot
+or baseline mutation, continued real-sync failure before reconciliation, and
+journal/remote error separation. Twelve new Flutter tests cover the real native
+ABI/worker, zero HTTP for blocked trees and locked handles, redacted mapping,
+root counts/filter/limit behavior, and the widget access-and-refresh action.
+Full-path controller regressions additionally prove missing/file/chmod-denied
+roots reach counted Blocked overview rows with the default storage access and
+native runner, while ordinary sync still fails its listing preflight without
+changing the previous report/time, journal or HTTP state. The controller keeps
+Android's per-attempt OS permission gate (including revoked/absent status),
+without issuing permission requests, and locked handles remain errors. These
+four new native/controller regressions failed against the intercepted preflight;
+the OS-gate regression covers denied/granted/revoked/absent channel responses.
+The old engine failed two regressions and old overview mapping failed two;
+the native fixture also exposed and verified the fixed unsendable bridge capture.
+Large-tree incremental inspection/responsiveness is still unfinished under #79;
+installed permission/revocation and TalkBack acceptance remain #65.
 
 ## Account-wide encrypted-name search (#80 partial)
 

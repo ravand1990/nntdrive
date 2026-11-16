@@ -872,7 +872,12 @@ class SyncController extends ChangeNotifier {
     if (!folders.contains(folder)) {
       throw StateError('Folder was removed');
     }
-    await storageAccess.check(folder.localPath);
+    // Keep the OS permission gate, but let the read-only native inspector
+    // classify missing/invalid/unreadable trees into typed blocked outcomes.
+    // The full listing preflight remains mandatory for add and ordinary sync.
+    if (await storageAccess.permissionRequired(folder.localPath)) {
+      throw const StorageAccessException(true);
+    }
     return inspectRunner(handle, {
       'baseUrl': server,
       'token': token,

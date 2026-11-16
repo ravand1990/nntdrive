@@ -231,7 +231,26 @@ skipped/case-collision lists. It uploads, downloads, deletes and writes nothing;
 the HTTP transport may only refresh its own device-local content-hash cache.
 A pending interrupted or identity-based folder move returns
 `folder_moves_pending` and no items, because a plain comparison would misreport
-it as a delete/download pair. The call runs off the UI thread and is bounded.
+it as a delete/download pair. A local root/scan I/O failure instead returns
+`filesystem_blocked` (`permission_denied`, `not_found`, `not_a_directory` or
+`io`) with empty item/skip/collision lists, before remote snapshot access or
+reconciliation. Codes come from typed filesystem error kinds, never diagnostic
+text, and contain no absolute paths or OS messages. The field is absent on
+successful inspection; journal availability is not comparison evidence when
+blocked. The overview counts one non-retryable **Blocked** root row, not an
+invented count of unreadable descendants, and offers local access/drive guidance
+plus the existing access action where supported. Journal, network, invalid
+request and locked-handle errors remain errors and generic comparison notices,
+not filesystem blocks. The controller rechecks the platform OS permission gate
+before inspection, but leaves filesystem admission to the typed native inspector
+instead of swallowing missing/file/unreadable roots in its listing preflight.
+Denied or unavailable Android permission still prevents native admission; no
+inspection requests broader access. Add-folder and ordinary sync retain their
+full permission-and-listing preflight. Ordinary sync still aborts on scan failure
+before reconciliation; this API does not change deletion behavior. The call runs off
+the UI thread in a session-owned worker capturing only the handle and encoded
+request. Large-tree incremental loading remains unfinished (#79), and installed
+permission/revocation acceptance is separate (#65).
 
 ## Desktop window lifecycle (partial #6)
 

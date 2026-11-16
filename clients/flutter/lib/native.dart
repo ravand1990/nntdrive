@@ -81,6 +81,19 @@ Future<Map<String, dynamic>> _runCopy(int handle, String request) =>
 Future<bool> _runLocalFileMatches(String request) =>
     Isolate.run(() => NativeBridge.instance._localFileMatches(request));
 
+Future<Map<String, dynamic>> _runSyncInspect(int handle, String encoded) =>
+    Isolate.run(() {
+      final bridge = NativeBridge.instance;
+      final f = bridge._lib.lookupFunction<_BackfillNative, _BackfillDart>(
+          'nntdrive_sync_inspect');
+      final input = bridge._cstr(encoded);
+      try {
+        return bridge._decode(f(handle, input));
+      } finally {
+        malloc.free(input);
+      }
+    });
+
 // Capture only opaque IDs/envelopes and the process-local handle, never the
 // bridge (DynamicLibrary), a Session, listeners or completers.
 Future<List<String>> _runOpenNames(
@@ -478,21 +491,7 @@ class NativeBridge {
   Future<Map<String, dynamic>> syncInspectAsync(
           int handle, Map<String, dynamic> request) =>
       _operations.run(handle,
-          () => _syncInspectAsync(handle, jsonEncode(request)));
-
-  Future<Map<String, dynamic>> _syncInspectAsync(
-          int handle, String encoded) =>
-      Isolate.run(() {
-        final f = NativeBridge.instance._lib
-            .lookupFunction<_BackfillNative, _BackfillDart>(
-                'nntdrive_sync_inspect');
-        final input = _cstr(encoded);
-        try {
-          return _decode(f(handle, input));
-        } finally {
-          malloc.free(input);
-        }
-      });
+          () => _runSyncInspect(handle, jsonEncode(request)));
 
   // Isolate helpers: all parameters are primitives, so nothing unsafe crosses
   /// Runs the core off the UI thread. NativeCallable.listener is deliberately

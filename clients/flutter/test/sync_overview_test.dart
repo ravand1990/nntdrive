@@ -167,6 +167,57 @@ void main() {
     expect(entry.reason, contains('Storage access'));
   });
 
+  test('filesystem blocks are counted root rows with safe reasons and filters', () async {
+    for (final code in ['permission_denied', 'not_found', 'not_a_directory', 'io']) {
+      final overview = await buildUnsyncedOverview(
+        folders: [makeFolder('blocked', 'Blocked folder'), makeFolder('ok', 'Other')],
+        inspect: (folder) async => folder.id == 'blocked'
+            ? {
+                ...plan([], journalAvailable: false),
+                'filesystem_blocked': code,
+                'diagnostic': '/private/root secret token',
+              }
+            : plan([item('upload', 'local.txt')]),
+      );
+      final row = overview.filtered(status: UnsyncedStatus.blocked, folderId: 'blocked').single;
+      expect(row.path, '');
+      expect(row.isDirectory, isTrue);
+      expect(row.retryable, isFalse);
+      expect(row.reason, isNot(contains('private')));
+      expect(row.reason, isNot(contains('secret')));
+      expect(row.reason, contains('Check'));
+      expect(overview.total, 2);
+      expect(overview.counts[UnsyncedStatus.blocked], 1);
+      expect(overview.folders.first.counts[UnsyncedStatus.blocked], 1);
+      expect(overview.folders.first.total, 1);
+      expect(overview.filtered(folderId: 'ok'), hasLength(1));
+      expect(overview.notices, isEmpty);
+    }
+  });
+
+  test('blocked root rows respect the global row limit', () async {
+    final overview = await buildUnsyncedOverview(
+      folders: [makeFolder('a', 'Alpha'), makeFolder('b', 'Beta')],
+      inspect: (_) async => {...plan([]), 'filesystem_blocked': 'permission_denied'},
+      maxEntries: 1,
+    );
+    expect(overview.total, 1);
+    expect(overview.truncated, isTrue);
+    expect(overview.folders.map((f) => f.total), [1, 0]);
+    expect(overview.counts[UnsyncedStatus.blocked], 1);
+  });
+
+  test('raw filesystem-looking diagnostics stay generic notices', () async {
+    for (final diagnostic in ['permission denied /private/root', 'journal failed', 'network offline']) {
+      final overview = await buildUnsyncedOverview(
+        folders: [makeFolder('f1', 'Documents')],
+        inspect: (_) async => throw StateError(diagnostic),
+      );
+      expect(overview.entries, isEmpty);
+      expect(overview.notices.single.message, isNot(contains(diagnostic)));
+    }
+  });
+
   test('an inspection failure is a notice, not an empty in-sync claim', () async {
     final overview = await buildUnsyncedOverview(
       folders: [makeFolder('f1', 'Documents')],

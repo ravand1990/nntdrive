@@ -97,11 +97,37 @@ pub struct InspectItem {
     pub is_dir: bool,
 }
 
+/// Diagnostic-free local filesystem failure. Never includes an OS message or
+/// a path; a failed scan cannot safely produce per-item reconciliation results.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FilesystemBlock {
+    PermissionDenied,
+    NotFound,
+    NotADirectory,
+    Io,
+}
+
+impl From<std::io::Error> for FilesystemBlock {
+    fn from(error: std::io::Error) -> Self {
+        match error.kind() {
+            std::io::ErrorKind::PermissionDenied => Self::PermissionDenied,
+            std::io::ErrorKind::NotFound => Self::NotFound,
+            std::io::ErrorKind::NotADirectory => Self::NotADirectory,
+            _ => Self::Io,
+        }
+    }
+}
+
 /// Read-only result: no upload, download, journal write or remote mutation.
 /// `folder_moves_pending` means a plain comparison would be misleading until a
 /// real sync applies the directory move, so no items are reported then.
 #[derive(Debug, Default, Clone, serde::Serialize)]
 pub struct SyncInspection {
+    /// Present only when the complete local scan failed. All plan lists are
+    /// empty and the remote snapshot has not been requested.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filesystem_blocked: Option<FilesystemBlock>,
     pub items: Vec<InspectItem>,
     pub skipped: Vec<(String, String)>,
     pub case_collisions: Vec<(String, String)>,
@@ -561,11 +587,16 @@ impl SyncEngine {
         journal_path: &Path,
         now: &str,
     ) -> Result<SyncInspection> {
-        if !root.is_dir() {
-            return Err(SyncError::Remote(format!(
-                "sync folder {} does not exist or is not a directory",
-                root.display()
-            )));
+        let root_error = match tokio::fs::metadata(root).await {
+            Ok(metadata) if metadata.is_dir() => None,
+            Ok(_) => Some(FilesystemBlock::NotADirectory),
+            Err(error) => Some(error.into()),
+        };
+        if let Some(blocked) = root_error {
+            return Ok(SyncInspection {
+                filesystem_blocked: Some(blocked),
+                ..Default::default()
+            });
         }
         let snapshot = Journal::inspect_read_only(journal_path).await?;
         let journal_available = snapshot.is_some();
@@ -594,7 +625,17 @@ impl SyncEngine {
         opts.excluded_paths = self.excluded_paths.clone();
         let scan = tokio::task::spawn_blocking(move || scanner::scan(&scan_root, &opts, &previous))
             .await
-            .map_err(|e| SyncError::Remote(format!("scan task failed: {e}")))??;
+            .map_err(|e| SyncError::Remote(format!("scan task failed: {e}")))?;
+        let scan = match scan {
+            Ok(scan) => scan,
+            Err(error) => {
+                return Ok(SyncInspection {
+                    filesystem_blocked: Some(error.into()),
+                    journal_available,
+                    ..Default::default()
+                });
+            }
+        };
         let remote_entries = remote.snapshot().await?;
         let remote_entries: Vec<_> = remote_entries
             .into_iter()
@@ -613,6 +654,7 @@ impl SyncEngine {
             });
         if folder_moves_pending {
             return Ok(SyncInspection {
+                filesystem_blocked: None,
                 skipped: scan.skipped,
                 case_collisions: scan.case_collisions,
                 folder_moves_pending: true,
@@ -737,6 +779,7 @@ impl SyncEngine {
             items.push(item);
         }
         Ok(SyncInspection {
+            filesystem_blocked: None,
             items,
             skipped: scan.skipped,
             case_collisions: scan.case_collisions,
@@ -1139,6 +1182,8 @@ mod tests {
     struct FakeState {
         files: HashMap<String, (Vec<u8>, Uuid)>,
         uploads: usize,
+        snapshots: usize,
+        fail_snapshot: bool,
         fail_upload: bool,
         fail_move: bool,
         omit_revision: bool,
@@ -1149,7 +1194,11 @@ mod tests {
 
     impl Remote for FakeRemote {
         async fn snapshot(&mut self) -> Result<Vec<RemoteEntry>> {
-            let state = self.0.lock().await;
+            let mut state = self.0.lock().await;
+            state.snapshots += 1;
+            if state.fail_snapshot {
+                return Err(SyncError::Remote("private remote diagnostic".into()));
+            }
             Ok(state
                 .files
                 .iter()
@@ -1875,6 +1924,138 @@ mod tests {
             .unwrap();
         assert!(!report.errors.is_empty());
         assert!(!root.path().parent().unwrap().join("escape.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn inspect_invalid_roots_are_structured_and_do_not_create_journals() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("private-root");
+        std::fs::write(&file, b"not a directory").unwrap();
+        for (root, code) in [
+            (dir.path().join("missing-private-root"), "not_found"),
+            (file, "not_a_directory"),
+        ] {
+            let journal_path = dir.path().join("absent.sqlite");
+            let mut remote = FakeRemote::default();
+            let result = SyncEngine::new("device")
+                .inspect(&mut remote, &root, &journal_path, "now")
+                .await
+                .expect("filesystem failures are structured inspection outcomes");
+            let json = serde_json::to_value(result).unwrap();
+            assert_eq!(json["filesystem_blocked"], code);
+            assert_eq!(json["items"], serde_json::json!([]));
+            assert_eq!(json["skipped"], serde_json::json!([]));
+            assert!(!json.to_string().contains("private-root"));
+            assert!(!journal_path.exists());
+            assert_eq!(remote.0.lock().await.snapshots, 0);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn inspect_unreadable_tree_is_blocked_before_reconciliation() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        use std::os::unix::process::CommandExt;
+        let effective = std::fs::read_to_string("/proc/self/status")
+            .unwrap()
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix("CapEff:")
+                    .map(|v| u64::from_str_radix(v.trim(), 16).unwrap())
+            })
+            .unwrap();
+        if std::fs::metadata("/proc/self").unwrap().uid() == 0 && effective & 0b110 != 0 {
+            assert!(std::env::var_os("NNTDRIVE_INSPECT_PERMISSION_CHILD").is_none());
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "engine::tests::inspect_unreadable_tree_is_blocked_before_reconciliation",
+                    "--nocapture",
+                ])
+                .env("NNTDRIVE_INSPECT_PERMISSION_CHILD", "1")
+                .uid(65534)
+                .gid(65534)
+                .status()
+                .unwrap();
+            assert!(status.success());
+            return;
+        }
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            for blocked in ["", "nested", "nested/private-file.txt"] {
+                let root = tempfile::tempdir().unwrap();
+                let state = tempfile::tempdir().unwrap();
+                let journal_path = state.path().join("journal.sqlite");
+                std::fs::create_dir(root.path().join("nested")).unwrap();
+                std::fs::write(root.path().join("nested/private-file.txt"), b"preserve").unwrap();
+                let mut remote = FakeRemote::default();
+                let engine = SyncEngine::new("device");
+                let journal = Journal::open(&journal_path).await.unwrap();
+                run(&engine, &mut remote, root.path(), &journal).await;
+                let baseline = serde_json::to_value(journal.load().await.unwrap()).unwrap();
+                let files = remote.0.lock().await.files.clone();
+                let snapshots = remote.0.lock().await.snapshots;
+                let denied = root.path().join(blocked);
+                let permissions = std::fs::metadata(&denied).unwrap().permissions();
+                std::fs::set_permissions(&denied, std::fs::Permissions::from_mode(0o0)).unwrap();
+                let inspection = engine
+                    .inspect(&mut remote, root.path(), &journal_path, "now")
+                    .await;
+                // Real synchronization must still fail closed, not reconcile a partial tree.
+                let sync = engine
+                    .run_once(&mut remote, root.path(), &journal, "now")
+                    .await;
+                std::fs::set_permissions(&denied, permissions).unwrap();
+                let json =
+                    serde_json::to_value(inspection.expect("structured filesystem block")).unwrap();
+                assert_eq!(json["filesystem_blocked"], "permission_denied");
+                assert_eq!(json["items"], serde_json::json!([]));
+                assert_eq!(json["skipped"], serde_json::json!([]));
+                assert!(!json.to_string().contains("private-file"));
+                assert!(matches!(sync, Err(SyncError::Io(_))));
+                assert_eq!(
+                    baseline,
+                    serde_json::to_value(journal.load().await.unwrap()).unwrap()
+                );
+                let after = remote.0.lock().await;
+                assert_eq!(after.files, files);
+                assert_eq!(after.uploads, 1);
+                assert_eq!(after.snapshots, snapshots);
+                drop(after);
+                assert_eq!(
+                    std::fs::read(root.path().join("nested/private-file.txt")).unwrap(),
+                    b"preserve"
+                );
+            }
+        });
+    }
+
+    #[tokio::test]
+    async fn inspect_journal_and_remote_errors_are_not_filesystem_blocks() {
+        let root = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let journal_path = state.path().join("broken.sqlite");
+        std::fs::write(&journal_path, b"not sqlite").unwrap();
+        let mut remote = FakeRemote::default();
+        let engine = SyncEngine::new("device");
+        assert!(matches!(
+            engine
+                .inspect(&mut remote, root.path(), &journal_path, "now")
+                .await,
+            Err(SyncError::Journal(_))
+        ));
+        assert_eq!(remote.0.lock().await.snapshots, 0);
+        remote.0.lock().await.fail_snapshot = true;
+        assert!(matches!(
+            engine
+                .inspect(
+                    &mut remote,
+                    root.path(),
+                    &state.path().join("missing.sqlite"),
+                    "now"
+                )
+                .await,
+            Err(SyncError::Remote(_))
+        ));
     }
 
     #[tokio::test]
