@@ -8,12 +8,13 @@ import 'android_update.dart';
 /// Android always asks the user to confirm the upgrade, so this never claims the
 /// update is finished. A missing "install unknown apps" switch is explained
 /// once, with a settings link, and never retried in a loop.
-Future<void> promptAndroidUpdate(
+Future<bool> promptAndroidUpdate(
   BuildContext context,
   AndroidUpdater updater,
   AndroidUpdateInfo info,
   String sizeLabel,
 ) async {
+  if (!context.mounted) return false;
   final go = await showDialog<bool>(
     context: context,
     builder: (context) => AlertDialog(
@@ -49,11 +50,12 @@ Future<void> promptAndroidUpdate(
       ],
     ),
   );
+  if (!context.mounted) return false;
   if (go != true) {
     await updater.defer(info);
-    return;
+    return true;
   }
-  if (!context.mounted) return;
+  if (!context.mounted) return false;
 
   final progress = DialogRoute<void>(
     context: context,
@@ -72,7 +74,7 @@ Future<void> promptAndroidUpdate(
     start = await updater.install(info);
   } catch (error) {
     if (progress.isActive) navigator.removeRoute(progress);
-    if (!context.mounted) return;
+    if (!context.mounted) return false;
     await showDialog<void>(
         context: context,
         builder: (context) => AlertDialog(
@@ -84,10 +86,10 @@ Future<void> promptAndroidUpdate(
                     child: const Text('OK'))
               ],
             ));
-    return;
+    return true;
   }
   if (progress.isActive) navigator.removeRoute(progress);
-  if (!context.mounted) return;
+  if (!context.mounted) return false;
 
   if (start.needsPermission) {
     await showDialog<void>(
@@ -115,7 +117,7 @@ Future<void> promptAndroidUpdate(
                     child: const Text('Open settings')),
               ],
             ));
-    return;
+    return true;
   }
   if (!start.started) {
     await showDialog<void>(
@@ -130,7 +132,7 @@ Future<void> promptAndroidUpdate(
                     child: const Text('OK'))
               ],
             ));
-    return;
+    return true;
   }
   await showDialog<void>(
       context: context,
@@ -147,4 +149,5 @@ Future<void> promptAndroidUpdate(
                   child: const Text('OK'))
             ],
           ));
+  return true;
 }

@@ -77,7 +77,7 @@ void main() {
         ),
         sync: sync,
         operations: operations,
-        updates: UpdateChecks(check: () async => null, prompt: (_) async {}),
+        updates: UpdateChecks(check: () async => null, prompt: (_) async => true),
         themeMode: ThemeMode.light,
         onTheme: (_) {},
         onSignOut: () {},

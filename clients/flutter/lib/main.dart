@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path/path.dart' as p;
@@ -108,11 +109,15 @@ class Session {
 }
 
 class NntDriveApp extends StatefulWidget {
-  const NntDriveApp({super.key, required this.prefs, this.instance, this.apiFactory});
+  const NntDriveApp({super.key, required this.prefs, this.instance, this.apiFactory,
+    this.updateCheck, this.androidUpdateCheck});
   final SharedPreferences prefs;
   final DesktopInstance? instance;
   /// Transport seam for exercising unlock/onboarding/session lifecycle together.
   final ApiClient Function(String server, String token)? apiFactory;
+  /// Feed seams; the app still owns scheduling, presentation and confirmation.
+  final Future<UpdateInfo?> Function()? updateCheck;
+  final Future<AndroidUpdateInfo?> Function()? androidUpdateCheck;
 
   @override
   State<NntDriveApp> createState() => _NntDriveAppState();
@@ -141,44 +146,41 @@ class _NntDriveAppState extends State<NntDriveApp> {
   final _fileOperations = SessionOperations();
   final _navigatorKey = GlobalKey<NavigatorState>();
   late final UpdateChecks _updates = UpdateChecks(
-    check: () async => Updater(await Updater.loadConfig()).check(),
+    check: () async => widget.updateCheck != null ? widget.updateCheck!()
+        : Updater(await Updater.loadConfig()).check(),
     prompt: (info) async {
-      final context = _navigatorKey.currentState?.overlay?.context;
-      if (context != null && context.mounted) {
-        await promptUpdate(context, info, _formatBytes(info.size));
-      }
+      final context = _navigatorKey.currentContext;
+      if (!mounted || context == null || !context.mounted) return false;
+      return promptUpdate(context, info, _formatBytes(info.size));
     },
   );
 
-  /// Android startup check: same feed, but the package goes to the system
-  /// installer, so it uses the Android flow and compares version codes. It
-  /// honours the auto-check switch and a deferred release, and stays silent
-  /// when the feed is unreachable.
-  Future<void> _autoCheckAndroidUpdate() async {
-    if (!(widget.prefs.getBool('updateAutoCheck') ?? true)) return;
-    final now = DateTime.now();
-    final last =
-        DateTime.tryParse(widget.prefs.getString('updateLastCheck') ?? '');
-    if (last != null && now.difference(last) < const Duration(hours: 24)) {
-      return;
-    }
-    await widget.prefs.setString('updateLastCheck', now.toIso8601String());
-    try {
+  late final AutomaticUpdateChecks<AndroidUpdateInfo> _androidUpdates =
+      AutomaticUpdateChecks<AndroidUpdateInfo>(
+    check: () async => widget.androidUpdateCheck != null
+        ? widget.androidUpdateCheck!()
+        : AndroidUpdater(config: await Updater.loadConfig()).check(),
+    isSkipped: (info, prefs) async =>
+        prefs.getInt(androidSkippedVersionCodeKey) == info.versionCode,
+    prompt: (info) async {
+      final context = _navigatorKey.currentContext;
+      if (!mounted || context == null || !context.mounted) return false;
       final updater = AndroidUpdater(config: await Updater.loadConfig());
-      final info = await updater.check();
-      if (!mounted || info == null) return;
-      if (await updater.deferredVersionCode() == info.versionCode) return;
-      final context = _navigatorKey.currentState?.overlay?.context;
-      if (context == null || !context.mounted) return;
-      await promptAndroidUpdate(context, updater, info, _formatBytes(info.size));
-    } catch (_) {
-      // Offline or an unreadable feed never blocks using the client.
-    }
+      if (!mounted || !context.mounted) return false;
+      return promptAndroidUpdate(context, updater, info, _formatBytes(info.size));
+    },
+  );
+
+  AutomaticUpdateChecks<Object>? get _automaticUpdates {
+    if (defaultTargetPlatform == TargetPlatform.android) return _androidUpdates;
+    if (Updater.supported) return _updates;
+    return null;
   }
 
   @override
   void dispose() {
     _updates.dispose();
+    _androidUpdates.dispose();
     _desktop?.dispose();
     _sync?.removeListener(_updateTray);
     _sync?.dispose();
@@ -195,8 +197,7 @@ class _NntDriveAppState extends State<NntDriveApp> {
     _accountId = widget.prefs.getString('accountId');
     _email = widget.prefs.getString('email');
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && Updater.supported) _updates.start();
-      if (mounted && Platform.isAndroid) unawaited(_autoCheckAndroidUpdate());
+      if (mounted) _automaticUpdates?.start();
       if (widget.instance != null) unawaited(_startDesktop());
     });
   }
@@ -342,6 +343,11 @@ class _NntDriveAppState extends State<NntDriveApp> {
     sync.start();
     setState(() { _deviceReady = true; _renamingDevice = false; });
     _updateTray();
+    // Do not await a modal prompt from the naming submission. Publish the new
+    // home first, then retry failed/unavailable startup offers without a day gate.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !_ending) unawaited(_automaticUpdates?.retryPending());
+    });
   }
 
   void _renameDevice() {
@@ -422,7 +428,7 @@ class _NntDriveAppState extends State<NntDriveApp> {
         session: _session!,
         sync: _sync!,
         operations: _fileOperations,
-        updates: _updates,
+        updates: _automaticUpdates ?? _updates,
         api: widget.apiFactory?.call(_session!.server, _session!.token),
         themeMode: _themeMode,
         onTheme: _setTheme,
@@ -1025,7 +1031,7 @@ class FilesPage extends StatefulWidget {
   final Session session;
   final SyncController sync;
   final SessionOperations operations;
-  final UpdateChecks updates;
+  final AutomaticUpdateChecks<Object> updates;
   final ThemeMode themeMode;
   final ValueChanged<ThemeMode> onTheme;
   final VoidCallback onSignOut;

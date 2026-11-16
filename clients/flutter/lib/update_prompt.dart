@@ -61,10 +61,10 @@ class UpdateNotesView extends StatelessWidget {
 }
 
 /// Shared by startup and explicit checks. The caller serializes this entire flow.
-Future<void> promptUpdate(
+Future<bool> promptUpdate(
     BuildContext context, UpdateInfo info, String sizeLabel) async {
   final prefs = await SharedPreferences.getInstance();
-  if (!context.mounted) return;
+  if (!context.mounted) return false;
   final go = await showDialog<bool>(
     context: context,
     builder: (context) => AlertDialog(
@@ -98,11 +98,12 @@ Future<void> promptUpdate(
       ],
     ),
   );
+  if (!context.mounted) return false;
   if (go != true) {
     await prefs.setString('updateSkippedVersion', info.version);
-    return;
+    return true;
   }
-  if (!context.mounted) return;
+  if (!context.mounted) return false;
   // Keep a handle to this route: never pop an unrelated login/settings route.
   final progress = DialogRoute<void>(
     context: context,
@@ -121,7 +122,7 @@ Future<void> promptUpdate(
     exit(0);
   } catch (error) {
     if (progress.isActive) navigator.removeRoute(progress);
-    if (!context.mounted) return;
+    if (!context.mounted) return false;
     await showDialog<void>(
         context: context,
         builder: (context) => AlertDialog(
@@ -134,4 +135,5 @@ Future<void> promptUpdate(
               ],
             ));
   }
+  return true;
 }
