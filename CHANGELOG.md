@@ -6,6 +6,8 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.27.2] - 2026-11-16
+
 ### Bug fixes
 
 - Device naming now suggests an unused portable label using locally decrypted account-root entries and shows existing names with collision markers. Errors and Reload preserve typed names. A definite guarded-rename 409 gets one fresh-snapshot retry; ambiguous transport/server failures are not retried. Confirmation reads back the target's encrypted label without bootstrapping another device space (#144).
