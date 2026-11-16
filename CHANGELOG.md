@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Features
+
+- Desktop **Not synced** row details now offer **Show local copy** when a fresh confined filesystem check finds the expected file or folder. Clicking rechecks the path and opens only its containing directory (or the folder itself), without syncing or launching the file. Missing, linked, unsafe and wrong-type paths disable the action; failures stay redacted and reload the overview. The older conflict-copy Show action uses the same guarded controller path, and session shutdown waits for admitted launch attempts.
+
 ## [0.25.0] - 2026-11-15
 
 ### Features

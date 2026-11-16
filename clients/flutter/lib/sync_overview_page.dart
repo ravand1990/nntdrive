@@ -23,6 +23,8 @@ class SyncOverviewPage extends StatefulWidget {
     required this.onSyncFolder,
     this.onGrantAccess,
     this.onResolveConflict,
+    this.canRevealLocal,
+    this.onRevealLocal,
     this.watch,
     this.isBusy,
   });
@@ -33,6 +35,10 @@ class SyncOverviewPage extends StatefulWidget {
 
   /// Resolves one conflict copy; when absent the view offers no conflict action.
   final ResolveConflictCallback? onResolveConflict;
+
+  /// Desktop only. Presence is checked when opening details and again on tap.
+  final Future<bool> Function(UnsyncedEntry)? canRevealLocal;
+  final Future<void> Function(UnsyncedEntry)? onRevealLocal;
 
   /// Notifies while sync state changes, so a finished round refreshes the list.
   final Listenable? watch;
@@ -349,6 +355,15 @@ class _SyncOverviewPageState extends State<SyncOverviewPage> {
   }
 
   Future<void> _showDetails(BuildContext context, UnsyncedEntry entry) async {
+    var canReveal = false;
+    if (widget.onRevealLocal != null && widget.canRevealLocal != null) {
+      try {
+        canReveal = await widget.canRevealLocal!(entry);
+      } catch (_) {
+        // Missing, removed or unreadable paths never enable a launch.
+      }
+      if (!context.mounted) return;
+    }
     final grant = widget.onGrantAccess;
     final canGrant =
         entry.status == UnsyncedStatus.blocked && grant != null;
@@ -381,6 +396,8 @@ class _SyncOverviewPageState extends State<SyncOverviewPage> {
                 Text('Last attempt: ${entry.lastAttempt}'),
               ],
               const SizedBox(height: 12),
+              if (widget.onRevealLocal != null && !canReveal)
+                const Text('No safe local copy is available. Refresh after syncing.'),
               Wrap(
                 spacing: 8,
                 children: [
@@ -413,6 +430,18 @@ class _SyncOverviewPageState extends State<SyncOverviewPage> {
                               _grantAccess(entry);
                             },
                       child: const Text('Grant access'),
+                    ),
+                  if (widget.onRevealLocal != null)
+                    OutlinedButton.icon(
+                      onPressed: !canReveal || _acting != null
+                          ? null
+                          : () {
+                              Navigator.pop(sheet);
+                              _runAction(_keyFor(entry),
+                                  () => widget.onRevealLocal!(entry));
+                            },
+                      icon: const Icon(Icons.folder_open),
+                      label: const Text('Show local copy'),
                     ),
                   TextButton(
                     onPressed: () => Navigator.pop(sheet),
