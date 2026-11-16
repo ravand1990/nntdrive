@@ -26,8 +26,9 @@ void main() {
       return info;
     }
 
-    Future<void> prompt(UpdateInfo _) async {
+    Future<bool> prompt(UpdateInfo _) async {
       prompts++;
+      return true;
     }
 
     for (var launch = 0; launch < 2; launch++) {
@@ -51,6 +52,7 @@ void main() {
       return version;
     }, prompt: (_) async {
       prompts++;
+      return true;
     });
     await runner.run(startup: true);
     version = UpdateInfo(
@@ -74,7 +76,7 @@ void main() {
           checks++;
           throw Exception('offline');
         },
-        prompt: (_) async {});
+        prompt: (_) async => true);
     await runner.run(startup: true);
     expect(checks, 0);
     final prefs = await SharedPreferences.getInstance();
@@ -94,7 +96,7 @@ void main() {
           checks++;
           return null;
         },
-        prompt: (_) async {});
+        prompt: (_) async => true);
     runner.start();
     runner.start();
     await tester.pump();
@@ -120,7 +122,7 @@ void main() {
           checks++;
           return null;
         },
-        prompt: (_) async {});
+        prompt: (_) async => true);
     final manual = runner.manual(() => done.future);
     await runner.run(startup: true);
     var duplicate = false;
@@ -143,7 +145,7 @@ void main() {
     var checks = 0;
     var prompts = 0;
     final response = Completer<UpdateInfo?>();
-    final dismissed = Completer<void>();
+    final dismissed = Completer<bool>();
     final runner = UpdateChecks(check: () {
       checks++;
       return response.future;
@@ -159,7 +161,7 @@ void main() {
     await runner.run(startup: true);
     expect(checks, 1);
     expect(prompts, 1);
-    dismissed.complete();
+    dismissed.complete(true);
     await pending;
     runner.dispose();
     await runner.run(startup: true);

@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Bug fixes
+
+- Automatic desktop and Android update prompts can appear over device naming. Failed feed reads and unavailable prompts no longer consume the daily check gate; confirming the device retries a pending check immediately. Later/skip, automatic-check opt-out and manual checks remain available without changing installation behavior (#147).
+
 ## [0.27.3] - 2026-11-16
 
 ### Bug fixes

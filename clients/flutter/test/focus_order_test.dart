@@ -101,7 +101,7 @@ Future<void> _pumpBrowser(WidgetTester tester) async {
           handle: handle,
           api: api),
       operations: operations,
-      updates: UpdateChecks(check: () async => null, prompt: (_) async {}),
+      updates: UpdateChecks(check: () async => null, prompt: (_) async => true),
       themeMode: ThemeMode.light,
       onTheme: (_) {},
       onSignOut: () {},

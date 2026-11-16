@@ -375,6 +375,22 @@ changed envelopes. Opening the page therefore always costs one full rebuild even
 when nothing changed.
 Content extraction is out of scope. See [client search](CLIENTS.md#account-wide-search-80-partial).
 
+## Updates during device naming (#147)
+
+Desktop and Android automatic checks share one lifecycle: startup checks can
+present a dismissible update dialog over onboarding, and a failed feed read or
+unavailable prompt remains pending for a post-confirmation retry. Confirmation
+publishes the file UI before retrying and does not await dialog dismissal. The
+daily timestamp is recorded only after a successful no-update result, explicit
+version skip/Android version-code deferral, or acknowledged prompt. Opt-out is
+rechecked after asynchronous feed/deferral work; disposed attempts cannot record
+success. Startup checks run on each launch, periodic checks remain daily, and
+manual checks share the selected platform's automatic lock. Installation paths
+are unchanged. Unit and real app-shell widget regressions cover Linux/Android
+platform selection, naming, Later and post-confirmation retry using injected
+feeds and real native sealed device labels. Installed desktop/Android update
+acceptance remains unverified.
+
 ## Private device naming (#140)
 
 After unlock, the client requires an explicit device-name confirmation before
