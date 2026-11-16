@@ -30,7 +30,10 @@ text status and a plain-language reason: **Cloud only**, **Local only**,
 **Blocked** (storage access, unreadable/missing/invalid local trees, or two names
 that differ only by letter case).
 Counts per status and per folder drive filter chips and a folder filter; the
-list is virtualised and refreshed explicitly. Filesystem root/scan failures
+list is virtualised and refreshed explicitly. At the global row limit, folder
+and status counts describe only retained rows, including storage-permission
+blocks; omitted rows set the truncation warning rather than inflating totals.
+Filesystem root/scan failures
 return diagnostic-free typed codes and one counted **Blocked** root row with
 access/drive guidance; no partial items, inferred deletions or remote snapshot
 are produced. An unreadable descendant blocks its whole tree, not an invented

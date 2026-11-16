@@ -207,6 +207,43 @@ void main() {
     expect(overview.counts[UnsyncedStatus.blocked], 1);
   });
 
+  test('storage access blocks count only retained rows at every limit', () async {
+    for (final limit in [0, 1, 2, 3, 4]) {
+      final inspected = <String>[];
+      final overview = await buildUnsyncedOverview(
+        folders: [
+          makeFolder('local', 'Local'),
+          makeFolder('denied-a', 'Denied A', storageAccessRequired: true),
+          makeFolder('filesystem', 'Filesystem'),
+          makeFolder('denied-b', 'Denied B', storageAccessRequired: true),
+        ],
+        inspect: (folder) async {
+          inspected.add(folder.id);
+          return folder.id == 'local'
+              ? plan([item('upload', 'local.txt')])
+              : {...plan([]), 'filesystem_blocked': 'permission_denied'};
+        },
+        maxEntries: limit,
+      );
+      expect(inspected, ['local', 'filesystem']);
+      expect(overview.total, limit);
+      expect(overview.truncated, limit < 4);
+      expect(overview.folders.fold<int>(0, (sum, f) => sum + f.total),
+          overview.total);
+      for (final folder in overview.folders) {
+        final listed = overview.filtered(folderId: folder.folderId);
+        expect(folder.total, listed.length,
+            reason: 'limit=$limit, ${folder.folderId}');
+        for (final status in UnsyncedStatus.values) {
+          expect(folder.counts[status] ?? 0,
+              listed.where((entry) => entry.status == status).length);
+        }
+      }
+      expect(overview.counts[UnsyncedStatus.blocked] ?? 0,
+          overview.filtered(status: UnsyncedStatus.blocked).length);
+    }
+  });
+
   test('raw filesystem-looking diagnostics stay generic notices', () async {
     for (final diagnostic in ['permission denied /private/root', 'journal failed', 'network offline']) {
       final overview = await buildUnsyncedOverview(

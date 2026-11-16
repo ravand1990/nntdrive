@@ -169,10 +169,11 @@ Future<UnsyncedOverview> buildUnsyncedOverview({
       );
       if (entries.length < maxEntries) {
         entries.add(blocked);
+        summaries.add(_summary(folder, [blocked]));
       } else {
         truncated = true;
+        summaries.add(_summary(folder, const []));
       }
-      summaries.add(_summary(folder, [blocked]));
       continue;
     }
 
