@@ -45,6 +45,8 @@ class AccountRootsService {
   AccountRootsService({
     required this.api,
     required this.sealName,
+    this.openName,
+    this.deviceName = 'Device',
     NodeIdFactory? newNodeId,
     this.maxBootstrapAttempts = 2,
   }) : newNodeId = newNodeId ?? _randomNodeId {
@@ -56,6 +58,8 @@ class AccountRootsService {
 
   final ApiClient api;
   final RootNameSealer sealName;
+  final String Function(String nodeId, String sealed)? openName;
+  final String deviceName;
   final NodeIdFactory newNodeId;
 
   /// A node-ID collision is a bounded retry, never an unbounded loop.
@@ -82,7 +86,7 @@ class AccountRootsService {
             .any((root) => root.kind == 'device' && root.deviceId == device.id);
     if (!deviceRootExists) {
       try {
-        await _bootstrap('device', device?.name ?? deviceRootFallbackName);
+        await _bootstrap('device', deviceName);
       } on ApiException catch (e) {
         if (e.status == 400 || e.status == 403) {
           warning = 'This sign-in cannot create a device space. '
@@ -92,7 +96,7 @@ class AccountRootsService {
         }
       }
     }
-    final roots = await api.listRoots();
+    final roots = await refresh();
     return AccountRootsResult(roots,
         warning: warning,
         deviceRootNodeId: _deviceRootNodeId(roots, device?.id));
@@ -113,7 +117,20 @@ class AccountRootsService {
   }
 
   /// Re-read the account's roots without creating anything.
-  Future<List<AccountRoot>> refresh() => api.listRoots();
+  Future<List<AccountRoot>> refresh() async {
+    final roots = await api.listRoots();
+    // Labels are authenticated locally. Never consume devices.name or the
+    // deprecated plaintext roots API display name.
+    if (openName == null) return roots;
+    return roots.map((root) => AccountRoot(
+      rootId: root.rootId, kind: root.kind, nodeId: root.nodeId,
+      nameEnc: root.nameEnc, createdAt: root.createdAt, deviceId: root.deviceId,
+      deviceName: openName!(root.nodeId, root.nameEnc),
+      devicePlatform: root.devicePlatform,
+      deviceLastSeenAt: root.deviceLastSeenAt,
+      deviceRevoked: root.deviceRevoked, stale: root.stale,
+    )).toList();
+  }
 
   Future<void> _bootstrap(String kind, String name) async {
     ApiException? collision;
@@ -141,7 +158,7 @@ class AccountRootsService {
         if (device.current) {
           return (
             id: device.id,
-            name: device.name.isEmpty ? deviceRootFallbackName : device.name,
+            name: deviceRootFallbackName,
           );
         }
       }

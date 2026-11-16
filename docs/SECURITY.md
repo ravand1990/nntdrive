@@ -33,6 +33,37 @@
 | Provider retention loss | Health checks, repair, proactive refresh with read-back verification, honest unrecoverable status. | Erasure coding cannot recover data when more than `m` shards in a stripe are gone. Correlated batch loss can exceed this. |
 | Article content analysis | Random nonces; no deterministic encryption; opaque subjects; per-account dedupe only. | Sizes, timing, article counts and provider logs leak metadata. |
 
+## Private device labels (#140)
+
+The current client sends only `Device` in authentication, never its OS-derived
+suggestion or user-confirmed label. After local unlock, an editable Android device
+name/model, Windows computer name or meaningful desktop hostname (with a platform
+fallback) must be confirmed before file-browser entry, uploads or scheduled sync.
+The label uses the existing authenticated device-root `files.name_enc`, bound to
+its node ID; device/space views decrypt it locally in RAM. There is no second
+plaintext label setting or label hash. Only a local confirmation boolean is
+persisted for the server/account/device/root identity; a new device ID on sign-in
+requires confirmation again. This is client policy, not server-enforced consent.
+
+Migration 0008 replaces live `devices.name` values with `Device` and installs a
+normalizing insert/update trigger so legacy backend writers cannot repopulate
+that column with private names. The compatibility column and response fields
+remain; current auth ignores legacy name input and listings return placeholders.
+Existing sealed root labels are neither decrypted nor rewritten by migration.
+Older clients may still transmit names to older servers or request-capture logs;
+normalizing database writes does not prevent that disclosure. Historical dumps,
+physical backups, WAL and old database pages may retain former plaintext names:
+this is not secure erasure. Protect and expire those copies under the operator's
+backup/retention policy.
+
+Root-label rename changes no file location, node identity or content history;
+Global remains immutable and legacy folders require an explicit move. Decrypted
+labels are session-memory data, not guaranteed zeroized Dart strings. Local
+subscription directory paths may include a label and remain unchanged on rename;
+this does not encrypt local filesystem names or protect a compromised client.
+Device IDs, platforms, activity times and namespace relationships remain visible
+to the backend.
+
 ## Live event-stream authorization
 
 `GET /api/v1/events/stream` revalidates the original token ID, SHA-256 digest,

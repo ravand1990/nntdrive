@@ -29,7 +29,7 @@ success, legacy fallback or automatic retry for either protocol.
 
 | Method | Path | Body |
 |---|---|---|
-| POST | `/auth/register` | `{account_id, email, verifier, keyfile, recovery_kit?, device:{id,name,platform,public_key}}` |
+| POST | `/auth/register` | `{account_id, email, verifier, keyfile, recovery_kit?, device:{id,platform,public_key}}` |
 | POST | `/auth/login` | `{email, verifier, device?}` → `{token, keyfile, account_id, ...}` |
 | GET | `/auth/lookup?email=` | resolve account id so a new device can derive the account-bound verifier (rate-limited) |
 | GET | `/setup/status` | `{setup_required, registration_allowed}`; used for first-run setup |
@@ -43,6 +43,14 @@ success, legacy fallback or automatic retry for either protocol.
 `nntdrive_crypto::derive_auth_verifier(password, account_id)`. Passwords are
 never sent. The first registered account becomes administrator if no account
 exists; afterwards registration is disabled unless `NNTDRIVE_ALLOW_REGISTRATION=1`.
+
+Legacy `device.name` input is accepted but discarded, not stored or echoed.
+`/me` and `/devices` return `Device` in compatibility name fields. Migration 0008
+retains `devices.name`, scrubs its live values and normalizes inserts/updates to
+`Device`, including old-backend writes. Private display labels are only the
+existing sealed device-root `name_enc`; no new ciphertext format is introduced.
+Older clients can still transmit plaintext names to an older backend; historical
+backups and WAL are not scrubbed by this migration.
 
 ## Fixed account roots
 
@@ -72,15 +80,28 @@ partial unique indexes.
 
 Listed roots include `root_id`, `kind`, `node_id`, `name_enc`, `created_at`,
 `device_id`, `device_name`, `device_platform`, `device_last_seen_at`,
-`device_revoked` and `stale`. A device root stays listed after its device goes
+`device_revoked` and `stale`. `device_name` is a deprecated placeholder (`Device`
+for device roots, null for Global), never the private display label; clients
+open `name_enc` locally. A device root stays listed after its device goes
 offline or is revoked; `stale` is a coarse marker computed from a revoked device
 or a `last_seen_at` older than 24 hours, which only advances on login/enrollment
 (not per request), and is informative only.
 
-Fixed roots cannot be renamed, moved or deleted through the normal file APIs:
-`POST /files/{id}/rename`, `POST /files/{id}/move` and
-`PATCH /files/{id}` with `name_enc` or `deleted` return `409`. Favourite changes
-remain allowed. Copying into a root is normal folder behaviour.
+Device roots allow `POST /files/{id}/rename` through the existing guarded
+ciphertext/sibling-snapshot protocol. It changes only the sealed label and
+namespace revision/event, not the node ID, parent, content versions or subtree.
+Global remains unrenameable (`409`). All fixed roots still reject moves,
+deletes and legacy `PATCH /files/{id}` name/deleted changes with `409`;
+favourite changes remain allowed. Copying into a root is normal folder behaviour.
+
+The current Flutter client requires user confirmation after unlock before file
+browser entry, uploads or scheduled sync. This is a client admission policy, not
+a new server confirmation flag: only an identity-scoped local boolean is stored
+(server/account/device/root), with OS-derived editable suggestions kept local.
+A new authenticated device ID requires confirmation again. New uploads/folders
+from My files target the current device root; Global requires explicitly opening
+it. Renaming a label never moves existing files or local subscription paths;
+legacy folders move only through an explicit guarded move.
 
 ## Files
 

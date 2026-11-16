@@ -102,16 +102,58 @@ void main() {
     expect(nativeCalls, 1);
   });
 
-  test('without a device space the folder stays at the account root', () async {
+  test('without a device space adding a folder fails closed', () async {
     final sync = controllerWith();
     await sync.load();
 
-    expect(await sync.addFolder('${root.path}/notes'), isTrue);
+    expect(await sync.addFolder('${root.path}/notes'), isFalse);
 
     expect(sync.deviceRootNodeId, isNull);
-    expect(api.created.single.parentId, isNull);
-    expect(sync.folders, hasLength(1));
-    expect(sync.lastStatus, 'Folder added and synchronized.');
+    expect(api.created, isEmpty);
+    expect(sync.folders, isEmpty);
+    expect(nativeCalls, 0);
+    expect(sync.lastStatus, contains('Confirm this device name'));
+  });
+
+  test('unconfirmed device cannot add folders or start manual or auto sync', () async {
+    final sync = controllerWith(deviceRootNodeId: 'device-root');
+    sync.deviceNameConfirmed = false;
+    await sync.load();
+    final folder = SyncFolderConfig(id: 'existing', name: 'Existing',
+      localPath: '${root.path}/notes', remoteRootId: 'existing-remote');
+    sync.folders.add(folder);
+    sync.start();
+    expect(await sync.addFolder('${root.path}/other'), isFalse);
+    expect(await sync.syncFolder(folder), isNull);
+    await sync.syncAll();
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    expect(nativeCalls, 0);
+    expect(api.created, isEmpty);
+    await sync.stopAndDrain();
+  });
+
+  test('pause during onboarding preserves existing configuration before load', () async {
+    final existing = jsonEncode([SyncFolderConfig(id: 'stable-id', name: 'Existing',
+      localPath: '${root.path}/notes', remoteRootId: 'existing-remote',
+      excluded: ['keep-excluded']).toJson()]);
+    SharedPreferences.setMockInitialValues({'syncFolders': existing,
+      'spacesNotAutoSynced': ['global-opt-out'], 'syncPaused': false});
+    final sync = controllerWith(deviceRootNodeId: 'device-root');
+    sync.deviceNameConfirmed = false;
+    await sync.setPaused(true);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('syncFolders'), existing);
+    expect(prefs.getStringList('spacesNotAutoSynced'), ['global-opt-out']);
+    expect(prefs.getBool('syncPaused'), false);
+    await sync.load();
+    expect(sync.folders.single.id, 'stable-id');
+    expect(sync.folders.single.excluded, ['keep-excluded']);
+    await sync.setPaused(true);
+    expect(prefs.getBool('syncPaused'), false);
+    sync.deviceNameConfirmed = true;
+    await sync.setPaused(true);
+    expect(prefs.getBool('syncPaused'), true);
+    expect(prefs.getStringList('spacesNotAutoSynced'), ['global-opt-out']);
   });
 
   test('a refused remote create admits neither a folder nor a sync', () async {

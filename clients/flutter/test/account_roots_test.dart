@@ -109,7 +109,8 @@ void main() {
     expect(api.bootstraps[0].nodeId, 'id-1');
     expect(openSealed(api.bootstraps[0].nameEnc), 'Global|id-1');
     expect(api.bootstraps[1].nodeId, 'id-2');
-    expect(openSealed(api.bootstraps[1].nameEnc), 'Workstation|id-2');
+    // Bootstrap never reuses the legacy plaintext API device name.
+    expect(openSealed(api.bootstraps[1].nameEnc), 'Device|id-2');
     // New sync folders are created under exactly this device's own space.
     expect(result.deviceRootNodeId, 'id-2');
   });
@@ -220,7 +221,7 @@ void main() {
     final result = await service().ensure();
 
     expect(result.roots, hasLength(2));
-    expect(openSealed(api.bootstraps[1].nameEnc), 'This device|id-2');
+    expect(openSealed(api.bootstraps[1].nameEnc), 'Device|id-2');
     // A device space exists, but this sign-in names no current device, so the
     // client must not adopt another device's space as its destination.
     expect(result.deviceRootNodeId, isNull);
