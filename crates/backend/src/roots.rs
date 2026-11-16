@@ -148,7 +148,8 @@ pub async fn bootstrap_root(
 pub async fn list_roots(State(state): State<AppState>, auth: Auth) -> ApiResult<impl IntoResponse> {
     let rows = sqlx::query(
         "SELECT r.id, r.kind, r.node_id, f.name_enc, f.created_at, r.device_id,
-                d.name AS device_name, d.platform AS device_platform,
+                CASE WHEN d.id IS NOT NULL THEN 'Device'::text END AS device_name,
+                d.platform AS device_platform,
                 d.last_seen_at AS device_last_seen_at, d.revoked_at AS device_revoked_at
          FROM account_roots r
          JOIN files f ON f.account_id = r.account_id AND f.id = r.node_id AND f.deleted = FALSE

@@ -116,6 +116,7 @@ class SyncController extends ChangeNotifier {
     required this.token,
     required this.handle,
     required this.api,
+    this.deviceNameConfirmed = true,
     this.storageAccess = const StorageAccess(),
     this.syncRunner = _runNativeSync,
     this.inspectRunner = _runNativeInspect,
@@ -123,7 +124,8 @@ class SyncController extends ChangeNotifier {
     this.pendingMoveFlusher = flushPendingMoves,
     RootNameSealer? nameSealer,
     AccountRootsLoader? rootsLoader,
-  })  : pendingMoves = pendingMoves ??
+  })  : _requireDeviceRoot = rootsLoader == null,
+        pendingMoves = pendingMoves ??
             PendingMoveQueue(store: const PreferencesPendingMoveStore()),
         nameSealer = nameSealer ??
             ((nodeId, name) =>
@@ -133,12 +135,17 @@ class SyncController extends ChangeNotifier {
                   api: api,
                   sealName: (nodeId, name) =>
                       NativeBridge.instance.sealName(handle, nodeId, name),
+                  openName: (nodeId, sealed) =>
+                      NativeBridge.instance.openName(handle, nodeId, sealed),
                 ).ensure());
 
   final String server;
   final String token;
   final int handle;
   final ApiClient api;
+  /// Production starts closed; injected legacy controller fixtures can opt in.
+  bool deviceNameConfirmed;
+  final bool _requireDeviceRoot;
   final StorageAccess storageAccess;
   final SyncRunner syncRunner;
   final SyncInspector inspectRunner;
@@ -228,8 +235,8 @@ class SyncController extends ChangeNotifier {
 
   /// Re-read (and, on first unlock, bootstrap) the fixed account spaces.
   ///
-  /// Failures stay in [rootsError] and never block folder sync: the spaces are
-  /// an addition to the existing per-folder setup.
+  /// Failures stay in [rootsError] and block uploads rather than falling back
+  /// to the legacy account-root destination.
   Future<void> refreshAccountRoots() {
     if (_stopped) return Future.value();
     return _operations.run(0, _refreshAccountRoots);
@@ -242,11 +249,18 @@ class SyncController extends ChangeNotifier {
     try {
       final result = await rootsLoader();
       if (_stopped) return;
+      if (_requireDeviceRoot && result.deviceRootNodeId == null) {
+        throw StateError('Device space unavailable');
+      }
       accountRoots
         ..clear()
         ..addAll(result.roots);
       deviceRootNodeId = result.deviceRootNodeId;
       rootsWarning = result.warning;
+      for (final root in accountRoots) {
+        final folder = folderForSpace(root.nodeId);
+        if (folder != null) folder.name = accountRootLabel(root);
+      }
       try {
         await _autoSubscribeGlobal();
       } catch (_) {
@@ -255,6 +269,7 @@ class SyncController extends ChangeNotifier {
       await _refreshLegacyFolders();
     } catch (e) {
       rootsError = _rootsErrorText(e);
+      deviceRootNodeId = null;
     } finally {
       rootsLoading = false;
       if (!_stopped) notifyListeners();
@@ -460,7 +475,7 @@ class SyncController extends ChangeNotifier {
   /// Every client mirrors Global without the user adding a folder. A user who
   /// stopped it stays opted out; nothing is created when roots are unavailable.
   Future<void> _autoSubscribeGlobal() async {
-    if (_stopped) return;
+    if (_stopped || !deviceNameConfirmed) return;
     AccountRoot? global;
     for (final root in accountRoots) {
       if (root.isGlobal) {
@@ -475,7 +490,7 @@ class SyncController extends ChangeNotifier {
   }
 
   Future<bool> _subscribeSpace(AccountRoot root) async {
-    if (_stopped) return false;
+    if (_stopped || !deviceNameConfirmed) return false;
     if (folderForSpace(root.nodeId) != null) return true;
     final label = accountRootLabel(root);
     final Directory spaces;
@@ -512,6 +527,7 @@ class SyncController extends ChangeNotifier {
       notifyListeners();
       return false;
     }
+    if (_stopped || !deviceNameConfirmed) return false;
     final config = SyncFolderConfig(
       id: const Uuid().v4(),
       name: label,
@@ -539,14 +555,21 @@ class SyncController extends ChangeNotifier {
   Future<void> _save() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(
-        _prefsKey, jsonEncode(folders.map((f) => f.toJson()).toList()));
+        _prefsKey, jsonEncode(folders.map((f) {
+          final row = f.toJson();
+          final root = accountRootForNodeId(f.remoteRootId, accountRoots);
+          // A decrypted root label is refreshed in RAM, never a second
+          // plaintext name setting. Existing local folder paths stay unchanged.
+          if (root != null && !root.isGlobal) row['name'] = 'Device space';
+          return row;
+        }).toList()));
     await prefs.setBool(_pausedKey, paused);
     await prefs.setStringList(_spaceOptOutKey, _spaceOptOut.toList());
     notifyListeners();
   }
 
   void start() {
-    if (_started || _stopped) return;
+    if (_started || _stopped || !deviceNameConfirmed) return;
     _started = true;
     _timer = Timer.periodic(autoSyncInterval, (_) {
       if (!paused) syncAll(silent: true);
@@ -563,6 +586,11 @@ class SyncController extends ChangeNotifier {
   }
 
   Future<bool> _addFolder(String localPath) async {
+    if (!deviceNameConfirmed || deviceRootNodeId == null || rootsError != null) {
+      lastStatus = 'Confirm this device name and initialize its space before adding sync folders.';
+      notifyListeners();
+      return false;
+    }
     final path = p.normalize(localPath);
     final overlaps = folders.any((f) =>
         p.equals(f.localPath, path) ||
@@ -588,8 +616,9 @@ class SyncController extends ChangeNotifier {
     final name = p.basename(path).isEmpty ? 'Sync folder' : p.basename(path);
     // Place the remote folder inside this device's fixed space. Two devices
     // adding the same local name then get separate parents instead of one
-    // account-root path; without a device space fall back to the account root.
+    // account-root path. A missing device space fails closed above.
     final parentId = deviceRootNodeId;
+    if (_stopped || !deviceNameConfirmed || parentId == null || rootsError != null) return false;
     try {
       final sealed = nameSealer(remoteRootId, name);
       await api.createFile(
@@ -615,8 +644,6 @@ class SyncController extends ChangeNotifier {
     if (report == null || config.hasErrors) {
       lastStatus =
           'Folder added, but sync needs attention. Check its error and retry.';
-    } else if (parentId == null) {
-      lastStatus = 'Folder added and synchronized.';
     } else {
       lastStatus = 'Folder added inside this device space and synchronized.';
     }
@@ -734,7 +761,9 @@ class SyncController extends ChangeNotifier {
       folders.fold(0, (sum, folder) => sum + folder.conflictFiles.length);
 
   Future<void> setPaused(bool value) {
-    if (_stopped) return Future.value();
+    // Onboarding deliberately delays load. Saving the empty controller here
+    // would destroy existing folder identities, exclusions and space opt-outs.
+    if (_stopped || !_loaded || !deviceNameConfirmed) return Future.value();
     return _operations.run(0, () async {
       paused = value;
       await _save();
@@ -746,7 +775,7 @@ class SyncController extends ChangeNotifier {
       : _operations.run(0, () => _syncAll(silent: silent));
 
   Future<void> _syncAll({bool silent = false}) async {
-    if (syncing || paused) return;
+    if (syncing || paused || !deviceNameConfirmed || rootsError != null) return;
     final queuedMoves = await _applyPendingMoves(silent: silent);
     if (folders.isEmpty) {
       if (!silent && queuedMoves.applied == 0) {
@@ -794,7 +823,7 @@ class SyncController extends ChangeNotifier {
 
   Future<Map<String, dynamic>?> _syncFolder(SyncFolderConfig folder,
       {bool silent = false}) async {
-    if (paused ||
+    if (!deviceNameConfirmed || rootsError != null || paused ||
         !folder.enabled ||
         !folders.contains(folder) ||
         _running.contains(folder.id)) {
@@ -812,13 +841,14 @@ class SyncController extends ChangeNotifier {
       await storageAccess.check(folder.localPath);
       folder.storageAccessRequired = false;
       final journal = await _journalPath(folder);
+      if (_stopped || !deviceNameConfirmed || rootsError != null) return null;
       final report = await syncRunner(handle, {
         'baseUrl': server,
         'token': token,
         'remoteRootId': folder.remoteRootId,
         'localPath': folder.localPath,
         'journalPath': journal,
-        'deviceName': Platform.localHostname,
+        'deviceName': 'Device',
         'excluded': folder.excluded,
       }, (event) {
         folder.progress = event;
@@ -884,7 +914,7 @@ class SyncController extends ChangeNotifier {
       'remoteRootId': folder.remoteRootId,
       'localPath': folder.localPath,
       'journalPath': await _journalPath(folder),
-      'deviceName': Platform.localHostname,
+      'deviceName': 'Device',
       'excluded': folder.excluded,
     });
   }
@@ -973,6 +1003,9 @@ class SyncController extends ChangeNotifier {
 
   Future<void> _resolveConflict(
       SyncFolderConfig folder, String copy, String choice) async {
+    if (!deviceNameConfirmed || rootsError != null) {
+      throw StateError('Confirm the device name and initialize its space first');
+    }
     if (_running.contains(folder.id) || syncing) {
       throw StateError('Wait for sync to finish');
     }
@@ -990,7 +1023,7 @@ class SyncController extends ChangeNotifier {
         'remoteRootId': folder.remoteRootId,
         'localPath': folder.localPath,
         'journalPath': p.join(support.path, 'sync', '${folder.id}.sqlite'),
-        'deviceName': Platform.localHostname,
+        'deviceName': 'Device',
         'excluded': folder.excluded,
         'original': original,
         'copy': copy,

@@ -296,8 +296,8 @@ pub(crate) async fn lock_namespace(
     Ok(())
 }
 
-/// Fixed account roots are structural: no client may rename, move or delete
-/// them through the normal file APIs. Favourite changes stay allowed.
+/// Fixed account roots cannot move, be deleted or use legacy rename APIs.
+/// Only guarded rename_file permits device-root labels; favourites stay allowed.
 async fn ensure_not_fixed_root(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     account_id: Uuid,
@@ -368,7 +368,20 @@ pub async fn rename_file(
     .fetch_optional(&mut *tx)
     .await?;
     let parent = parent.ok_or(ApiError::NotFound)?;
-    ensure_not_fixed_root(&mut tx, auth.account_id, id).await?;
+    // Only this guarded endpoint may change a device root's sealed label.
+    // Global (and any future structural root kind) stays immutable; move,
+    // delete and legacy patch retain the blanket ensure_not_fixed_root gate.
+    let root_kind: Option<String> =
+        sqlx::query_scalar("SELECT kind FROM account_roots WHERE account_id = $1 AND node_id = $2")
+            .bind(auth.account_id)
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    if root_kind.as_deref().is_some_and(|kind| kind != "device") {
+        return Err(ApiError::Conflict(
+            "fixed account root cannot be renamed, moved or deleted".into(),
+        ));
+    }
     if parent != body.parent_id {
         return Err(ApiError::Conflict(
             "folder changed; refresh and retry".into(),

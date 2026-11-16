@@ -141,7 +141,8 @@ impl FromRequestParts<AppState> for AdminUser {
 pub struct DevicePayload {
     #[serde(default)]
     pub id: Option<Uuid>,
-    pub name: String,
+    // Legacy `name` is deliberately an ignored unknown field. Never retain or
+    // persist it: the only display label is the device root's sealed name_enc.
     #[serde(default)]
     pub platform: Option<String>,
     pub public_key: String,
@@ -222,7 +223,6 @@ pub async fn register(
         &mut tx,
         body.account_id,
         device_id,
-        &body.device.name,
         body.device.platform.as_deref().unwrap_or("unknown"),
         &body.device.public_key,
     )
@@ -287,7 +287,6 @@ pub async fn login(
                 &mut tx,
                 account_id,
                 id,
-                &device.name,
                 device.platform.as_deref().unwrap_or("unknown"),
                 &device.public_key,
             )
@@ -414,7 +413,6 @@ async fn upsert_device_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     account_id: Uuid,
     device_id: Uuid,
-    name: &str,
     platform: &str,
     public_key: &str,
 ) -> ApiResult<()> {
@@ -427,11 +425,11 @@ async fn upsert_device_tx(
         Some((owner, _)) if owner != account_id => Err(ApiError::Unauthorized),
         Some(_) => {
             sqlx::query(
-                "UPDATE devices SET last_seen_at = now(), name = $2, platform = $3 WHERE id = $1",
+                "UPDATE devices SET last_seen_at = now(), name = 'Device', platform = $2 WHERE id = $1 AND account_id = $3",
             )
             .bind(device_id)
-            .bind(name)
             .bind(platform)
+            .bind(account_id)
             .execute(&mut **tx)
             .await?;
             Ok(())
@@ -439,11 +437,10 @@ async fn upsert_device_tx(
         None => {
             sqlx::query(
                 "INSERT INTO devices (id, account_id, name, public_key, platform, last_seen_at)
-                 VALUES ($1, $2, $3, $4, $5, now())",
+                 VALUES ($1, $2, 'Device', $3, $4, now())",
             )
             .bind(device_id)
             .bind(account_id)
-            .bind(name)
             .bind(public_key)
             .bind(platform)
             .execute(&mut **tx)
@@ -510,7 +507,7 @@ pub async fn me(State(state): State<AppState>, auth: Auth) -> ApiResult<impl Int
     .await?;
     let (_, used) = state.store.count_storage(auth.account_id).await?;
     let devices: Vec<DeviceListRow> = sqlx::query_as(
-        "SELECT id, name, platform, last_seen_at, revoked_at FROM devices WHERE account_id = $1 ORDER BY created_at",
+        "SELECT id, 'Device'::text, platform, last_seen_at, revoked_at FROM devices WHERE account_id = $1 ORDER BY created_at",
     )
     .bind(auth.account_id)
     .fetch_all(&state.pool)
@@ -536,7 +533,7 @@ pub async fn list_devices(
     auth: Auth,
 ) -> ApiResult<impl IntoResponse> {
     let devices: Vec<DeviceListFullRow> = sqlx::query_as(
-        "SELECT id, name, platform, created_at, last_seen_at, revoked_at
+        "SELECT id, 'Device'::text, platform, created_at, last_seen_at, revoked_at
              FROM devices WHERE account_id = $1 ORDER BY created_at",
     )
     .bind(auth.account_id)

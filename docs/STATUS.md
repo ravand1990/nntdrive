@@ -362,6 +362,37 @@ changed envelopes. Opening the page therefore always costs one full rebuild even
 when nothing changed.
 Content extraction is out of scope. See [client search](CLIENTS.md#account-wide-search-80-partial).
 
+## Private device naming (#140)
+
+After unlock, the client requires an explicit device-name confirmation before
+opening the file browser or starting uploads and scheduled sync. Android suggests
+its configured device name or model; Windows uses its computer name/hostname;
+Linux and other desktops use a meaningful hostname, otherwise a platform-labelled
+fallback. The suggestion is editable and validated as a printable portable name
+of at most 64 Unicode code points. It is not sent in authentication: the display
+label lives in the existing client-sealed device-root `files.name_enc` and is
+opened locally for the browser, spaces and device list.
+
+Only a confirmation boolean is persisted, scoped to server/account/device/root
+identity, not a plaintext label or label hash. Existing installations confirm on
+first unlock after upgrade. Reopening the same confirmed identity does not prompt
+again; signing in with a newly generated device ID does. Failure to initialize or
+confirm the device space blocks entry rather than silently using the account root.
+New uploads/folders from My files default to this device's space; opening Global
+explicitly selects Global as the destination. Added sync folders also require the
+device space. Renaming changes the encrypted label only, preserving node IDs,
+content versions, sync relationships and existing local paths; legacy folders
+still require the separate explicit move action below.
+
+Migration 0008 scrubs live `devices.name` values to `Device` and installs a trigger
+that normalizes legacy writers to that placeholder. Compatibility columns/API
+fields remain, existing sealed root labels are preserved, and clients decrypt
+them in RAM. Local subscription directory paths can contain a device label and
+are not renamed when the label changes. Historical backups/WAL can retain old
+plaintext names; old clients can still send names to older servers. Installed
+platform/default-name and two-device acceptance are not established by this
+documentation update; no new full-suite verification is claimed here.
+
 ## Account roots (#95 partial)
 
 The backend can now hold one fixed **Global** root per account and one root per
@@ -371,10 +402,12 @@ generated, because the sealed name is bound to that ID and a server-chosen one
 would be unopenable. The second caller — another client, a retry or a reinstall —
 receives the existing node ID and envelope instead of a duplicate. A device root
 requires a device-bound token and is keyed to the registered device ID. `GET
-/roots` lists Global first, then every device root with its device name,
+/roots` lists Global first, then every device root with its sealed label,
 platform, last-seen time and a `stale` flag; a root stays listed after its device
-goes offline or is revoked. Fixed roots refuse rename, move and delete with
-`409`; favourite changes still work.
+goes offline or is revoked. The legacy `device_name` field is only `Device`;
+display labels are decrypted locally. Device roots allow guarded encrypted label
+rename; Global rename and all fixed-root move/delete or legacy name patches
+remain forbidden with `409`. Favourite changes still work.
 
 Both kinds are ordinary root-level folder nodes, so the existing browser and file
 APIs already list and browse them. A signed-in client now **bootstraps them on
@@ -385,9 +418,9 @@ this device or another device, and shows offline or revoked devices instead of
 hiding them; the spaces remain browsable folders in the library. A sync folder
 added on a device is now created **inside that device's own space** rather than
 at the account root, so two devices adding a folder with the same name no longer
-share one remote path; when the account has no usable device space (a token that
-cannot create one, or no current-device identity) the folder stays at the account
-root and the app says so. The **Global** space is now subscribed automatically on
+share one remote path. If the device space is unavailable, adding a sync folder
+fails closed instead of falling back to the account root. After device-name
+confirmation, the **Global** space is subscribed automatically on
 every client: it is mirrored into `<documents>/NNTDrive/Global`, so a new device
 receives the account-wide space without the user adding a folder, and the space
 is browsable as an ordinary folder in the library. Any other space can be

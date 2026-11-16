@@ -13,6 +13,8 @@ import 'package:uuid/uuid.dart';
 
 import 'api.dart';
 import 'account_roots.dart';
+import 'device_onboarding.dart';
+import 'device_name.dart';
 import 'app_layout.dart';
 import 'app_theme.dart';
 import 'space_notice.dart';
@@ -106,15 +108,19 @@ class Session {
 }
 
 class NntDriveApp extends StatefulWidget {
-  const NntDriveApp({super.key, required this.prefs, this.instance});
+  const NntDriveApp({super.key, required this.prefs, this.instance, this.apiFactory});
   final SharedPreferences prefs;
   final DesktopInstance? instance;
+  /// Transport seam for exercising unlock/onboarding/session lifecycle together.
+  final ApiClient Function(String server, String token)? apiFactory;
 
   @override
   State<NntDriveApp> createState() => _NntDriveAppState();
 }
 
 class _NntDriveAppState extends State<NntDriveApp> {
+  ApiClient _authenticatedApi(String server, String token) =>
+      widget.apiFactory?.call(server, token) ?? ApiClient(baseUrl: server, token: token);
   late ThemeMode _themeMode;
   late String _server;
   String? _token;
@@ -122,6 +128,8 @@ class _NntDriveAppState extends State<NntDriveApp> {
   String? _accountId;
   String? _email;
   Session? _session;
+  bool _deviceReady = false;
+  bool _renamingDevice = false;
   SyncController? _sync;
   DesktopLifecycle? _desktop;
   String? _desktopError;
@@ -208,7 +216,10 @@ class _NntDriveAppState extends State<NntDriveApp> {
       },
       togglePause: () async {
         final sync = _sync;
-        if (!_ending && sync != null) await sync.setPaused(!sync.paused);
+        if (!_ending && _deviceReady && sync != null && sync.loaded &&
+            sync.deviceNameConfirmed) {
+          await sync.setPaused(!sync.paused);
+        }
       },
       onError: (message) {
         if (mounted) setState(() => _desktopError = message);
@@ -229,11 +240,13 @@ class _NntDriveAppState extends State<NntDriveApp> {
         : sync.folders.any((f) => f.hasErrors) ? 'Sync needs attention — open NNTDrive'
         : sync.conflictCount > 0 ? 'Sync conflicts — open NNTDrive'
         : sync.folders.isEmpty ? 'No sync folders selected' : 'Sync scheduled';
-    final state = '$status|${sync != null && !_ending}|${sync?.paused ?? true}';
+    final canPause = sync != null && sync.loaded && sync.deviceNameConfirmed &&
+        _deviceReady && !_ending;
+    final state = '$status|$canPause|${sync?.paused ?? true}';
     if (_trayState == state) return; // Byte-progress events do not rebuild menus.
     _trayState = state;
     unawaited(_desktop?.update(status,
-        canPause: sync != null && !_ending, paused: sync?.paused ?? true));
+        canPause: canPause, paused: sync?.paused ?? true));
   }
 
   Future<void> _completeAuth({
@@ -273,11 +286,12 @@ class _NntDriveAppState extends State<NntDriveApp> {
         server: server,
         token: token,
         handle: unlocked['handle'] as int,
-        api: ApiClient(baseUrl: server, token: token),
+        api: _authenticatedApi(server, token),
+        deviceNameConfirmed: false,
       );
       _sync = sync;
       sync.addListener(_updateTray);
-      unawaited(sync.load().then((_) => sync.start()));
+
       setState(() {
         _server = server;
         _token = token;
@@ -293,6 +307,8 @@ class _NntDriveAppState extends State<NntDriveApp> {
           operations: _fileOperations,
         );
       });
+      _deviceReady = false;
+      _renamingDevice = false;
       adopted = true;
       _updateTray();
     } finally {
@@ -303,6 +319,35 @@ class _NntDriveAppState extends State<NntDriveApp> {
   void _signOut() => unawaited(_endSession(signOut: true).catchError((Object _) {
     // The failed drain stays locked down; the overlay exposes explicit retry.
   }));
+
+  Future<void> _deviceConfirmed() async {
+    final sync = _sync;
+    if (_ending || !mounted || sync == null) return;
+    sync.deviceNameConfirmed = true;
+    try {
+      if (sync.loaded) {
+        await sync.refreshAccountRoots();
+      } else {
+        await sync.load();
+      }
+    } catch (_) {
+      sync.deviceNameConfirmed = false;
+      rethrow;
+    }
+    if (_ending || !mounted) return;
+    if (sync.rootsError != null || sync.deviceRootNodeId == null) {
+      sync.deviceNameConfirmed = false;
+      throw StateError('Device space unavailable');
+    }
+    sync.start();
+    setState(() { _deviceReady = true; _renamingDevice = false; });
+    _updateTray();
+  }
+
+  void _renameDevice() {
+    _sync?.deviceNameConfirmed = false;
+    setState(() { _deviceReady = false; _renamingDevice = true; });
+  }
 
   Future<void> _endSession({required bool signOut}) =>
       _endFuture ??= _finishSession(signOut: signOut).catchError((Object error, StackTrace stack) {
@@ -362,16 +407,27 @@ class _NntDriveAppState extends State<NntDriveApp> {
   @override
   Widget build(BuildContext context) {
     Widget home;
-    if (_session != null) {
+    if (_session != null && !_deviceReady) {
+      final session = _session!;
+      home = DeviceOnboardingPage(
+        key: ValueKey('device:${session.handle}:$_renamingDevice'),
+        naming: DeviceNaming(api: _authenticatedApi(session.server, session.token),
+          handle: session.handle, server: session.server, accountId: session.accountId),
+        operations: _fileOperations, onReady: _deviceConfirmed,
+        onSignOut: _signOut, force: _renamingDevice,
+      );
+    } else if (_session != null) {
       home = FilesPage(
         key: ValueKey('${_session!.accountId}:${_session!.handle}'),
         session: _session!,
         sync: _sync!,
         operations: _fileOperations,
         updates: _updates,
+        api: widget.apiFactory?.call(_session!.server, _session!.token),
         themeMode: _themeMode,
         onTheme: _setTheme,
         onSignOut: _signOut,
+        onRenameDevice: _renameDevice,
       );
     } else if (_token != null && _keyfile != null && _accountId != null && _email != null) {
       home = UnlockPage(
@@ -518,7 +574,7 @@ class _LoginPageState extends State<LoginPage> {
           recoveryKit: account['recovery_kit'] as Map<String, dynamic>?,
           device: {
             'id': _uuid.v4(),
-            'name': Platform.localHostname,
+            'name': 'Device',
             'platform': Platform.operatingSystem,
             'public_key': device['public_key'],
           },
@@ -566,7 +622,7 @@ class _LoginPageState extends State<LoginPage> {
           verifier,
           device: {
             'id': _uuid.v4(),
-            'name': Platform.localHostname,
+            'name': 'Device',
             'platform': Platform.operatingSystem,
             'public_key': bridge.deviceIdentity()['public_key'],
           },
@@ -964,6 +1020,7 @@ class FilesPage extends StatefulWidget {
     required this.onTheme,
     required this.onSignOut,
     this.api,
+    this.onRenameDevice,
   });
   final Session session;
   final SyncController sync;
@@ -976,6 +1033,7 @@ class FilesPage extends StatefulWidget {
   /// Test seam: a page built by a test talks to this client instead of
   /// constructing one from the session.
   final ApiClient? api;
+  final VoidCallback? onRenameDevice;
 
   @override
   State<FilesPage> createState() => _FilesPageState();
@@ -1197,6 +1255,9 @@ class _FilesPageState extends State<FilesPage> {
     });
     try {
       final me = await _api.me();
+      if (_sync.loaded && _sync.accountRoots.isNotEmpty) {
+        await _sync.refreshAccountRoots();
+      }
       final files = await _api.listFiles(parentId: parentIds.lastOrNull);
       final bridge = NativeBridge.instance;
       final names = <String, String>{};
@@ -1221,6 +1282,9 @@ class _FilesPageState extends State<FilesPage> {
         _names
           ..removeWhere((id, _) => !keep.contains(id))
           ..addAll(names);
+        for (final root in _sync.accountRoots) {
+          if (keep.contains(root.nodeId)) _names[root.nodeId] = accountRootLabel(root);
+        }
       });
     } on ApiException catch (e) {
       if (!mounted || generation != _refreshGeneration) return;
@@ -1344,6 +1408,11 @@ class _FilesPageState extends State<FilesPage> {
         builder: (_) => RenameDialog(initialName: _name(file), isDir: file.isDir),
       );
       if (name == null || !mounted) return;
+      final root = accountRootForNodeId(file.id, _sync.accountRoots);
+      if (root != null && !root.isGlobal) {
+        final invalid = deviceNameValidationError(name);
+        if (invalid != null) throw RenameFailure(invalid);
+      }
       await widget.operations.run(widget.session.handle, () =>
         renameRemoteEntry(api: _api, handle: widget.session.handle,
           file: file, name: name));
@@ -1393,12 +1462,13 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   Future<void> _createFolderNamed(String name) async {
+    if (!_sync.deviceNameConfirmed) return;
     final id = _uuid.v4();
     try {
       final sealed = NativeBridge.instance.sealName(widget.session.handle, id, name);
       await _api.createFile(
         id: id,
-        parentId: _path.isEmpty ? null : _path.last.id,
+        parentId: _path.isEmpty ? _requiredDeviceRoot() : _path.last.id,
         nameEnc: sealed,
         isDir: true,
       );
@@ -1408,7 +1478,16 @@ class _FilesPageState extends State<FilesPage> {
     }
   }
 
+  String _requiredDeviceRoot() {
+    final root = _sync.deviceRootNodeId;
+    if (!_sync.deviceNameConfirmed || root == null || _sync.rootsError != null) {
+      throw StateError('Initialize and confirm this device space before uploading.');
+    }
+    return root;
+  }
+
   Future<void> _upload() async {
+    if (!_sync.deviceNameConfirmed) return;
     const group = XTypeGroup(label: 'All files');
     final picked = await openFile(acceptedTypeGroups: const [group]);
     if (picked == null) return;
@@ -1416,6 +1495,7 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   Future<void> _uploadPicked(String path) async {
+    if (!_sync.deviceNameConfirmed) return;
     final name = p.basename(path);
     final fileId = _uuid.v4();
     final revisionId = _uuid.v4();
@@ -1423,7 +1503,7 @@ class _FilesPageState extends State<FilesPage> {
       final sealed = NativeBridge.instance.sealName(widget.session.handle, fileId, name);
       await _api.createFile(
         id: fileId,
-        parentId: _path.isEmpty ? null : _path.last.id,
+        parentId: _path.isEmpty ? _requiredDeviceRoot() : _path.last.id,
         nameEnc: sealed,
         isDir: false,
       );
@@ -1460,6 +1540,7 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   Future<void> _uploadRevisionPicked(RemoteFile file, String path) async {
+    if (!_sync.deviceNameConfirmed) return;
     final revisionId = _uuid.v4();
     _showProgress('Uploading a new version of ${_name(file)}');
     try {
@@ -1948,6 +2029,14 @@ class _FilesPageState extends State<FilesPage> {
                 });
               },
             ),
+            if (widget.onRenameDevice != null) ListTile(
+              leading: const Icon(Icons.edit),
+              title: const Text('Rename this device'),
+              onTap: () {
+                Navigator.pop(context);
+                widget.onRenameDevice!();
+              },
+            ),
             ListTile(
               leading: const Icon(Icons.logout),
               title: const Text('Sign out'),
@@ -1965,6 +2054,11 @@ class _FilesPageState extends State<FilesPage> {
   Future<void> _showDevices() async {
     try {
       final devices = await _api.devices();
+      final roots = await widget.operations.run(widget.session.handle, () =>
+        AccountRootsService(api: _api,
+          sealName: (id, name) => NativeBridge.instance.sealName(widget.session.handle, id, name),
+          openName: (id, sealed) => NativeBridge.instance.openName(widget.session.handle, id, sealed),
+        ).refresh());
       if (!mounted) return;
       await showDialog<void>(
         context: context,
@@ -1977,7 +2071,7 @@ class _FilesPageState extends State<FilesPage> {
               children: devices
                   .map((d) => ListTile(
                         leading: Icon(d.revoked ? Icons.block : Icons.devices),
-                        title: Text('${d.name} (${d.platform})'),
+                        title: Text('${roots.where((r) => r.deviceId == d.id).firstOrNull?.deviceName ?? 'Device'} (${d.platform})'),
                         subtitle: Text(d.revoked ? 'revoked' : d.id),
                         trailing: d.revoked
                             ? null

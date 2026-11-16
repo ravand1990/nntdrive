@@ -20,6 +20,7 @@ import java.io.IOException
 class MainActivity : FlutterActivity() {
     private var storageChannel: MethodChannel? = null
     private var updateChannel: MethodChannel? = null
+    private var deviceNameChannel: MethodChannel? = null
     private var pendingStorageRequest: MethodChannel.Result? = null
     // Keep OS admission separate from the engine's result lifetime: detaching
     // an engine cannot dismiss a settings screen/runtime permission dialog.
@@ -27,6 +28,25 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        deviceNameChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "dev.nntdrive/device_name",
+        ).also { channel -> channel.setMethodCallHandler { call, result ->
+            if (call.method != "read") {
+                result.notImplemented()
+            } else {
+                // Read-only, no Bluetooth permission or persistent identifier.
+                val name = try {
+                    Settings.Global.getString(contentResolver, "device_name")
+                } catch (_: Exception) { null }
+                val model = if (Build.MODEL.startsWith(Build.MANUFACTURER, ignoreCase = true)) {
+                    Build.MODEL
+                } else {
+                    "${Build.MANUFACTURER} ${Build.MODEL}"
+                }
+                result.success(mapOf("name" to (name ?: ""), "model" to model))
+            }
+        } }
         storageChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             "dev.nntdrive/storage_access",
@@ -320,12 +340,16 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        deviceNameChannel?.setMethodCallHandler(null)
+        deviceNameChannel = null
         disposeStorageAccess()
         disposeUpdateInstall()
         super.cleanUpFlutterEngine(flutterEngine)
     }
 
     override fun onDestroy() {
+        deviceNameChannel?.setMethodCallHandler(null)
+        deviceNameChannel = null
         disposeStorageAccess()
         disposeUpdateInstall()
         super.onDestroy()

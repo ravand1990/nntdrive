@@ -6,6 +6,15 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Features
+
+- Private device naming (#140): after unlock, confirm an editable device name before the file browser, uploads or scheduled sync become available. Suggestions use Android's device name/model, Windows computer name or a meaningful desktop hostname, with a platform fallback. Labels are sealed in the existing device-root name; authentication sends only a generic device name. Confirmation is remembered for that server/account/device/root identity, not for a new device ID after sign-in.
+- New uploads and folders from My files default to this device's space; Global is used only when explicitly opened. Renaming a device changes its encrypted space label, not node IDs, content versions, existing local paths or file locations. Legacy folders move only through the separate explicit move action.
+
+### Bug fixes
+
+- Migration 0008 replaces live plaintext device names with `Device` and normalizes legacy database writes to that placeholder while retaining the compatibility column and API fields. Existing encrypted root labels remain intact. Historical backups, WAL and old client requests may still contain former plaintext names; this is not secure erasure or protection from older servers receiving those requests.
+
 ## [0.26.1] - 2026-11-16
 
 ### Bug fixes

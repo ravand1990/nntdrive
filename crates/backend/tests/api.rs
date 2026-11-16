@@ -2367,8 +2367,7 @@ async fn device_roots_are_per_device_and_need_a_device_token() {
         .iter()
         .map(|r| r["device_name"].as_str().unwrap_or_default().to_string())
         .collect();
-    assert!(names.contains(&"test".to_string()), "{names:?}");
-    assert!(names.contains(&"second".to_string()), "{names:?}");
+    assert_eq!(names, vec!["Device", "Device"]);
 
     // Revoking a device keeps its root listed, marked stale.
     let (status, body) = call(

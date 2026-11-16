@@ -272,7 +272,8 @@ class AccountRoot {
         nameEnc: j['name_enc'] as String? ?? '',
         createdAt: DateTime.tryParse(j['created_at'] as String? ?? ''),
         deviceId: j['device_id'] as String?,
-        deviceName: j['device_name'] as String?,
+        // Display names are opened from name_enc by the unlocked client.
+        deviceName: null,
         devicePlatform: j['device_platform'] as String?,
         deviceLastSeenAt:
             DateTime.tryParse(j['device_last_seen_at'] as String? ?? ''),
