@@ -6,6 +6,8 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.27.5] - 2026-11-17
+
 ### Bug fixes
 
 - **Not synced** maps native plans, selective exclusions and completed-attempt errors/skips and counts retained rows on a device-local worker isolate before the existing single final ordering worker. Each sequential folder worker receives only frozen config/report data, the native plan and the remaining global row budget; statuses, notices and truncation are preserved. Native inspection is still non-incremental, and full input copying/freezing, result merging and view filtering remain separate responsiveness work (#79).
