@@ -191,9 +191,18 @@ tests; the canonical pinned Flutter wrapper rebuilt release FFI, passed clean
 analysis and 462 tests (4 existing Windows-only skips). Installed skip-refresh,
 access and TalkBack acceptance remain #65; no incremental-scan claim is made.
 
+Report input projection now copies only string `paths` and a string-or-null
+`code` from each usable structured error before the first inspection await.
+Unused nested diagnostic fields and malformed non-string path/code objects are
+not recursively visited or transferred to the mapping worker. Error order,
+last-error precedence, fallback reasons and exact-path matching are preserved;
+all folders still capture independent path snapshots before inspection can
+mutate their live reports. Two original-code regressions prove diagnostic
+traversal is removed; a third checks cross-folder mutation isolation.
+
 This is bounded retained output, not bounded input streaming or a whole-build
-performance claim: native inspection is not incremental; complete report freezing
-and plan/report/entry isolate copying still occur, while result merging, folder
+performance claim: native inspection is not incremental; required report-path
+freezing and plan/report/entry isolate copying still occur, while result merging, folder
 summary/notice freezing and publication remain caller-side. Projection lists
 retain up to four references per row (all/status/folder/combined), plus group
 maps; their construction/freezing runs on the worker. Worker startup/copy costs
