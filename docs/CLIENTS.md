@@ -252,6 +252,21 @@ the UI thread in a session-owned worker capturing only the handle and encoded
 request. Large-tree incremental loading remains unfinished (#79), and installed
 permission/revocation acceptance is separate (#65).
 
+The Dart overview maps folders on sequential entry-producing workers, orders the
+bounded retained rows once, then prepares immutable status counts and ordered
+all/status/folder/combined projections on one top-level entry-only worker per
+snapshot. `UnsyncedOverview.counts` and `filtered()` reuse these prepared values
+without full-entry scans or per-rebuild workers. Lists/maps are read-only;
+unknown folder IDs return an empty list. Counts cover retained rows only, not
+items omitted by the global cap (20,000 by default). The direct synchronous
+`UnsyncedOverview(...)` constructor remains available for small hand-built
+snapshots and prepares the same projections once on its caller; production uses
+the worker-prepared private construction path. Native inspection remains
+non-incremental. Report freezing, transfer/copying, result merges and final
+folder-summary/notice freezing still have caller-side costs; projections retain
+up to four row references per retained entry plus grouping maps. This is not an
+installed frame-time or whole-refresh speedup guarantee.
+
 ## Desktop window lifecycle (partial #6)
 
 Windows/Linux close-to-tray keeps the **same unlocked process** syncing. Tray

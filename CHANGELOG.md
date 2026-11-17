@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Bug fixes
+
+- **Not synced** prepares immutable status counts and folder/status row projections once per refreshed snapshot on an entry-only worker after ordering. Page rebuilds and filter changes reuse those ordered lists instead of rescanning all retained entries. The global row cap, folder totals and truncation semantics are unchanged. Native inspection remains non-incremental; full input copying/freezing and result merging remain separate responsiveness work (#79).
+
 ## [0.27.5] - 2026-11-17
 
 ### Bug fixes

@@ -108,37 +108,106 @@ class UnsyncedNotice {
   final String message;
 }
 
-class UnsyncedOverview {
-  UnsyncedOverview({
-    required this.entries,
-    required this.folders,
-    required this.notices,
-    required this.inspectedAt,
-    this.truncated = false,
-  });
+/// Snapshot-owned immutable projections of the retained, already ordered rows.
+/// Each row is referenced in all/status/folder/combined lists, never re-sorted.
+class OverviewEntryProjection {
+  const OverviewEntryProjection._(this.entries, this.counts, this._byStatus,
+      this._byFolder, this._byFolderStatus);
 
   final List<UnsyncedEntry> entries;
+  final Map<UnsyncedStatus, int> counts;
+  final Map<UnsyncedStatus, List<UnsyncedEntry>> _byStatus;
+  final Map<String, List<UnsyncedEntry>> _byFolder;
+  final Map<(String, UnsyncedStatus), List<UnsyncedEntry>> _byFolderStatus;
+
+  List<UnsyncedEntry> filtered({UnsyncedStatus? status, String? folderId}) {
+    if (folderId == null) {
+      return status == null ? entries : _byStatus[status] ?? const [];
+    }
+    return status == null
+        ? _byFolder[folderId] ?? const []
+        : _byFolderStatus[(folderId, status)] ?? const [];
+  }
+}
+
+Map<K, List<UnsyncedEntry>> _freezeProjection<K>(
+        Map<K, List<UnsyncedEntry>> groups) =>
+    Map<K, List<UnsyncedEntry>>.unmodifiable(groups.map(
+        (key, rows) => MapEntry(key, List<UnsyncedEntry>.unmodifiable(rows))));
+
+OverviewEntryProjection _projectUnsyncedEntries(List<UnsyncedEntry> entries) {
+  final counts = <UnsyncedStatus, int>{};
+  final byStatus = <UnsyncedStatus, List<UnsyncedEntry>>{};
+  final byFolder = <String, List<UnsyncedEntry>>{};
+  final byFolderStatus = <(String, UnsyncedStatus), List<UnsyncedEntry>>{};
+  for (final entry in entries) {
+    final status = entry.status;
+    final folder = entry.folderId;
+    counts[status] = (counts[status] ?? 0) + 1;
+    (byStatus[status] ??= []).add(entry);
+    (byFolder[folder] ??= []).add(entry);
+    (byFolderStatus[(folder, status)] ??= []).add(entry);
+  }
+  return OverviewEntryProjection._(
+      List<UnsyncedEntry>.unmodifiable(entries),
+      Map<UnsyncedStatus, int>.unmodifiable(counts),
+      _freezeProjection(byStatus),
+      _freezeProjection(byFolder),
+      _freezeProjection(byFolderStatus));
+}
+
+/// One entry-only projection worker per refresh, after the final ordering.
+/// No controller, inspector, native handle or per-rebuild worker is captured.
+/// Input transfer/copying and the retained projection references still cost RAM.
+Future<OverviewEntryProjection> projectUnsyncedEntries(
+    List<UnsyncedEntry> entries) async {
+  // Empty input needs no scan or worker; nonempty input always runs off-isolate.
+  if (entries.isEmpty) return _projectUnsyncedEntries(const []);
+  return Isolate.run(() => _projectUnsyncedEntries(entries));
+}
+
+typedef OverviewEntryProjector = Future<OverviewEntryProjection> Function(
+    List<UnsyncedEntry> entries);
+
+class UnsyncedOverview {
+  /// Synchronous compatibility constructor for small hand-built snapshots.
+  /// Production uses the prepared worker result, not this caller-side scan.
+  factory UnsyncedOverview({
+    required List<UnsyncedEntry> entries,
+    required List<UnsyncedFolderSummary> folders,
+    required List<UnsyncedNotice> notices,
+    required DateTime inspectedAt,
+    bool truncated = false,
+  }) => UnsyncedOverview._prepared(
+      projection: _projectUnsyncedEntries(entries), folders: folders,
+      notices: notices, inspectedAt: inspectedAt, truncated: truncated);
+
+  UnsyncedOverview._prepared({
+    required OverviewEntryProjection projection,
+    required List<UnsyncedFolderSummary> folders,
+    required List<UnsyncedNotice> notices,
+    required this.inspectedAt,
+    required this.truncated,
+  }) : _projection = projection,
+       folders = List<UnsyncedFolderSummary>.unmodifiable([
+         for (final folder in folders)
+           UnsyncedFolderSummary(folder.folderId, folder.folderName,
+               Map<UnsyncedStatus, int>.unmodifiable(folder.counts)),
+       ]),
+       notices = List<UnsyncedNotice>.unmodifiable(notices);
+
+  final OverviewEntryProjection _projection;
+  List<UnsyncedEntry> get entries => _projection.entries;
   final List<UnsyncedFolderSummary> folders;
   final List<UnsyncedNotice> notices;
   final DateTime inspectedAt;
   final bool truncated;
 
   int get total => entries.length;
-
-  Map<UnsyncedStatus, int> get counts {
-    final out = <UnsyncedStatus, int>{};
-    for (final entry in entries) {
-      out[entry.status] = (out[entry.status] ?? 0) + 1;
-    }
-    return out;
-  }
+  Map<UnsyncedStatus, int> get counts => _projection.counts;
 
   List<UnsyncedEntry> filtered({UnsyncedStatus? status, String? folderId}) =>
-      entries
-          .where((entry) =>
-              (status == null || entry.status == status) &&
-              (folderId == null || entry.folderId == folderId))
-          .toList();
+      _projection.filtered(status: status, folderId: folderId);
 }
 
 typedef FolderInspector = Future<Map<String, dynamic>> Function(
@@ -158,6 +227,7 @@ Future<UnsyncedOverview> buildUnsyncedOverview({
   int maxEntries = 20000,
   OverviewEntryOrderer orderEntries = orderUnsyncedEntries,
   OverviewFolderMapper mapFolder = mapUnsyncedFolder,
+  OverviewEntryProjector projectEntries = projectUnsyncedEntries,
 }) async {
   // Freeze every folder before the first await, including later folders' reports.
   // No live config, controller, inspector closure or session reaches a worker.
@@ -186,8 +256,9 @@ Future<UnsyncedOverview> buildUnsyncedOverview({
     truncated = truncated || mapped.truncated;
   }
   final ordered = await orderEntries(entries);
-  return UnsyncedOverview(
-    entries: ordered,
+  final projection = await projectEntries(ordered);
+  return UnsyncedOverview._prepared(
+    projection: projection,
     folders: summaries,
     notices: notices,
     inspectedAt: DateTime.now(),

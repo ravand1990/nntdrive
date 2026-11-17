@@ -136,10 +136,32 @@ mapping/ordering/overview/widget/native-inspection run passed 42 tests. Canonica
 `bash scripts/dev-check.sh flutter` passed the release FFI build, clean analysis
 and 443 Flutter tests (4 existing skips) on the pinned Linux toolchain.
 
+After ordering, one snapshot-owned entry-only worker now prepares immutable
+status counts and all/status/folder/combined row lists in one projection pass.
+The production builder awaits this prepared result and does not rescan entries
+on the caller. Page rebuilds and filter changes perform map lookups, preserving
+the existing sorted order, retained-row cap and count/truncation semantics; no
+worker is dispatched per rebuild. Unknown folder IDs return immutable empty
+lists. The synchronous public constructor remains compatible for small direct
+fixtures and prepares its projections once on the caller; it introduces no
+isolate await into widget fake async. Production does not use that constructor.
+
+Thirteen projection tests cover every status/folder combination, empty/unknown
+IDs, caps 0–4 and the default 20,000 budget, immutable collections, no repeated
+entry getters, a sendable getter rejecting the caller, real production dispatch
+with an unsendable inspector context, suspended publication and a single-row
+real event turn. Before implementation the rescan and mutable-input regressions
+failed. Replacing only projection dispatch with `Future.sync` failed worker
+location, production wiring and event-turn tests; the worker was restored.
+Canonical `bash scripts/dev-check.sh flutter` then passed release FFI, clean
+analysis and 456 Flutter tests (4 existing skips) on the pinned Linux toolchain.
+
 This is bounded retained output, not bounded input streaming or a whole-build
 performance claim: native inspection is not incremental; complete report freezing
-and plan/report isolate copying still occur, while result merging, overview
-counts/filtering and publication remain caller-side. Worker startup/copy costs
+and plan/report/entry isolate copying still occur, while result merging, folder
+summary/notice freezing and publication remain caller-side. Projection lists
+retain up to four references per row (all/status/folder/combined), plus group
+maps; their construction/freezing runs on the worker. Worker startup/copy costs
 and whole-plan temporary memory remain; no installed frame-time/speedup claim was
 measured. Large-tree incremental inspection/responsiveness is still unfinished
 under #79; installed permission/revocation and TalkBack acceptance remain #65.
