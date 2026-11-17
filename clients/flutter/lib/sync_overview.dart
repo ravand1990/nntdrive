@@ -301,7 +301,6 @@ OverviewFolderInput _freezeOverviewFolder(SyncFolderConfig folder) =>
       List<String>.unmodifiable(folder.excluded),
       folder.lastReport == null ? null : <String, dynamic>{
         'item_errors': _freezeReportValue(folder.lastReport!['item_errors']),
-        'skipped': _freezeReportValue(folder.lastReport!['skipped']),
       });
 
 class OverviewFolderMapping {
@@ -375,6 +374,26 @@ OverviewFolderMapping _mapUnsyncedFolder(
     folderEntries.add(entry);
   }
 
+  // A blocked inspection describes only the root, never unobserved skips.
+  // Handle it before exclusions can consume the budget or mark truncation.
+  final blockReason = inspectionFailed
+      ? null
+      : _filesystemBlockReason(plan['filesystem_blocked']);
+  if (blockReason != null) {
+    add(UnsyncedEntry(
+      status: UnsyncedStatus.blocked,
+      folderId: folder.id,
+      folderName: folder.name,
+      path: '',
+      isDirectory: true,
+      retryable: false,
+      reason: blockReason,
+      lastAttempt: folder.lastSync,
+    ));
+    entries.addAll(folderEntries);
+    return _mappedFolder(folder, entries, notices, truncated);
+  }
+
   for (final excluded in folder.excluded) {
     final clean = excluded.replaceAll('\\', '/');
     if (clean.isEmpty) continue;
@@ -390,44 +409,30 @@ OverviewFolderMapping _mapUnsyncedFolder(
     ));
   }
 
-  final skipped = report?['skipped'];
-  if (skipped is List) {
-    for (final item in skipped) {
-      if (item is! List || item.isEmpty || item.first is! String) continue;
-      final reason = item.length > 1 ? item[1] : null;
-      add(UnsyncedEntry(
-        status: UnsyncedStatus.skipped,
-        folderId: folder.id,
-        folderName: folder.name,
-        path: item.first as String,
-        reason: reason is String && reason.isNotEmpty
-            ? 'Skipped: $reason.'
-            : 'Skipped by the sync engine.',
-        retryable: false,
-        lastAttempt: folder.lastSync,
-      ));
-    }
-  }
-
   try {
     if (inspectionFailed) throw const FormatException();
-    final blockReason = _filesystemBlockReason(plan['filesystem_blocked']);
-    if (blockReason != null) {
-      // No partial plan or historical skip list describes an unreadable tree.
-      // Count one root row, not unobserved files or inferred deletions.
-      folderEntries.clear();
-      add(UnsyncedEntry(
-        status: UnsyncedStatus.blocked,
-        folderId: folder.id,
-        folderName: folder.name,
-        path: '',
-        isDirectory: true,
-        retryable: false,
-        reason: blockReason,
-        lastAttempt: folder.lastSync,
-      ));
-      entries.addAll(folderEntries);
-      return _mappedFolder(folder, entries, notices, truncated);
+    // Skips are current scan evidence, not history from the last sync attempt.
+    // Missing/malformed evidence must not resurrect removed paths.
+    final skipped = plan['skipped'];
+    if (skipped is List) {
+      for (final item in skipped) {
+        if (item is! List || item.isEmpty ||
+            item.first is! String || (item.first as String).isEmpty) {
+          continue;
+        }
+        final reason = item.length > 1 ? item[1] : null;
+        add(UnsyncedEntry(
+          status: UnsyncedStatus.skipped,
+          folderId: folder.id,
+          folderName: folder.name,
+          path: item.first as String,
+          reason: reason is String && reason.isNotEmpty
+              ? 'Skipped: $reason.'
+              : 'Skipped by the sync engine.',
+          retryable: false,
+          lastAttempt: folder.lastSync,
+        ));
+      }
     }
     final blockedPaths = <String>{
       for (final pair in _stringPairs(plan['case_collisions'])) ...[pair.$1, pair.$2]

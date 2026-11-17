@@ -113,6 +113,7 @@ void main() {
               'is_dir': true
             },
           ],
+          'skipped': [['current-link', 'special file']],
           'folder_moves_pending': true,
           'journal_available': false,
           'truncated': true,

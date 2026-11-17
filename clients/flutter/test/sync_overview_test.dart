@@ -116,16 +116,15 @@ void main() {
   });
 
   test('lists selective-sync exclusions and engine skips as skipped', () async {
-    final folder = makeFolder('f1', 'Documents',
-        excluded: ['private'],
-        report: {
-          'skipped': [
-            ['link', 'not a regular file']
-          ],
-        });
+    final folder = makeFolder('f1', 'Documents', excluded: ['private']);
     final overview = await buildUnsyncedOverview(
       folders: [folder],
-      inspect: (_) async => plan([]),
+      inspect: (_) async => {
+        ...plan([]),
+        'skipped': [
+          ['link', 'not a regular file']
+        ],
+      },
     );
     final byPath = {for (final entry in overview.entries) entry.path: entry};
     expect(byPath['private']!.status, UnsyncedStatus.skipped);
