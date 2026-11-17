@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Bug fixes
+
+- **Not synced** admits only one page refresh at a time. Sync notifications during inspection coalesce into one follow-up; an explicit check consumes a pending debounce timer, obsolete results are not published before an admitted follow-up, and automatic reloads recheck sync/action admission. Closing the page drops queued reloads (#79).
+
 ## [0.28.1] - 2026-11-17
 
 ### Bug fixes

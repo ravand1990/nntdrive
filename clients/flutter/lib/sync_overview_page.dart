@@ -65,8 +65,14 @@ class _SyncOverviewPageState extends State<SyncOverviewPage> {
   /// Debounces sync notifications into one reload.
   Timer? _refreshTimer;
 
-  /// Rejects a reload that finishes after a newer one started.
-  int _loadToken = 0;
+  /// Admit one inspection at a time and retain at most one follow-up request.
+  bool _refreshRunning = false;
+  bool _refreshQueued = false;
+  bool _explicitRefreshQueued = false;
+
+  bool get _canDrainRefresh => _refreshQueued &&
+      (_explicitRefreshQueued ||
+          (_acting == null && !(widget.isBusy?.call() ?? false)));
 
   @override
   void initState() {
@@ -93,34 +99,62 @@ class _SyncOverviewPageState extends State<SyncOverviewPage> {
 
   /// A sync round that finished while this page is open reloads the plan.
   void _onSyncChanged() {
-    if (widget.isBusy?.call() ?? false) return;
+    if (_acting != null || (widget.isBusy?.call() ?? false)) return;
+    if (_refreshRunning) {
+      _refreshQueued = true;
+      return;
+    }
     if (_refreshTimer?.isActive ?? false) return;
     _refreshTimer = Timer(_refreshDelay, () {
       _refreshTimer = null;
-      if (!mounted || _acting != null) return;
+      if (!mounted || _acting != null || (widget.isBusy?.call() ?? false)) return;
       _refresh(showSpinner: false);
     });
   }
 
   Future<void> _refresh({bool showSpinner = true}) async {
-    final token = ++_loadToken;
+    if (!mounted) return;
+    // An explicit refresh also satisfies any still-debouncing notification.
+    _refreshTimer?.cancel();
+    _refreshTimer = null;
+    if (_refreshRunning) {
+      _refreshQueued = true;
+      _explicitRefreshQueued = true;
+      return;
+    }
+    _refreshRunning = true;
     setState(() {
       if (showSpinner || _overview == null) _loading = true;
       _error = null;
     });
     try {
-      final overview = await widget.load();
-      if (!mounted || token != _loadToken) return;
-      setState(() {
-        _overview = overview;
-        _loading = false;
-      });
-    } catch (e) {
-      if (!mounted || token != _loadToken) return;
-      setState(() {
-        _error = e;
-        _loading = false;
-      });
+      do {
+        _refreshQueued = false;
+        _explicitRefreshQueued = false;
+        try {
+          final overview = await widget.load();
+          if (!mounted) return;
+          // A change during inspection needs a fresh plan, not this old result.
+          if (_canDrainRefresh) continue;
+          setState(() {
+            _overview = overview;
+            _loading = false;
+          });
+        } catch (e) {
+          if (!mounted) return;
+          if (_canDrainRefresh) continue;
+          setState(() {
+            _error = e;
+            _loading = false;
+          });
+        }
+      } while (_canDrainRefresh);
+    } finally {
+      // Busy/action admission is retried by the next idle notification or by
+      // _runAction's mandatory completion refresh, never by a polling loop.
+      _refreshRunning = false;
+      _refreshQueued = false;
+      _explicitRefreshQueued = false;
     }
   }
 
