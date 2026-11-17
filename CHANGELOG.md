@@ -6,6 +6,8 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.27.7] - 2026-11-17
+
 ### Bug fixes
 
 - **Not synced** now lists skipped paths from the current read-only inspection rather than the last completed sync report. Removed skips disappear on refresh, newly skipped links appear before a sync, and a blocked root replaces exclusions without a false truncation warning (#79).
