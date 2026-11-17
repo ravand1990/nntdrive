@@ -26,7 +26,8 @@ three-way reconciliation a real sync would apply — and lists each item with a
 text status and a plain-language reason: **Cloud only**, **Local only**,
 **Pending** (queued deletion, move, rename or revision adoption), **Failed**
 (the exact path failed in the last completed attempt, with its coded reason),
-**Conflict**, **Skipped** (selective-sync exclusion or engine skip) and
+**Conflict**, **Skipped** (selective-sync exclusion or current engine inspection
+skip, never a stale last-run skip) and
 **Blocked** (storage access, unreadable/missing/invalid local trees, or two names
 that differ only by letter case).
 Counts per status and per folder drive filter chips and a folder filter; the
@@ -155,6 +156,18 @@ failed. Replacing only projection dispatch with `Future.sync` failed worker
 location, production wiring and event-turn tests; the worker was restored.
 Canonical `bash scripts/dev-check.sh flutter` then passed release FFI, clean
 analysis and 456 Flutter tests (4 existing skips) on the pinned Linux toolchain.
+
+Fresh-skip verification: the current read-only inspection supplies engine skips;
+completed-attempt reports now contribute only structured errors. Empty, absent or
+malformed current skips never resurrect historical paths. A typed blocked root
+is handled before exclusions/skips consume its row budget, so replaced rows do
+not leave a false truncation warning. Five new mapping tests failed on the old
+behavior. A real controller/native/loopback regression creates and removes a
+symlink between refreshes without syncing, checks fresh skip counts, unchanged
+local bytes/report/journal and opaque-ID-only HTTP. The focused run passed 30
+tests; the canonical pinned Flutter wrapper rebuilt release FFI, passed clean
+analysis and 462 tests (4 existing Windows-only skips). Installed skip-refresh,
+access and TalkBack acceptance remain #65; no incremental-scan claim is made.
 
 This is bounded retained output, not bounded input streaming or a whole-build
 performance claim: native inspection is not incremental; complete report freezing

@@ -19,6 +19,7 @@ void main() {
   late HttpServer server;
   late int handle;
   late int requests;
+  var emptySnapshot = false;
   final bridge = NativeBridge.instance;
 
   setUp(() async {
@@ -30,10 +31,21 @@ void main() {
             (_) async => state.path);
     server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     requests = 0;
+    emptySnapshot = false;
     server.listen((request) async {
       requests++;
-      request.response.statusCode = 503;
-      request.response.write('private remote diagnostic');
+      if (emptySnapshot) {
+        expect(request.method, 'GET');
+        expect(request.uri.path, '/api/v1/files');
+        expect(request.uri.queryParameters.keys, ['parent_id']);
+        expect(request.uri.queryParameters['parent_id'],
+            '00000000-0000-0000-0000-000000000001');
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({'files': []}));
+      } else {
+        request.response.statusCode = 503;
+        request.response.write('private remote diagnostic');
+      }
       await request.response.close();
     });
     const password = 'inspection fixture password';
@@ -58,6 +70,44 @@ void main() {
         'deviceName': 'fixture',
         'excluded': <String>[],
       };
+
+  test('current native symlink skips refresh without a completed sync', () async {
+    emptySnapshot = true;
+    final root = await Directory('${state.path}/root').create();
+    final original = await File('${root.path}/ordinary.txt').writeAsString('keep');
+    final link = await Link('${root.path}/fresh-link').create(original.path);
+    final api = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+    final sync = SyncController(
+        server: api.baseUrl, token: 'fixture-token', handle: handle, api: api);
+    addTearDown(sync.dispose);
+    final folder = SyncFolderConfig(
+      id: 'root', name: 'Documents', localPath: root.path,
+      remoteRootId: '00000000-0000-0000-0000-000000000001',
+      lastReport: {'skipped': [['removed-link', 'historical skip']]},
+    );
+    sync.folders.add(folder);
+    final oldReport = folder.lastReport;
+    final first = await buildUnsyncedOverview(
+        folders: sync.folders, inspect: sync.inspectFolder);
+    expect(first.filtered(status: UnsyncedStatus.skipped).single.path, 'fresh-link');
+    expect(first.filtered(status: UnsyncedStatus.skipped).single.reason,
+        contains('symbolic link skipped'));
+    expect(first.filtered(status: UnsyncedStatus.localOnly).single.path, 'ordinary.txt');
+    expect(first.total, 2);
+    expect(first.folders.single.total, 2);
+    expect(first.truncated, isFalse);
+    await link.delete();
+    final second = await buildUnsyncedOverview(
+        folders: sync.folders, inspect: sync.inspectFolder);
+    expect(second.filtered(status: UnsyncedStatus.skipped), isEmpty);
+    expect(second.entries.single.path, 'ordinary.txt');
+    expect(second.folders.single.total, 1);
+    expect(folder.lastReport, same(oldReport));
+    expect(folder.lastSync, isNull);
+    expect(await original.readAsString(), 'keep');
+    expect(await File('${state.path}/sync/root.sqlite').exists(), isFalse);
+    expect(requests, 2);
+  }, skip: !Platform.isLinux);
 
   test(
       'native invalid roots become counted Blocked rows without HTTP or journal',
