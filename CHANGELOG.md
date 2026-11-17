@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Bug fixes
+
+- **Not synced** keeps current conflicts visible despite historical sync errors. Rename/move rows check both exact endpoints for errors and case collisions, preserve the destination, and describe failures as evidence from the last completed attempt rather than current transfer state (#79).
+
 ## [0.27.7] - 2026-11-17
 
 ### Bug fixes

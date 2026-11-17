@@ -25,7 +25,8 @@ sync folder it asks the Rust sync engine for a read-only plan — the same
 three-way reconciliation a real sync would apply — and lists each item with a
 text status and a plain-language reason: **Cloud only**, **Local only**,
 **Pending** (queued deletion, move, rename or revision adoption), **Failed**
-(the exact path failed in the last completed attempt, with its coded reason),
+(an exact source or rename/move destination path failed in the last completed
+attempt, with its coded reason; current conflicts take precedence),
 **Conflict**, **Skipped** (selective-sync exclusion or current engine inspection
 skip, never a stale last-run skip) and
 **Blocked** (storage access, unreadable/missing/invalid local trees, or two names

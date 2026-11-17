@@ -446,12 +446,14 @@ OverviewFolderMapping _mapUnsyncedFolder(
       final mapped = _statusFor(kind);
       if (mapped == null) continue;
 
-      if (blockedPaths.contains(path)) {
+      if (blockedPaths.contains(path) ||
+          (pathTo != null && blockedPaths.contains(pathTo))) {
         add(UnsyncedEntry(
           status: UnsyncedStatus.blocked,
           folderId: folder.id,
           folderName: folder.name,
           path: path,
+          pathTo: pathTo,
           size: size,
           isDirectory: isDirectory,
           reason:
@@ -461,7 +463,12 @@ OverviewFolderMapping _mapUnsyncedFolder(
         continue;
       }
 
-      final failure = failed[path];
+      // Current conflicts need the resolve action, not a historical retry label.
+      // A move/rename can fail at either endpoint; match exact paths only and
+      // keep source-first reason selection deterministic when both failed.
+      final failure = mapped == UnsyncedStatus.conflict
+          ? null
+          : failed[path] ?? (pathTo == null ? null : failed[pathTo]);
       add(UnsyncedEntry(
         status: failure != null ? UnsyncedStatus.failed : mapped,
         folderId: folder.id,
@@ -470,7 +477,9 @@ OverviewFolderMapping _mapUnsyncedFolder(
         pathTo: pathTo,
         size: size,
         isDirectory: isDirectory,
-        reason: failure ?? _reasonFor(kind, pathTo),
+        reason: failure == null
+            ? _reasonFor(kind, pathTo)
+            : 'An operation involving this exact path failed in the last completed sync attempt. $failure',
         lastAttempt: folder.lastSync,
       ));
     }
