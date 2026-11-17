@@ -280,19 +280,27 @@ class OverviewFolderInput {
   final Map<String, dynamic>? lastReport;
 }
 
-// Copy only JSON-shaped report values; unrelated diagnostics/objects are omitted.
-Object? _freezeReportValue(Object? value) {
-  if (value is String || value is num || value is bool || value == null) return value;
-  if (value is List) {
-    return [for (final item in value) _freezeReportValue(item)];
+// Freeze only fields consumed by mapping. Recursively copying whole error
+// records would traverse unused diagnostic payloads on the UI isolate and
+// transfer them to the worker. The required string paths still cost O(paths).
+List<Map<String, dynamic>> _freezeItemErrors(Object? value) {
+  final errors = <Map<String, dynamic>>[];
+  if (value is! List) return errors;
+  for (final error in value) {
+    if (error is! Map) continue;
+    final paths = error['paths'];
+    if (paths is! List) continue;
+    final copiedPaths = <String>[
+      for (final path in paths) if (path is String) path,
+    ];
+    if (copiedPaths.isEmpty) continue;
+    final code = error['code'];
+    errors.add({
+      'paths': List<String>.unmodifiable(copiedPaths),
+      'code': code is String ? code : null,
+    });
   }
-  if (value is Map) {
-    return <String, dynamic>{
-      for (final key in value.keys)
-        if (key is String) key: _freezeReportValue(value[key]),
-    };
-  }
-  return null;
+  return List<Map<String, dynamic>>.unmodifiable(errors);
 }
 
 OverviewFolderInput _freezeOverviewFolder(SyncFolderConfig folder) =>
@@ -300,7 +308,7 @@ OverviewFolderInput _freezeOverviewFolder(SyncFolderConfig folder) =>
       folder.id, folder.name, folder.lastSync, folder.storageAccessRequired,
       List<String>.unmodifiable(folder.excluded),
       folder.lastReport == null ? null : <String, dynamic>{
-        'item_errors': _freezeReportValue(folder.lastReport!['item_errors']),
+        'item_errors': _freezeItemErrors(folder.lastReport!['item_errors']),
       });
 
 class OverviewFolderMapping {
