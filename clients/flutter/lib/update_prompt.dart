@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'updater.dart';
+import 'release_notes.dart';
 
 /// Shows what changed in every version between the installed build and the
 /// offered one, one heading per version, newest first. Bounded in height so a
@@ -16,46 +17,14 @@ class UpdateNotesView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final textTheme = Theme.of(context).textTheme;
-    final notes = info.releaseNotes;
-    if (notes.isEmpty) {
-      if (info.notes.isEmpty) return const SizedBox.shrink();
-      return ConstrainedBox(
-        constraints: BoxConstraints(maxHeight: maxHeight),
-        child: SingleChildScrollView(
-          child: Text(info.notes, style: textTheme.bodySmall),
-        ),
-      );
-    }
-    final omitted = info.olderNotesOmitted;
-    return ConstrainedBox(
-      constraints: BoxConstraints(maxHeight: maxHeight),
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            for (var i = 0; i < notes.length; i++) ...[
-              Padding(
-                padding: EdgeInsets.only(top: i == 0 ? 0 : 16),
-                child: Text(
-                  'Changes in ${notes[i].version}',
-                  style: textTheme.titleSmall,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(notes[i].body, style: textTheme.bodySmall),
-            ],
-            if (omitted > 0) ...[
-              const SizedBox(height: 16),
-              Text(
-                '$omitted older release${omitted == 1 ? '' : 's'} not shown.',
-                style: textTheme.bodySmall,
-              ),
-            ],
-          ],
-        ),
-      ),
+    return ReleaseNotesView(
+      notes: info.notes,
+      releases: [
+        for (final note in info.releaseNotes)
+          ReleaseNotesSection(note.version, note.body),
+      ],
+      olderNotesOmitted: info.olderNotesOmitted,
+      maxHeight: maxHeight,
     );
   }
 }

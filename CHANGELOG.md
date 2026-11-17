@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Features
+
+- Desktop and Android update prompts now share selectable Markdown release notes with headings, lists, emphasis, code and safe external HTTPS links. Long histories remain scrollable within 320 logical pixels; HTML stays literal, images never load, and parser failures show the original plain text (#154).
+
 ## [0.27.8] - 2026-11-17
 
 ### Bug fixes

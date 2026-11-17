@@ -1,5 +1,26 @@
 # Project status
 
+## Markdown update notes (#154)
+
+Desktop and Android update prompts share native, selectable CommonMark notes:
+headings, paragraphs, lists, emphasis, inline/fenced code, quotes, rules and
+explicit external HTTPS links. The common history viewport stays scrollable
+within 320 logical pixels. HTML is literal text; image nodes become inert alt
+text before widget creation. Invalid/unsafe links are ignored, launcher failures
+are contained, and parse/build failures fall back to the original selectable
+body. Desktop version sections and omitted-release counts are unchanged.
+
+Verified in the pinned isolated wrapper: dependency fetch, release FFI build,
+clean Flutter analysis and **485 passing tests / 4 platform skips**. New tests
+include the published v0.27.8 body, syntax/security/fallback checks, Copy selection,
+light/dark 200% text scaling and actual desktop/Android dialogs with empty,
+single and long notes. Restoring the original prompts fails five focused tests;
+removing HTTPS enforcement fails two, and removing fallback fails one. All
+sabotage was restored before the canonical successful run. Installed browser
+launches and Windows/Linux/Android manual visual/update acceptance remain
+unverified; channel mocks do not prove native OS behavior. See
+[release-note policy, dependencies and verification](RELEASE-NOTES.md).
+
 ## Android back navigation (#78 partial)
 
 Android system back in the file browser now leaves one folder at a time and only
