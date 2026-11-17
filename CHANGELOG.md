@@ -6,6 +6,8 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.28.1] - 2026-11-17
+
 ### Bug fixes
 
 - **Not synced** snapshots only structured error codes and string paths from completed sync reports before inspection. Unused nested diagnostics are neither traversed on the UI isolate nor sent to the mapping worker; exact-path failure attribution and pre-inspection snapshot semantics are unchanged. Required paths and full native plans still need copying; incremental inspection remains unfinished (#79).
