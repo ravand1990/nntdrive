@@ -6,6 +6,8 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.28.3] - 2026-11-17
+
 ### Bug fixes
 
 - Encrypted search freezes only availability configuration, progress path/completion, conflict paths and validated structured item-error paths before refresh inspection. It no longer JSON-copies entire sync reports or traverses unused nested diagnostics. Exact-path/root isolation, active-transfer/error/conflict precedence and all-roots-before-await snapshot semantics are unchanged. Required path copying and error-index construction remain caller-side costs (#80).
