@@ -265,9 +265,37 @@ clean analysis and the release FFI build. A deterministic 500-entry fixture read
 zero report elements during status lookup; temporarily restoring legacy scanning
 read 250,500 elements and failed, as did real-filesystem search status regressions.
 Root isolation, frozen evidence, malformed errors, exact matching and precedence
-are covered. Installed-platform acceptance remains unverified. Whole-report JSON
-copying, immutable-set construction, conflict scanning and filesystem inspection
-remain caller-side scaling risks under #93; this is not an installed timing claim.
+are covered. Installed-platform acceptance remains unverified. The later
+report-freezing follow-up below removes whole-report JSON copying; immutable-set
+construction, conflict scanning and filesystem inspection remain caller-side
+scaling risks under #93; this is not an installed timing claim.
+
+The bounded report-freezing follow-up replaces JSON serialization of entire
+`SyncFolderConfig` objects with an explicit availability projection. All roots'
+local/opaque-root identity, exclusions, discovered conflict paths, running flag,
+progress path/completion and valid structured error string paths are copied before
+the first await. Error records require string operation/code and a paths list;
+non-string path elements and malformed records are ignored without descending
+into them. Only known report/progress/error keys are read: arbitrary diagnostics,
+nested lists and unknown map keys are neither enumerated nor copied. Historical
+errors still use per-root immutable exact-path indexes, current conflicts win,
+running roots suppress historical errors, and only the exact nonterminal progress
+path is Syncing. Live browser report semantics and crypto/auth are unchanged.
+Hostile MapBase and unused nested-list fixtures fail the original JSON copier;
+second-root nested mutations during the first root's indexing await exercise
+exclusions, conflicts, progress, running state, local root and error paths.
+Canonical `dev-check.sh flutter-exec` analysis found no issues and the seven-file
+search/status/native/listing/page/local-availability run passed **82 tests** with
+the existing per-worktree native library. The original copier failed both hostile
+fixtures (map-key enumeration and nested diagnostic traversal); the second-root
+snapshot contract already passed. Cancellation during indexing remains covered.
+This is a bounded field projection, not a bound on total required inputs:
+freezing all roots still synchronously visits error records and copies string
+paths/exclusions/conflicts before yielding. It checks cancellation during error
+copying but cannot observe a later event until the indexing await. Index-set
+construction, scalar worker input copies, ancestry walks, conflict/filesystem
+inspection and final merges remain separate costs; no measured UI speedup,
+whole-build isolation or installed-device performance is established (#80/#93).
 
 The status-name follow-up moves portable-name validation, native canonical
 comparison and complete sibling ambiguity grouping to one refresh-owned worker.
@@ -289,7 +317,7 @@ a late root alias across the 128 boundary, then restores local presence after
 its removal, without plaintext requests. Replacing only this worker's
 `Isolate.run` with `Future.sync` failed the location test; it was restored before
 the green run. This is isolation/semantic evidence, not a speedup measurement.
-Whole-report freezing, error-index immutable-set construction, scalar input
+Required-field freezing, error-index immutable-set construction, scalar input
 copying, ancestry walks, conflict/filesystem inspection and final snapshot merging
 remain caller-side; worker spawn/message/final set-transfer costs and retained
 whole-snapshot grouping RAM remain. Full cold-build isolation and installed-device
