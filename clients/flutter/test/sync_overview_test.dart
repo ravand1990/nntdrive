@@ -115,6 +115,85 @@ void main() {
     expect(entry.reason, contains('Reading or writing'));
   });
 
+  test('current conflicts keep resolution despite historical endpoint errors', () async {
+    final folder = makeFolder('f1', 'Documents', report: {
+      'item_errors': [
+        {'paths': ['both.txt', 'copy.txt'], 'operation': 'conflict', 'code': 'io'},
+      ],
+    });
+    final overview = await buildUnsyncedOverview(
+      folders: [folder],
+      inspect: (_) async => plan([
+        item('conflict', 'both.txt', pathTo: 'copy.txt'),
+      ]),
+    );
+    final row = overview.entries.single;
+    expect(row.status, UnsyncedStatus.conflict);
+    expect(row.reason, contains('Choose keep mine'));
+    expect(row.pathTo, 'copy.txt');
+    expect(overview.counts, {UnsyncedStatus.conflict: 1});
+    expect(overview.filtered(status: UnsyncedStatus.failed), isEmpty);
+  });
+
+  for (final kind in ['rename_local', 'move_remote']) {
+    test('$kind attributes an exact destination error without sibling leakage', () async {
+      final folder = makeFolder('f1', 'Documents', report: {
+        'item_errors': [
+          {'paths': ['new/file.txt'], 'operation': kind, 'code': 'io'},
+        ],
+      });
+      final overview = await buildUnsyncedOverview(
+        folders: [folder, makeFolder('f2', 'Other')],
+        inspect: (_) async => plan([
+          item(kind, 'old/file.txt', pathTo: 'new/file.txt'),
+          item(kind, 'other/file.txt', pathTo: 'sibling/new/file.txt'),
+        ]),
+      );
+      final failed = overview.filtered(status: UnsyncedStatus.failed);
+      expect(failed, hasLength(1));
+      expect(failed.single.folderId, 'f1');
+      expect(failed.single.path, 'old/file.txt');
+      expect(failed.single.pathTo, 'new/file.txt');
+      expect(failed.single.reason, contains('last completed sync attempt'));
+      expect(failed.single.reason, contains('Reading or writing'));
+      expect(overview.counts, {UnsyncedStatus.failed: 1, UnsyncedStatus.pending: 3});
+    });
+
+    test('$kind destination collision takes precedence over historical failure', () async {
+      final folder = makeFolder('f1', 'Documents', report: {
+        'item_errors': [
+          {'paths': ['old.txt'], 'operation': kind, 'code': 'io'},
+        ],
+      });
+      final overview = await buildUnsyncedOverview(
+        folders: [folder],
+        inspect: (_) async => plan([
+          item(kind, 'old.txt', pathTo: 'new.txt'),
+        ], caseCollisions: [['new.txt', 'NEW.txt']]),
+      );
+      expect(overview.entries.single.status, UnsyncedStatus.blocked);
+      expect(overview.entries.single.reason, contains('Two names'));
+      expect(overview.entries.single.pathTo, 'new.txt');
+    });
+  }
+
+  test('source error wins deterministically when both move endpoints failed', () async {
+    final folder = makeFolder('f1', 'Documents', report: {
+      'item_errors': [
+        {'paths': ['old.txt'], 'operation': 'move_remote', 'code': 'io'},
+        {'paths': ['new.txt'], 'operation': 'move_remote', 'code': 'remote'},
+      ],
+    });
+    final overview = await buildUnsyncedOverview(
+      folders: [folder],
+      inspect: (_) async => plan([
+        item('move_remote', 'old.txt', pathTo: 'new.txt'),
+      ]),
+    );
+    expect(overview.entries.single.status, UnsyncedStatus.failed);
+    expect(overview.entries.single.reason, contains('Reading or writing'));
+  });
+
   test('lists selective-sync exclusions and engine skips as skipped', () async {
     final folder = makeFolder('f1', 'Documents', excluded: ['private']);
     final overview = await buildUnsyncedOverview(

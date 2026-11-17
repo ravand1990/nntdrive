@@ -85,6 +85,41 @@ void main() {
     expect(find.text('Everything is in sync.'), findsOneWidget);
   });
 
+  testWidgets('mapped current conflict keeps Resolve after a historical failure',
+      (tester) async {
+    final folder = SyncFolderConfig(
+      id: 'f1', name: 'Documents', localPath: '/private/root', remoteRootId: 'remote',
+      lastReport: {
+        'item_errors': [
+          {'paths': ['both.txt'], 'operation': 'upload', 'code': 'io'},
+        ],
+      },
+    );
+    await tester.pumpWidget(host(SyncOverviewPage(
+      load: () => buildUnsyncedOverview(
+        folders: [folder],
+        inspect: (_) async => {
+          'items': [
+            {'kind': 'conflict', 'path': 'both.txt', 'path_to': 'both (conflict 1).txt'},
+          ],
+        },
+      ),
+      onSyncFolder: (_) async {},
+      onResolveConflict: (_, __, ___) async {},
+    )));
+    for (var i = 0; i < 100 && find.text('both.txt').evaluate().isEmpty; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 10)));
+      await tester.pump();
+    }
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(FilterChip, 'Conflict (1)'), findsOneWidget);
+    expect(find.widgetWithText(FilterChip, 'Failed (1)'), findsNothing);
+    await tester.tap(find.text('both.txt'));
+    await tester.pumpAndSettle();
+    expect(find.text('Resolve conflict'), findsOneWidget);
+    expect(find.textContaining('Choose keep mine'), findsWidgets);
+  });
+
   testWidgets('shows the total, status text and filters by status',
       (tester) async {
     final overview = overviewOf([
