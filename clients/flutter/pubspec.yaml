@@ -4,11 +4,14 @@ publish_to: "none"
 version: 0.27.8+66
 
 environment:
-  sdk: ">=3.3.0 <4.0.0"
+  sdk: ">=3.11.0 <4.0.0"
 
 dependencies:
   flutter:
     sdk: flutter
+  flutter_markdown_plus: ^1.0.12
+  markdown: ^7.3.1
+  url_launcher: ^6.3.3
   http: ^1.2.0
   crypto: ^3.0.3
   package_info_plus: ^8.0.0

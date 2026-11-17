@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'android_update.dart';
+import 'release_notes.dart';
 
 /// Shows the Android update prompt and, on confirmation, downloads the verified
 /// package and opens the system installer.
@@ -34,7 +35,7 @@ Future<bool> promptAndroidUpdate(
                   'in place.'),
               if (info.notes.isNotEmpty) ...[
                 const SizedBox(height: 12),
-                Text(info.notes, style: Theme.of(context).textTheme.bodySmall),
+                ReleaseNotesView(notes: info.notes),
               ],
             ],
           ),
