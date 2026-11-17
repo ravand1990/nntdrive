@@ -72,6 +72,19 @@ itself when a sync round finishes while it is open — a notification during a
 running round is ignored — so the counts and rows belong to the current state.
 A failed action is reported and the previous list stays on screen.
 
+Page refreshes are single-flight: notifications arriving during a suspended
+inspection coalesce into one follow-up, including changes during that follow-up.
+An explicit check consumes an outstanding debounce timer. Automatic follow-ups
+recheck sync/action admission; a later idle notification or the action's
+completion refresh retries admission. Obsolete results/errors are suppressed
+when a follow-up can run, and disposal drops queued work without publishing a
+late result. This bounds overlapping page loads, not native scan size, continuous
+freshness or inspection-versus-sync concurrency. Seven widget regressions cover
+success/error follow-ups, disposal, timer consumption and busy/action admission;
+the original code failed all five initial regressions. Canonical isolated
+Flutter checks passed release FFI, clean analysis and 495 tests (four skips).
+Installed behavior remains follow-up #65.
+
 The inspection never uploads, downloads, deletes or writes the journal; it only
 reads an existing journal read-only and may refresh the device-local remote-hash
 cache. A pending or identity-based folder move yields the move notice and no
