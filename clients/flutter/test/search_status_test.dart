@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 
@@ -15,7 +16,159 @@ import 'package:nntdrive/sync_controller.dart';
 SearchEntry entry(String id, String? parent, String name, {bool dir = false}) =>
     SearchEntry(RemoteFile(id, parent, name, dir, 42, true, 1, null), name);
 
+// Fixtures reject enumeration and access outside the explicit status contract.
+class StatusFieldsOnly extends MapBase<String, dynamic> {
+  StatusFieldsOnly(this.fields);
+  final Map<String, dynamic> fields;
+  @override
+  dynamic operator [](Object? key) {
+    if (!fields.containsKey(key)) throw StateError('Unused status field: $key');
+    return fields[key];
+  }
+  @override
+  Iterable<String> get keys => throw StateError('Status key enumeration');
+  @override
+  void operator []=(String key, dynamic value) => throw UnsupportedError('write');
+  @override
+  void clear() => throw UnsupportedError('clear');
+  @override
+  dynamic remove(Object? key) => throw UnsupportedError('remove');
+}
+
+class UnusedStatusList extends ListBase<dynamic> {
+  @override
+  int get length => throw StateError('Unused diagnostic traversal');
+  @override
+  set length(int value) => throw UnsupportedError('resize');
+  @override
+  dynamic operator [](int index) => throw StateError('Unused diagnostic read');
+  @override
+  void operator []=(int index, dynamic value) => throw UnsupportedError('write');
+}
+
 void main() {
+  for (final guardedMaps in [true, false]) {
+    test('status freeze ignores unused diagnostics (guarded maps: $guardedMaps)',
+        () async {
+      final temporary = await Directory.systemTemp.createTemp('search-freeze-');
+      final root = Directory(await temporary.resolveSymbolicLinks());
+      addTearDown(() => root.delete(recursive: true));
+      Map<String, dynamic> fields(Map<String, dynamic> value) =>
+          guardedMaps ? StatusFieldsOnly(value) : value;
+      final folder = SyncFolderConfig(
+          id: 'a', name: 'A', localPath: root.path, remoteRootId: 'a',
+          lastReport: fields({
+            'item_errors': [
+              null, 'legacy', [],
+              fields({'operation': null, 'code': 'io', 'paths': UnusedStatusList()}),
+              fields({'operation': 'download', 'code': 42, 'paths': UnusedStatusList()}),
+              fields({'operation': 'download', 'code': 'io', 'paths': 'bad'}),
+              fields({'operation': 'download', 'code': 'io',
+                'paths': [null, 7, UnusedStatusList(), 'Failed.pdf'],
+                'diagnostics': UnusedStatusList()}),
+            ],
+            'diagnostics': UnusedStatusList(),
+          }));
+      folder.progress = fields({'path': 'Failed.pdf', 'complete': false,
+        'diagnostics': UnusedStatusList()});
+      final statuses = await inspectSearchStatuses(
+          snapshot: {
+            'a': entry('a', null, 'A', dir: true),
+            'failed': entry('failed', 'a', 'Failed.pdf'),
+            'suffix': entry('suffix', 'a', 'NotFailed.pdf'),
+          }, folders: [folder], cancelled: () => false);
+      expect(statuses['failed'], SearchStatus.error);
+      expect(statuses['suffix'], SearchStatus.cloudOnly);
+    });
+  }
+
+  test('status freeze copies every second-root field before indexing yields',
+      () async {
+    final temporary = await Directory.systemTemp.createTemp('search-freeze-all-');
+    final root = Directory(await temporary.resolveSymbolicLinks());
+    addTearDown(() => root.delete(recursive: true));
+    await File('${root.path}/Conflict.pdf').writeAsString('local');
+    final first = SyncFolderConfig(
+        id: 'a', name: 'A', localPath: root.path, remoteRootId: 'a',
+        lastReport: {'item_errors': [for (var i = 0; i < 300; i++)
+          {'operation': 'download', 'code': 'io', 'paths': ['other-$i']} ]});
+    final paths = <dynamic>['Failed.pdf'];
+    final error = <String, dynamic>{'operation': 'move', 'code': 'io', 'paths': paths};
+    final second = SyncFolderConfig(
+        id: 'b', name: 'B', localPath: root.path, remoteRootId: 'b',
+        excluded: ['Excluded.pdf'], lastReport: {'item_errors': [error]});
+    second.conflictFiles = ['Conflict.pdf'];
+    second.progress = {'path': 'Active.pdf', 'complete': false};
+    final tree = <String, SearchEntry>{
+      'a': entry('a', null, 'A', dir: true),
+      'b': entry('b', null, 'B', dir: true),
+      for (final name in ['Failed.pdf', 'Excluded.pdf', 'Conflict.pdf', 'Active.pdf'])
+        name: entry(name, 'b', name),
+      'isolated': entry('isolated', 'a', 'Failed.pdf'),
+    };
+    final inspection = inspectSearchStatuses(
+        snapshot: tree, folders: [first, second], cancelled: () => false);
+    // First root's index is suspended. Mutate nested inputs, not just the report
+    // reference, to catch shallow copying or freezing one root at a time.
+    scheduleMicrotask(() {
+      paths.clear();
+      error['code'] = null;
+      second.lastReport!.clear();
+      second.excluded.clear();
+      second.conflictFiles.clear();
+      second.progress!['path'] = 'Failed.pdf';
+      second.running = true;
+      second.localPath = '${root.path}/absent';
+    });
+    final statuses = await inspection;
+    expect(statuses['Failed.pdf'], SearchStatus.error);
+    expect(statuses['Excluded.pdf'], SearchStatus.notCovered);
+    expect(statuses['Conflict.pdf'], SearchStatus.conflict);
+    expect(statuses['Active.pdf'], SearchStatus.cloudOnly);
+    expect(statuses['isolated'], SearchStatus.cloudOnly);
+
+    second.localPath = root.path;
+    second.running = true;
+    second.conflictFiles = ['Conflict.pdf'];
+    second.progress = {'path': 'Active.pdf', 'complete': false};
+    second.lastReport = {'item_errors': [
+      {'operation': 'download', 'code': 'io',
+        'paths': ['Active.pdf', 'Conflict.pdf', 'Failed.pdf']}
+    ]};
+    final running = inspectSearchStatuses(
+        snapshot: tree, folders: [first, second], cancelled: () => false);
+    scheduleMicrotask(() {
+      second.running = false;
+      second.progress!['complete'] = true;
+      second.progress!['path'] = 'Failed.pdf';
+      second.conflictFiles.clear();
+    });
+    final active = await running;
+    expect(active['Active.pdf'], SearchStatus.syncing);
+    expect(active['Conflict.pdf'], SearchStatus.conflict);
+    expect(active['Failed.pdf'], SearchStatus.cloudOnly);
+  });
+
+  test('status freeze retains cancellation during error-path indexing', () async {
+    var cancelled = false;
+    final folder = SyncFolderConfig(
+        id: 'a', name: 'A', localPath: '.', remoteRootId: 'a',
+        lastReport: {'item_errors': [
+          {'operation': 'download', 'code': 'io',
+            'paths': [for (var i = 0; i < 1000; i++) 'path-$i']}
+        ]});
+    var grouped = false;
+    final inspection = expectLater(inspectSearchStatuses(
+        snapshot: {}, folders: [folder], cancelled: () => cancelled,
+        groupNames: (_) async {
+          grouped = true;
+          return {};
+        }), throwsA(isA<StateError>()));
+    scheduleMicrotask(() => cancelled = true);
+    await inspection;
+    expect(grouped, isFalse);
+  });
+
   test('status grouping uses ordered bounded batches and drains on close',
       () async {
     final operations = SessionOperations();

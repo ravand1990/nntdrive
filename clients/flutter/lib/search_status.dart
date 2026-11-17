@@ -1,9 +1,58 @@
-import 'dart:convert';
-
 import 'account_search.dart';
 import 'search_status_names.dart';
 import 'local_availability.dart';
 import 'sync_controller.dart';
+
+// Only local_availability's consumed fields belong in this refresh snapshot.
+// Do not enumerate report/progress/error keys or recursively copy diagnostics.
+// Required lists still cost O(exclusions + conflicts + structured error paths)
+// synchronously: every root must be frozen before the first indexing await.
+SyncFolderConfig _freezeStatusFolder(
+    SyncFolderConfig folder, void Function() check) {
+  check();
+  final errors = <Map<String, dynamic>>[];
+  final sourceErrors = folder.lastReport?['item_errors'];
+  if (sourceErrors is List) {
+    for (final error in sourceErrors) {
+      check();
+      if (error is! Map) continue;
+      final operation = error['operation'];
+      if (operation is! String) continue;
+      final code = error['code'];
+      if (code is! String) continue;
+      final sourcePaths = error['paths'];
+      if (sourcePaths is! List) continue;
+      final paths = <String>[];
+      for (final path in sourcePaths) {
+        check();
+        if (path is String) paths.add(path);
+      }
+      errors.add({
+        'operation': operation,
+        'code': code,
+        'paths': List<String>.unmodifiable(paths),
+      });
+    }
+  }
+  final progress = folder.progress;
+  final path = progress?['path'];
+  final complete = progress?['complete'];
+  return SyncFolderConfig(
+      id: folder.id,
+      name: folder.name,
+      localPath: folder.localPath,
+      remoteRootId: folder.remoteRootId,
+      excluded: List<String>.unmodifiable(folder.excluded),
+      lastReport: {'item_errors': errors})
+    ..conflictFiles = List<String>.unmodifiable(folder.conflictFiles)
+    ..running = folder.running
+    ..progress = progress == null
+        ? null
+        : {
+            'path': path is String ? path : null,
+            'complete': complete is bool ? complete : null,
+          };
+}
 
 /// No HTTP, re-decryption, journal equality, paths or diagnostics in the result.
 /// The complete authenticated index supplies sibling/ancestor evidence. Only
@@ -23,14 +72,7 @@ Future<Map<String, SearchStatus>> inspectSearchStatuses({
   if (snapshot.length > 100000) throw const SearchUnavailable();
   // Freeze controller evidence before the first await. Never retain mutable
   // progress/reports across inspections or send controller objects to workers.
-  final roots = folders.map((folder) {
-    final copy = SyncFolderConfig.fromJson(
-        jsonDecode(jsonEncode(folder.toJson())) as Map<String, dynamic>);
-    copy.conflictFiles = List.of(folder.conflictFiles);
-    copy.running = folder.running;
-    copy.progress = folder.progress == null ? null : Map.of(folder.progress!);
-    return copy;
-  }).toList();
+  final roots = [for (final folder in folders) _freezeStatusFolder(folder, check)];
   final failedPathsByFolder = <SyncFolderConfig, Set<String>>{};
   for (final root in roots) {
     final errors = root.lastReport?['item_errors'];
