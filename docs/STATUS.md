@@ -41,6 +41,17 @@ installed pass stays open on
 
 ## Unsynced-items overview (#79 partial)
 
+Closing the Not synced page now cancels its active refresh at asynchronous
+stage boundaries. The builder checks before/after each folder inspection,
+mapping, final ordering and projection, and before initial report freezing.
+Already admitted work remains awaited, including a late failure; cancellation
+does not become a filesystem-failure notice or publish a partial overview.
+Each later independent refresh owns a fresh token. This avoids starting later
+folders/workers after disposal, but cannot interrupt an admitted native scan,
+worker, synchronous report freeze or result merge. It does not establish
+incremental inspection, cross-page inspection exclusion or installed speedup;
+installed lifecycle acceptance remains Backlog #65.
+
 The sync page now opens a device-local **Not synced** view. For every enabled
 sync folder it asks the Rust sync engine for a read-only plan — the same
 three-way reconciliation a real sync would apply — and lists each item with a

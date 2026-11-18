@@ -32,7 +32,7 @@ void main() {
         await tester.pumpWidget(
           MaterialApp(
             home: SyncOverviewPage(
-              load: () async {
+              load: (_) async {
                 active++;
                 if (active > peak) peak = active;
                 final result = Completer<UnsyncedOverview>();
@@ -90,7 +90,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: SyncOverviewPage(
-          load: () {
+          load: (_) {
             loads++;
             return pending.future;
           },
@@ -118,7 +118,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: SyncOverviewPage(
-          load: () async => snapshot('file-${++loads}.txt'),
+          load: (_) async => snapshot('file-${++loads}.txt'),
           onSyncFolder: (_) async {},
           watch: changes,
         ),
@@ -147,7 +147,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           home: SyncOverviewPage(
-            load: () {
+            load: (_) {
               loads++;
               return loads == 2
                   ? pending.future
@@ -197,7 +197,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: SyncOverviewPage(
-          load: () async => snapshot('file-${++loads}.txt'),
+          load: (_) async => snapshot('file-${++loads}.txt'),
           onSyncFolder: (_) async {},
           watch: changes,
           isBusy: () => busy,

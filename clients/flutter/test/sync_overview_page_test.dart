@@ -42,7 +42,7 @@ void main() {
       id: 'root', name: 'Documents', localPath: '/private/root', remoteRootId: 'remote',
     );
     await tester.pumpWidget(host(SyncOverviewPage(
-      load: () => buildUnsyncedOverview(
+      load: (_) => buildUnsyncedOverview(
         folders: [folder],
         inspect: (_) async => blocked
             ? {'filesystem_blocked': 'permission_denied', 'items': []}
@@ -96,7 +96,7 @@ void main() {
       },
     );
     await tester.pumpWidget(host(SyncOverviewPage(
-      load: () => buildUnsyncedOverview(
+      load: (_) => buildUnsyncedOverview(
         folders: [folder],
         inspect: (_) async => {
           'items': [
@@ -128,7 +128,7 @@ void main() {
       entry(UnsyncedStatus.failed, 'c.txt', reason: 'The server failed.'),
     ]);
     await tester.pumpWidget(host(SyncOverviewPage(
-      load: () async => overview,
+      load: (_) async => overview,
       onSyncFolder: (_) async {},
     )));
     await tester.pumpAndSettle();
@@ -150,7 +150,7 @@ void main() {
 
   testWidgets('states clearly when everything is in sync', (tester) async {
     await tester.pumpWidget(host(SyncOverviewPage(
-      load: () async => overviewOf(const []),
+      load: (_) async => overviewOf(const []),
       onSyncFolder: (_) async {},
     )));
     await tester.pumpAndSettle();
@@ -163,7 +163,7 @@ void main() {
     final synced = <String>[];
     var loads = 0;
     await tester.pumpWidget(host(SyncOverviewPage(
-      load: () async {
+      load: (_) async {
         loads++;
         return overviewOf([entry(UnsyncedStatus.cloudOnly, 'cloud.txt')]);
       },
@@ -187,7 +187,7 @@ void main() {
     var busy = true;
     var loads = 0;
     await tester.pumpWidget(host(SyncOverviewPage(
-      load: () async {
+      load: (_) async {
         loads++;
         return overviewOf([entry(UnsyncedStatus.cloudOnly, 'cloud.txt')]);
       },
@@ -216,7 +216,7 @@ void main() {
     var loads = 0;
     const copy = 'notes (conflict 2026-11-13).txt';
     await tester.pumpWidget(host(SyncOverviewPage(
-      load: () async {
+      load: (_) async {
         loads++;
         return overviewOf([
           entry(UnsyncedStatus.conflict, copy, reason: 'Both sides changed.'),
@@ -245,7 +245,7 @@ void main() {
       (tester) async {
     var loads = 0;
     await tester.pumpWidget(host(SyncOverviewPage(
-      load: () async {
+      load: (_) async {
         loads++;
         return overviewOf([entry(UnsyncedStatus.conflict, 'a (conflict 1).txt')]);
       },
@@ -269,7 +269,7 @@ void main() {
   testWidgets('no conflict action is offered without a resolver',
       (tester) async {
     await tester.pumpWidget(host(SyncOverviewPage(
-      load: () async =>
+      load: (_) async =>
           overviewOf([entry(UnsyncedStatus.conflict, 'b (conflict 1).txt')]),
       onSyncFolder: (_) async {},
     )));
@@ -286,7 +286,7 @@ void main() {
     final inspected = <UnsyncedEntry>[];
     final revealed = <UnsyncedEntry>[];
     await tester.pumpWidget(host(SyncOverviewPage(
-      load: () async {
+      load: (_) async {
         loads++;
         return overviewOf([item]);
       },
@@ -310,7 +310,7 @@ void main() {
   testWidgets('missing local copy disables reveal with a text explanation',
       (tester) async {
     await tester.pumpWidget(host(SyncOverviewPage(
-      load: () async => overviewOf([entry(UnsyncedStatus.cloudOnly, 'cloud.txt')]),
+      load: (_) async => overviewOf([entry(UnsyncedStatus.cloudOnly, 'cloud.txt')]),
       onSyncFolder: (_) async {},
       canRevealLocal: (_) async => false,
       onRevealLocal: (_) async => fail('Missing copy must not launch'),
@@ -328,7 +328,7 @@ void main() {
       (tester) async {
     var loads = 0;
     await tester.pumpWidget(host(SyncOverviewPage(
-      load: () async {
+      load: (_) async {
         loads++;
         return overviewOf([entry(UnsyncedStatus.failed, 'file.txt')]);
       },
@@ -349,7 +349,7 @@ void main() {
   testWidgets('unsupported platforms offer no local reveal action',
       (tester) async {
     await tester.pumpWidget(host(SyncOverviewPage(
-      load: () async => overviewOf([entry(UnsyncedStatus.localOnly, 'local.txt')]),
+      load: (_) async => overviewOf([entry(UnsyncedStatus.localOnly, 'local.txt')]),
       onSyncFolder: (_) async {},
     )));
     await tester.pumpAndSettle();
@@ -361,7 +361,7 @@ void main() {
   testWidgets('folder-level problems are visible, not an empty list',
       (tester) async {
     await tester.pumpWidget(host(SyncOverviewPage(
-      load: () async => overviewOf(
+      load: (_) async => overviewOf(
         [entry(UnsyncedStatus.blocked, '', reason: 'Storage access is needed.')],
         notices: const [UnsyncedNotice('Shared', 'Folder could not be compared.')],
       ),
