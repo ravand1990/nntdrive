@@ -210,6 +210,37 @@ class UnsyncedOverview {
       _projection.filtered(status: status, folderId: folderId);
 }
 
+/// Caller-owned cancellation, never transferred to a mapping/native worker.
+/// Cancellation stops later stages, not work that has already been admitted.
+class OverviewCancellation {
+  bool _cancelled = false;
+
+  bool get isCancelled => _cancelled;
+
+  void cancel() => _cancelled = true;
+
+  void check() {
+    if (_cancelled) throw const OverviewCancelled();
+  }
+}
+
+/// An abandoned read-only refresh, not a filesystem or sync failure.
+class OverviewCancelled implements Exception {
+  const OverviewCancelled();
+}
+
+// Await admitted work even after cancellation; never race it against a token.
+// A late stage failure is cancellation too, not a new user-visible sync error.
+Future<T> _overviewStage<T>(OverviewCancellation? cancellation,
+    Future<T> Function() run) async {
+  cancellation?.check();
+  try {
+    return await run();
+  } finally {
+    cancellation?.check();
+  }
+}
+
 typedef FolderInspector = Future<Map<String, dynamic>> Function(
     SyncFolderConfig folder);
 
@@ -224,11 +255,13 @@ typedef FolderInspector = Future<Map<String, dynamic>> Function(
 Future<UnsyncedOverview> buildUnsyncedOverview({
   required List<SyncFolderConfig> folders,
   required FolderInspector inspect,
+  OverviewCancellation? cancellation,
   int maxEntries = 20000,
   OverviewEntryOrderer orderEntries = orderUnsyncedEntries,
   OverviewFolderMapper mapFolder = mapUnsyncedFolder,
   OverviewEntryProjector projectEntries = projectUnsyncedEntries,
 }) async {
+  cancellation?.check();
   // Freeze every folder before the first await, including later folders' reports.
   // No live config, controller, inspector closure or session reaches a worker.
   final frozen = [for (final folder in folders) _freezeOverviewFolder(folder)];
@@ -243,20 +276,22 @@ Future<UnsyncedOverview> buildUnsyncedOverview({
     var inspectionFailed = false;
     if (!folder.storageAccessRequired) {
       try {
-        plan = await inspect(sources[i]);
+        plan = await _overviewStage(cancellation, () => inspect(sources[i]));
+      } on OverviewCancelled {
+        rethrow;
       } catch (_) {
         inspectionFailed = true;
       }
     }
-    final mapped = await mapFolder(
-        folder, plan, maxEntries - entries.length, inspectionFailed);
+    final mapped = await _overviewStage(cancellation, () => mapFolder(
+        folder, plan, maxEntries - entries.length, inspectionFailed));
     entries.addAll(mapped.entries);
     summaries.add(mapped.summary);
     notices.addAll(mapped.notices);
     truncated = truncated || mapped.truncated;
   }
-  final ordered = await orderEntries(entries);
-  final projection = await projectEntries(ordered);
+  final ordered = await _overviewStage(cancellation, () => orderEntries(entries));
+  final projection = await _overviewStage(cancellation, () => projectEntries(ordered));
   return UnsyncedOverview._prepared(
     projection: projection,
     folders: summaries,

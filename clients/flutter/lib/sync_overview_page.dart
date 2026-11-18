@@ -29,7 +29,7 @@ class SyncOverviewPage extends StatefulWidget {
     this.isBusy,
   });
 
-  final Future<UnsyncedOverview> Function() load;
+  final Future<UnsyncedOverview> Function(OverviewCancellation cancellation) load;
   final Future<void> Function(String folderId) onSyncFolder;
   final Future<bool> Function(String folderId)? onGrantAccess;
 
@@ -69,6 +69,7 @@ class _SyncOverviewPageState extends State<SyncOverviewPage> {
   bool _refreshRunning = false;
   bool _refreshQueued = false;
   bool _explicitRefreshQueued = false;
+  OverviewCancellation? _refreshCancellation;
 
   bool get _canDrainRefresh => _refreshQueued &&
       (_explicitRefreshQueued ||
@@ -93,6 +94,7 @@ class _SyncOverviewPageState extends State<SyncOverviewPage> {
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _refreshCancellation?.cancel();
     widget.watch?.removeListener(_onSyncChanged);
     super.dispose();
   }
@@ -123,6 +125,8 @@ class _SyncOverviewPageState extends State<SyncOverviewPage> {
       return;
     }
     _refreshRunning = true;
+    final cancellation = OverviewCancellation();
+    _refreshCancellation = cancellation;
     setState(() {
       if (showSpinner || _overview == null) _loading = true;
       _error = null;
@@ -132,7 +136,7 @@ class _SyncOverviewPageState extends State<SyncOverviewPage> {
         _refreshQueued = false;
         _explicitRefreshQueued = false;
         try {
-          final overview = await widget.load();
+          final overview = await widget.load(cancellation);
           if (!mounted) return;
           // A change during inspection needs a fresh plan, not this old result.
           if (_canDrainRefresh) continue;
@@ -153,6 +157,7 @@ class _SyncOverviewPageState extends State<SyncOverviewPage> {
       // Busy/action admission is retried by the next idle notification or by
       // _runAction's mandatory completion refresh, never by a polling loop.
       _refreshRunning = false;
+      _refreshCancellation = null;
       _refreshQueued = false;
       _explicitRefreshQueued = false;
     }
