@@ -379,6 +379,38 @@ inspection and final result merging remain caller-side; worker startup and a
 second whole-snapshot scalar map plus safe IDs consume RAM. This is not a
 measured speedup, full cold-build isolation or installed-device acceptance (#93).
 
+The search-status conflict-index follow-up (#80) streams frozen root-ordinal/path
+records to one refresh-owned worker in sequential acknowledged batches of at most
+128. Exact membership, deduplication, same-directory `originalConflictPath`
+inference, portable candidate validation and immutable per-root indexes are built
+there once, not rescanned across all conflict paths for each search entry. Every
+root receives prepared evidence, including empty indexes which never invoke the
+live browser fallback. All roots still freeze before the first await. Discovery
+is only a hint: each actual candidate's type and canonical path are checked again
+at inspection time, every containing component remains confined, and a missing
+ancestor returns before candidate lookup. No filesystem acceptance is cached;
+missing originals remain non-revealable and conflict/error/transfer precedence is
+unchanged. Browser consumers without prepared evidence retain live discovery.
+
+An original-code counted-list regression observed 400 reads for five entries
+against 40 conflict paths; prepared inspection reads those paths only once.
+Sendable guarded batches prove off-caller execution and production 128/128/2
+wiring. Caller-side Future.sync sabotage fails the location regression; omitting
+prepared production evidence fails the root/precedence regression. Tests also
+cover duplicates, invalid paths, exact spelling, root separation, empty-versus-
+absent evidence, multiple candidates, deletion, directory/link substitution,
+missing ancestors, worker finalization on producer success/failure, cancellation,
+previous-snapshot retention and suspended close/drain. Pinned
+`bash scripts/dev-check.sh flutter` passed **523 tests / four Windows-only skips**,
+clean analysis and a real release FFI build; the SDK tag-fetch advisory did not
+fail checks. Link-creation assertions in the new fixture are omitted on Windows
+where they may require privileges. Required synchronous freezing, scalar input
+assembly/message copies, per-candidate filesystem IO and validation, final merges,
+worker startup and whole-refresh index RAM remain costs. Candidate lists for one
+original can still require multiple filesystem probes. This is bounded streaming
+and execution-location evidence, not bounded total index RAM, a measured UI
+speedup, whole-build isolation or installed-device acceptance (#93).
+
 Typing coalesces for 40 ms before dispatching a query worker (previously 180 ms,
 which alone exceeded the ~150 ms keystroke-to-results target). Immediate query
 actions consume any pending typing timer to avoid duplicate dispatch. Widget

@@ -1,6 +1,8 @@
 import 'account_search.dart';
 import 'search_status_names.dart';
 import 'search_status_errors.dart';
+import 'search_status_conflicts.dart';
+import 'conflict_paths.dart';
 import 'search_status_ancestry.dart';
 import 'local_availability.dart';
 import 'sync_controller.dart';
@@ -67,6 +69,9 @@ Future<Map<String, SearchStatus>> inspectSearchStatuses({
   Future<List<Set<String>>> Function(
           int, Stream<List<SearchStatusErrorPath>>) indexErrors =
       indexSearchStatusErrors,
+  Future<List<PreparedConflictPaths>> Function(
+          int, Stream<List<SearchStatusConflictPath>>) indexConflicts =
+      indexSearchStatusConflicts,
   Future<void> Function(
           Stream<List<SearchStatusNode>>, Set<String>, Stream<List<String>>,
           Future<void> Function(List<SearchStatusAncestry>)) inspectAncestries =
@@ -110,6 +115,29 @@ Future<Map<String, SearchStatus>> inspectSearchStatuses({
   check();
   final failedPathsByFolder = <SyncFolderConfig, Set<String>>{
     for (var i = 0; i < roots.length; i++) roots[i]: indexes[i],
+  };
+  Stream<List<SearchStatusConflictPath>> conflictBatches() async* {
+    var batch = <SearchStatusConflictPath>[];
+    for (var i = 0; i < roots.length; i++) {
+      check();
+      for (final path in roots[i].conflictFiles) {
+        check();
+        batch.add((root: i, path: path));
+        if (batch.length == searchStatusConflictBatchSize) {
+          yield batch;
+          check();
+          batch = <SearchStatusConflictPath>[];
+        }
+      }
+      roots[i].conflictFiles = const [];
+    }
+    if (batch.isNotEmpty) yield batch;
+    check();
+  }
+  final conflictIndexes = await indexConflicts(roots.length, conflictBatches());
+  check();
+  final conflictPathsByFolder = <SyncFolderConfig, PreparedConflictPaths>{
+    for (var i = 0; i < roots.length; i++) roots[i]: conflictIndexes[i],
   };
   Stream<List<SearchStatusName>> nameBatches() async* {
     var batch = <SearchStatusName>[];
@@ -170,6 +198,7 @@ Future<Map<String, SearchStatus>> inspectSearchStatuses({
           ancestry: ancestry,
           folders: roots,
           failedPathsByFolder: failedPathsByFolder,
+          conflictPathsByFolder: conflictPathsByFolder,
           isDir: entry.isDir,
           cancelled: cancelled);
         check();

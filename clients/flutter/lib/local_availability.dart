@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import 'api.dart';
+import 'conflict_paths.dart';
 import 'file_rename.dart';
 import 'sync_controller.dart';
 
@@ -122,6 +123,7 @@ Future<LocalAvailability> inspectLocalAvailability({
   required bool isDir,
   bool Function()? cancelled,
   Map<SyncFolderConfig, Set<String>>? failedPathsByFolder,
+  Map<SyncFolderConfig, PreparedConflictPaths>? conflictPathsByFolder,
 }) async {
   void check() {
     if (cancelled?.call() == true) throw StateError('Inspection cancelled');
@@ -140,6 +142,7 @@ Future<LocalAvailability> inspectLocalAvailability({
   if (matches.length != 1) return LocalAvailability.unknown;
   final (folder, index) = matches.single;
   final failedPaths = failedPathsByFolder?[folder];
+  final conflictPaths = conflictPathsByFolder?[folder];
   final components = ancestry.skip(index + 1).map((node) => node.name).toList();
   if (components.isEmpty && !isDir) return LocalAvailability.unknown;
   if (components.any((name) => renameValidationError(name) != null)) {
@@ -171,7 +174,7 @@ Future<LocalAvailability> inspectLocalAvailability({
         // Only a missing leaf has a validated containing directory. A missing
         // ancestor must not let cached conflict discovery bypass confinement.
         final conflict = !isDir && i == components.length - 1 &&
-            await _hasSafeConflictCopy(folder, relative, current);
+            await _hasSafeConflictCopy(folder, relative, current, conflictPaths);
         return LocalAvailability(
             conflict ? 'Conflict' : 'Cloud only',
             conflict
@@ -195,9 +198,10 @@ Future<LocalAvailability> inspectLocalAvailability({
             'Error', 'The expected synced path has an unsafe or unexpected type.');
       }
     }
-    var conflict = !isDir && folder.conflictFiles.contains(relative);
+    var conflict = !isDir && (conflictPaths?.exact.contains(relative) ??
+        folder.conflictFiles.contains(relative));
     if (!isDir && !conflict) {
-      conflict = await _hasSafeConflictCopy(folder, relative, current);
+      conflict = await _hasSafeConflictCopy(folder, relative, current, conflictPaths);
     }
     return LocalAvailability(
         conflict ? 'Conflict' : 'Local',
@@ -219,8 +223,13 @@ Future<LocalAvailability> inspectLocalAvailability({
 // Discovery is only a hint: recheck same-directory regular-file presence. This
 // establishes a conflict candidate, not journal validity or revision equality.
 Future<bool> _hasSafeConflictCopy(
-    SyncFolderConfig folder, String relative, String current) async {
-  for (final copy in folder.conflictFiles) {
+    SyncFolderConfig folder, String relative, String current,
+    PreparedConflictPaths? conflictPaths) async {
+  // Empty prepared evidence is authoritative. The browser has no prepared
+  // index and continues to use live discovery. Revalidate each actual candidate.
+  final copies = conflictPaths == null ? folder.conflictFiles :
+      conflictPaths.candidatesByOriginal[relative] ?? const <String>[];
+  for (final copy in copies) {
     if (p.posix.dirname(copy) != p.posix.dirname(relative) ||
         originalConflictPath(copy) != relative ||
         copy.split('/').any((part) => renameValidationError(part) != null)) {
