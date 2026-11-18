@@ -352,6 +352,33 @@ worker startup and retained whole-refresh error-path RAM remain costs. This is
 execution-location/lifecycle evidence, not whole-build isolation, a measured UI
 speedup or installed-device acceptance; #93 remains separate.
 
+The search-status ancestry follow-up (#80) retains one scalar ID/parent/name/type
+snapshot and the completed safe-ID set on a refresh-owned worker. Sequential
+input and requested-output batches contain at most 128 entries. The worker walks
+and validates parents, checks safe IDs and constructs root-first ancestries;
+missing/non-directory parents, unsafe ancestors, cycles and excessive depth
+remain unknown. The exact previous bound is preserved: up to 257 nodes may reach
+a null parent, but attempting a 258th fails closed. Only one requested batch of
+bounded ancestries is returned at a time, never all 100k full paths. Filesystem
+availability inspection stays caller-side async IO and is awaited before the next
+request. No native handle, HTTP client, controller or extra name decryption is
+introduced. The entire operation remains inside the owned status inspection;
+finally sends finish and awaits the worker after producer/consumer failures and
+cancellation, so session close/drain still waits and rejects late publication.
+
+Sendable getter guards cover worker execution and production ordered 128/128/1
+input/request/output wiring. The original caller-side parent-map walk fails a
+regression; replacing the new worker dispatch with Future.sync also fails its
+execution-location test. Tests cover unsafe and malformed ancestry, exact depth
+bound, cycles, bounded output, finalization gates, producer failure retaining the
+previous snapshot and suspended close/drain. Pinned `dev-check.sh flutter` passed
+**513 tests / four Windows-only skips**, clean analysis and the release FFI build.
+The SDK's offline tag-fetch advisory did not fail checks. Scalar snapshot copying,
+required config/report freezing, batch assembly/transfers, conflict/filesystem
+inspection and final result merging remain caller-side; worker startup and a
+second whole-snapshot scalar map plus safe IDs consume RAM. This is not a
+measured speedup, full cold-build isolation or installed-device acceptance (#93).
+
 Typing coalesces for 40 ms before dispatching a query worker (previously 180 ms,
 which alone exceeded the ~150 ms keystroke-to-results target). Immediate query
 actions consume any pending typing timer to avoid duplicate dispatch. Widget

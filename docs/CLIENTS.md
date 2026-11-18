@@ -131,15 +131,22 @@ refresh-owned worker. It consumes sequential batches of at most 128 scalar
 ID/parent/name records, keeping the growing counts private rather than repeatedly
 copying them across isolates. The complete snapshot (at most 100k nodes) is
 considered before returning safe IDs: late invalid siblings poison their entire
-parent group, canonical aliases poison both spellings, and caller-side ancestry
-walks reject descendants of either. No native bridge object or cancellation
+parent group, canonical aliases poison both spellings, and worker-side ancestry
+walks reject descendants of either (see below). No native bridge object or cancellation
 closure crosses isolates; the comparison ABI needs no unlocked-key handle.
 Close stops further batches and rejects late evidence; the worker is finished and
 awaited even on producer failure/cancellation before session drain completes.
-Whole-report JSON freezing, error-index immutable-set construction, name-record
-copying, ancestry walks, conflict scans, filesystem inspection and final snapshot
-merging remain caller-side. The worker retains bounded whole-snapshot grouping
-state until completion; spawn/message/final safe-ID transfer costs remain. This
+Required config/path freezing, scalar batch assembly/transfers, conflict scans,
+filesystem inspection and final snapshot merging remain caller-side. Error-path
+indexing runs on its own refresh-owned worker. After grouping completes, another
+refresh-owned worker retains the scalar snapshot and safe IDs once, then validates
+and reverses ancestry for sequential requests of at most 128 entries. Each entry's
+ancestry contains at most 257 nodes (the existing depth bound); cycles, missing/non-directory
+parents and unsafe ancestors fail closed. It never materializes all full paths.
+The caller awaits async filesystem inspection before requesting the next batch.
+Producer/consumer failure and cancellation finish and await the worker inside the
+owned status build before session drain completes. Workers retain whole-snapshot
+scalar/grouping state until completion; spawn/message/transfer costs remain. This
 is not full cold-build isolation, an atomic filesystem snapshot or an
 installed-device performance claim. A failed inspection preserves
 the entire previous snapshot, including its possibly stale status observations.
