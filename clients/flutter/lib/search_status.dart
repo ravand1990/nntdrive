@@ -1,6 +1,7 @@
 import 'account_search.dart';
 import 'search_status_names.dart';
 import 'search_status_errors.dart';
+import 'search_status_ancestry.dart';
 import 'local_availability.dart';
 import 'sync_controller.dart';
 
@@ -66,6 +67,10 @@ Future<Map<String, SearchStatus>> inspectSearchStatuses({
   Future<List<Set<String>>> Function(
           int, Stream<List<SearchStatusErrorPath>>) indexErrors =
       indexSearchStatusErrors,
+  Future<void> Function(
+          Stream<List<SearchStatusNode>>, Set<String>, Stream<List<String>>,
+          Future<void> Function(List<SearchStatusAncestry>)) inspectAncestries =
+      inspectSearchStatusAncestries,
   required bool Function() cancelled,
 }) async {
   void check() {
@@ -123,51 +128,68 @@ Future<Map<String, SearchStatus>> inspectSearchStatuses({
 
   final safeIds = await groupNames(nameBatches());
   check();
+  Stream<List<SearchStatusNode>> nodeBatches() async* {
+    var batch = <SearchStatusNode>[];
+    for (final item in snapshot.entries) {
+      check();
+      final entry = item.value;
+      batch.add((key: item.key, id: entry.file.id, parent: entry.file.parentId,
+          name: entry.name, isDir: entry.file.isDir));
+      if (batch.length == searchStatusAncestryBatchSize) {
+        yield batch;
+        check();
+        batch = <SearchStatusNode>[];
+      }
+    }
+    if (batch.isNotEmpty) yield batch;
+    check();
+  }
+  Stream<List<String>> requestBatches() async* {
+    var batch = <String>[];
+    for (final key in snapshot.keys) {
+      check();
+      batch.add(key);
+      if (batch.length == searchStatusAncestryBatchSize) {
+        yield batch;
+        check();
+        batch = <String>[];
+      }
+    }
+    if (batch.isNotEmpty) yield batch;
+    check();
+  }
   var processed = 0;
   final result = <String, SearchStatus>{};
-  for (final entry in snapshot.values) {
-    check();
-    final ancestry = <({String id, String name})>[];
-    SearchEntry? node = entry;
-    var safe = true;
-    while (node != null) {
-      final parent = node.file.parentId;
-      if (ancestry.length > 256 || !safeIds.contains(node.file.id)) {
-        safe = false;
-        break;
-      }
-      ancestry.add((id: node.file.id, name: node.name));
-      if (parent == null) break;
-      node = snapshot[parent];
-      if (node == null || !node.file.isDir) {
-        safe = false;
-        break;
-      }
-    }
-    var status = SearchStatus.unknown;
-    if (safe) {
-      final availability = await inspectLocalAvailability(
-          ancestry: ancestry.reversed.toList(),
+  await inspectAncestries(nodeBatches(), safeIds, requestBatches(), (batch) async {
+    for (final entry in batch) {
+      check();
+      final ancestry = entry.ancestry;
+      var status = SearchStatus.unknown;
+      if (ancestry != null) {
+        final availability = await inspectLocalAvailability(
+          ancestry: ancestry,
           folders: roots,
           failedPathsByFolder: failedPathsByFolder,
-          isDir: entry.file.isDir,
+          isDir: entry.isDir,
           cancelled: cancelled);
-      check();
-      status = switch (availability.displayLabel) {
-        'Local' => SearchStatus.local,
-        'Cloud only' => SearchStatus.cloudOnly,
-        'Not covered' => SearchStatus.notCovered,
-        'Syncing' => SearchStatus.syncing,
-        'Conflict' => SearchStatus.conflict,
-        'Error' => SearchStatus.error,
-        _ => SearchStatus.unknown,
-      };
+        check();
+        status = switch (availability.displayLabel) {
+          'Local' => SearchStatus.local,
+          'Cloud only' => SearchStatus.cloudOnly,
+          'Not covered' => SearchStatus.notCovered,
+          'Syncing' => SearchStatus.syncing,
+          'Conflict' => SearchStatus.conflict,
+          'Error' => SearchStatus.error,
+          _ => SearchStatus.unknown,
+        };
+      }
+      result[entry.id] = status;
+      if (++processed % 128 == 0) {
+        await Future<void>.delayed(Duration.zero);
+        check();
+      }
     }
-    result[entry.file.id] = status;
-    if (++processed % 128 == 0) {
-      await Future<void>.delayed(Duration.zero);
-      check();
-    }
-  }
+  });
+  check();
   return result;
 }
