@@ -6,6 +6,8 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.28.5] - 2026-11-18
+
 ### Bug fixes
 
 - Encrypted search validates status ancestry and constructs root-first paths on one refresh-owned device-local worker. Snapshot scalar inputs and sequential requested outputs are bounded to 128 entries per batch, with at most 257 ancestors per entry; unsafe names, missing/non-directory parents, excessive depth and cycles still fail closed. Cancellation and producer/inspection failures finish and await the worker. Configuration copying, input assembly, filesystem IO and final merging remain caller-side; no measured speedup or whole-build isolation is claimed (#80).
