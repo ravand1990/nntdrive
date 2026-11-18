@@ -79,6 +79,30 @@ Map<String, SearchEntry> _assembleSearchEntries(
   return entries;
 }
 
+/// One final refresh-time projection. Only completed RAM snapshots cross this
+/// boundary, never a controller, key handle or session lifecycle context. The
+/// input is bounded by rebuild's 100k-entry limit; it is copied once, not once
+/// per batch. Spawn/message copies and the earlier candidate merges still cost
+/// caller time and RAM; this is not whole-build isolation.
+Future<Map<String, SearchEntry>> runSearchStatusPublication(
+  Map<String, SearchEntry> snapshot,
+  Map<String, SearchStatus> statuses,
+) =>
+    Isolate.run(() => _applySearchStatuses(snapshot, statuses));
+
+Map<String, SearchEntry> _applySearchStatuses(
+  Map<String, SearchEntry> snapshot,
+  Map<String, SearchStatus> statuses,
+) {
+  final result = <String, SearchEntry>{};
+  for (final item in snapshot.entries) {
+    final status = statuses[item.key] ?? SearchStatus.unknown;
+    result[item.key] = item.value.withStatus(
+        status == SearchStatus.all ? SearchStatus.unknown : status);
+  }
+  return result;
+}
+
 /// Deliberately diagnostic-free: upstream errors may contain names or tokens.
 class SearchUnavailable implements Exception {
   const SearchUnavailable();
@@ -173,6 +197,7 @@ class AccountSearch extends ChangeNotifier {
     this.queryWorker = runSearchQuery,
     this.entryWorker = runSearchEntryBatch,
     this.traversalWorker = runSearchTraversalBatch,
+    this.statusWorker = runSearchStatusPublication,
     required this.authorize,
   });
   static const decryptBatchSize = 128;
@@ -199,6 +224,10 @@ class AccountSearch extends ChangeNotifier {
   final Future<List<String>> Function(
       Map<String, SearchEntry>, SearchFilter, int) queryWorker;
   Future<void> _queryTail = Future<void>.value();
+  /// One final projection, awaited inside the owned build before publication.
+  /// Production captures only sendable completed entries and scalar statuses.
+  final Future<Map<String, SearchEntry>> Function(
+      Map<String, SearchEntry>, Map<String, SearchStatus>) statusWorker;
   Map<String, SearchEntry> _entries = {};
   final List<SearchFilter> _recent = [];
   final List<SearchFilter> _saved = [];
@@ -265,7 +294,7 @@ class AccountSearch extends ChangeNotifier {
       await operations.run(handle, () async {
         _check(epoch);
         _authorize(); // Locked handles fail before any HTTP request.
-        final candidate = <String, SearchEntry>{};
+        var candidate = <String, SearchEntry>{};
         final queue = <({String? id, int depth})>[(id: null, depth: 0)];
         final slice = Stopwatch()..start();
         for (var cursor = 0; cursor < queue.length; cursor++) {
@@ -338,16 +367,8 @@ class AccountSearch extends ChangeNotifier {
           final statuses = await inspectStatuses(
               Map.unmodifiable(candidate), () => _closed || epoch != _epoch);
           _check(epoch);
-          var processed = 0;
-          for (final id in candidate.keys) {
-            final status = statuses[id] ?? SearchStatus.unknown;
-            candidate[id] = candidate[id]!.withStatus(
-                status == SearchStatus.all ? SearchStatus.unknown : status);
-            if (++processed % 128 == 0) {
-              await Future<void>.delayed(Duration.zero);
-              _check(epoch);
-            }
-          }
+          candidate = await statusWorker(candidate, statuses);
+          _check(epoch); // Close discards output, but session drain awaits it.
         }
         _check(epoch);
         _authorize();
