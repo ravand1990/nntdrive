@@ -6,6 +6,8 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.28.9] - 2026-11-18
+
 ### Bug fixes
 
 - Closing the Not synced page cancels admission of later folder inspections and mapping/ordering/projection workers. An already running stage is still awaited; its late result or failure cannot start another stage or update the closed page. This does not interrupt a native scan already in progress or add incremental native inspection (#79).
