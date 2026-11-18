@@ -6,6 +6,8 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.28.6] - 2026-11-18
+
 ### Bug fixes
 
 - Encrypted search prepares per-root exact conflict membership and same-directory original-to-copy candidate lookups once per refresh on an owned worker, using sequential batches of at most 128 paths. Empty prepared indexes never fall back to repeated discovery-list scans; browser consumers retain live discovery. Every actual candidate still receives fresh confined filesystem checks, with missing-ancestor and conflict/error/transfer semantics unchanged. Required freezing, message copying, filesystem inspection and final merging remain costs; no measured speedup or whole-build isolation is claimed (#80).
