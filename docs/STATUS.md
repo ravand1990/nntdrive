@@ -223,7 +223,7 @@ and whole-plan temporary memory remain; no installed frame-time/speedup claim wa
 measured. Large-tree incremental inspection/responsiveness is still unfinished
 under #79; installed permission/revocation and TalkBack acceptance remain #65.
 
-## Account-wide encrypted-name search (#80 partial)
+## Account-wide encrypted-name search (#80)
 
 ### Final status publication worker
 
@@ -617,11 +617,20 @@ clean analysis and the real release FFI build; five wrapper and ten agent-policy
 contracts also passed. Independent diff review found no blocking issue.
 This is isolation evidence, not a measured speedup or installed-device acceptance.
 
-This is not full #80 completion: search rows expose refresh-time availability,
-not verified journal/revision equality or continuously current sync state.
-Persistent encrypted offline indexing/history, incremental event updates,
-installed-device performance and full cold-build responsiveness remain unverified
-or unfinished. Query scanning/filtering and bounded top-200 ranking now run on
+The requested #80 search functions are implemented: account-wide name/metadata
+search, combined filters, paths and refresh-time statuses, session-local recent
+searches/saved filters, offline queries over the last complete RAM snapshot, and
+account-close clearing. Installed 10k/100k responsiveness, keystroke-to-result
+p95 and lifecycle/privacy acceptance remain explicitly unverified in #93, not a
+feature-completion gate under `AGENTS.md` §5. The issue asks for a nonblocking
+cold build, not complete isolation of every copy/merge; worker/yield regressions
+support the implementation, not measured installed responsiveness. Persistent
+encrypted indexes/history across restarts, incremental event updates and verified
+journal/revision-equality badges are not requirements in #80's original scope;
+none is claimed here. See the [acceptance map](CLIENTS.md#search-acceptance-and-limits)
+for implementation/test evidence and exact limitations.
+
+Query scanning/filtering and bounded top-200 ranking now run on
 short-lived worker isolates, with at most one query worker in flight per index.
 New queries/snapshot publication invalidate old results, superseded queued work
 never dispatches, and close/drain owns every queued/running workflow through

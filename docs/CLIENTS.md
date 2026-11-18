@@ -65,7 +65,9 @@ update automation are outside
 - iOS build/signing.
 - Windows packaging/signing (build works; the FFI DLL must ship next to the exe).
 
-## Account-wide search (#80 partial)
+<a id="account-wide-search-80-partial"></a>
+
+## Account-wide search (#80)
 
 Open **Search all files** (globe/search icon) in the file browser. Every opening
 refreshes the account-wide index of decrypted names, including nested and empty
@@ -136,14 +138,15 @@ walks reject descendants of either (see below). No native bridge object or cance
 closure crosses isolates; the comparison ABI needs no unlocked-key handle.
 Close stops further batches and rejects late evidence; the worker is finished and
 awaited even on producer failure/cancellation before session drain completes.
-Required config/path freezing, scalar batch assembly/transfers, conflict scans,
-filesystem inspection and final snapshot merging remain caller-side. Error-path
-indexing runs on its own refresh-owned worker. After grouping completes, another
+Required config/path freezing, scalar batch assembly/transfers and final
+candidate-map merging remain caller-side. Error/conflict-path indexing and
+filesystem inspection run on refresh-owned workers. After grouping completes, another
 refresh-owned worker retains the scalar snapshot and safe IDs once, then validates
 and reverses ancestry for sequential requests of at most 128 entries. Each entry's
 ancestry contains at most 257 nodes (the existing depth bound); cycles, missing/non-directory
 parents and unsafe ancestors fail closed. It never materializes all full paths.
-The caller awaits async filesystem inspection before requesting the next batch.
+The caller awaits the refresh-owned filesystem worker's bounded inspection before
+requesting the next ancestry batch.
 Producer/consumer failure and cancellation finish and await the worker inside the
 owned status build before session drain completes. Workers retain whole-snapshot
 scalar/grouping state until completion; spawn/message/transfer costs remain. This
@@ -151,9 +154,10 @@ is not full cold-build isolation, an atomic filesystem snapshot or an
 installed-device performance claim. A failed inspection preserves
 the entire previous snapshot, including its possibly stale status observations.
 
-Not complete #80: verified journal-equality result badges,
-durable encrypted offline persistence/history and automatic event refresh remain
-unfinished. Freshness is entry/rebuild-triggered only: there is no polling, SSE
+Verified journal-equality result badges, durable encrypted offline
+persistence/history and automatic event refresh are not implemented and are not
+promised by #80's session-local search scope. Freshness is entry/rebuild-triggered
+only: there is no polling, SSE
 subscription or background re-listing, so edits made while the page stays open
 appear only after a rebuild or the next opening, and offline snapshots may be
 stale. Query scanning, combined filtering and bounded top-200 ranking now run in
@@ -203,6 +207,35 @@ Builds reject malformed/unreadable trees and bounds above 100k
 entries/depth 256 without replacing the previous complete index. Synthetic warm
 query tests are not installed-device/cold-network performance acceptance. No
 content extraction or server-side plaintext search is introduced.
+
+### Search acceptance and limits
+
+The original #80 contract is implemented by the merged search increments through
+PR #163. Earlier partial-work notes added durable persistence, continuous refresh
+and total cold-build isolation as mandatory work; those are not criteria in the
+issue body. This reconciliation does not claim those capabilities or remove the
+requested responsiveness target. Under `AGENTS.md` §5, installed performance and
+lifecycle verification remain the explicit Backlog follow-up #93.
+
+All test paths below are relative to `clients/flutter/test/`.
+
+| Original criterion | Implementation and repeatable evidence | Remaining verification |
+|---|---|---|
+| Matches across folders | Recursive root listing; `account_search_test.dart` nested/empty-folder ranking and `account_search_native_test.dart` native nested/offline fixture | Installed nested browsing in #93 |
+| Combined filters and clear | `search_page.dart` controls and worker conjunctions; `search_page_test.dart` and `search_status_test.dart` combined, clear, saved/recent cases | Installed interaction in #93 |
+| Path, size, status and opening | Result rows return the selected entry; `main.dart` re-lists before opening the current item; page rendering/selection tests | End-to-end installed browser actions in #93 |
+| Offline indexed items; nonblocking cold build | Session RAM snapshot, failed-refresh retention, bounded workers/yields; search unit/native, listing and status-worker tests | Real cold-network/frame responsiveness in #93; not whole-build isolation |
+| Account scope, clear on sign-out, no duplicate rebuild | Session-owned index, close-before-drain, duplicate/parent rejection and atomic publication; unit/native lifecycle tests | Installed delayed-listing sign-out/Quit in #93 |
+| No plaintext leaves the device | Opaque-ID-only native/loopback request assertions, authenticated names, redacted errors and no search persistence | Installed preferences/cache/log inspection in #93; no physical RAM-zeroization guarantee |
+| 100k entries and 10k p95 below ~150 ms | 100k bounded/yield regression and 10k synthetic warm-query timing test; 40 ms input debounce | Normal-desktop keystroke-to-painted-results p95 in #93, not established by worker timing |
+
+On 2026-11-18, `bash scripts/dev-check.sh flutter` rebuilt the real release FFI,
+reported clean analysis and passed **536 tests / four Windows skips**. The 20-query
+synthetic warm 10k p95 was **22,952 microseconds**, excluding typing, paint and
+installed-device costs. No code or tests changed for this documentation audit;
+no new regression/sabotage claim is made. The search index and recent/saved
+filters remain RAM-only and disappear across process/session restart. Optional
+content extraction is not implemented.
 
 ## What the Rust bridge exports
 
