@@ -892,6 +892,7 @@ class SyncController extends ChangeNotifier {
 
   /// Read-only plan for one folder: the same comparison a real sync applies,
   /// without uploading, downloading, journal writes or remote changes.
+  /// A running folder returns only `sync_running: true`, not a comparison.
   Future<Map<String, dynamic>> inspectFolder(SyncFolderConfig folder) =>
       _stopped
           ? Future.value(const {})
@@ -902,18 +903,29 @@ class SyncController extends ChangeNotifier {
     if (!folders.contains(folder)) {
       throw StateError('Folder was removed');
     }
+    if (_stopped) return const {};
+    if (folder.running) return const {'sync_running': true};
     // Keep the OS permission gate, but let the read-only native inspector
     // classify missing/invalid/unreadable trees into typed blocked outcomes.
     // The full listing preflight remains mandatory for add and ordinary sync.
-    if (await storageAccess.permissionRequired(folder.localPath)) {
+    final permissionRequired =
+        await storageAccess.permissionRequired(folder.localPath);
+    if (_stopped) return const {};
+    if (!folders.contains(folder)) throw StateError('Folder was removed');
+    if (folder.running) return const {'sync_running': true};
+    if (permissionRequired) {
       throw const StorageAccessException(true);
     }
+    final journal = await _journalPath(folder);
+    if (_stopped) return const {};
+    if (!folders.contains(folder)) throw StateError('Folder was removed');
+    if (folder.running) return const {'sync_running': true};
     return inspectRunner(handle, {
       'baseUrl': server,
       'token': token,
       'remoteRootId': folder.remoteRootId,
       'localPath': folder.localPath,
-      'journalPath': await _journalPath(folder),
+      'journalPath': journal,
       'deviceName': 'Device',
       'excluded': folder.excluded,
     });

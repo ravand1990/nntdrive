@@ -307,6 +307,22 @@ folder-summary/notice freezing still have caller-side costs; projections retain
 up to four row references per retained entry plus grouping maps. This is not an
 installed frame-time or whole-refresh speedup guarantee.
 
+For a running folder, the Dart overview skips read-only inspection and shows one
+non-retryable Pending observation: the exact path from a nonterminal upload or
+download event, otherwise the folder root. It projects only scalar `path`,
+`direction` and `complete`; byte totals and arbitrary diagnostics are not copied.
+Terminal progress does not imply synchronized content. Initial activity for all
+folders is frozen before the first await. Activity starting later is rechecked
+before inspection, and the controller rechecks after permission/journal-path
+awaits, returning a device-local `sync_running: true` marker instead of admitting
+the native runner. This marker is not part of the native ABI. Permission checks
+for idle inspection remain unchanged; running inspection never requests access.
+Historical failures are suppressed for active folders. Counts and filters cover
+only retained observations, never an inferred enumeration of active descendants;
+the notice explains that full comparison awaits an idle refresh. An already
+admitted native inspection is still awaited, not interrupted or mutually excluded
+against later sync. No network mutation, journal format or key handling changes.
+
 ## Desktop window lifecycle (partial #6)
 
 Windows/Linux close-to-tray keeps the **same unlocked process** syncing. Tray

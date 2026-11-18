@@ -41,6 +41,30 @@ installed pass stays open on
 
 ## Unsynced-items overview (#79 partial)
 
+Running folders now contribute one non-retryable **Pending** observation, using
+the exact nonterminal upload/download progress path or a root summary when no
+meaningful current transfer exists. Only scalar path/direction/completion fields
+are copied; the native event schema has no scanning/reconciliation phase.
+Known direction selects diagnostic-free Uploading/Downloading text, otherwise
+the root says Sync is running. Historical failures and stale access flags do not
+override active evidence. Every folder's initial evidence is frozen before the
+first await; later sync admission upgrades an idle snapshot without replacing its
+display configuration. Running folders skip inspection, with controller rechecks
+after OS permission and journal-path awaits. A local `sync_running` marker is
+active evidence, never an empty successful comparison. Counts/filtering and the
+global cap cover retained observations only. A notice states that not all active
+descendants are enumerated and full comparison awaits an idle refresh. This is
+refresh-time evidence, not continuous per-byte updates or a cross-page lock: a
+native inspection already admitted is not interrupted if sync subsequently starts.
+Native incremental scanning and installed acceptance (#65) remain unfinished.
+
+Active-evidence verification: ten deterministic builder/controller regressions
+failed against the original code before implementation. The focused suite now
+passes eleven tests including the rendered Pending row, idle-refresh explanation
+and absent retry action. Canonical `bash scripts/dev-check.sh flutter` exited 0:
+pinned Flutter 3.47.9/Dart 3.13.7, release FFI build, clean analysis, 560 tests
+passed and four skipped. This is not installed-device or frame-time acceptance.
+
 Closing the Not synced page now cancels its active refresh at asynchronous
 stage boundaries. The builder checks before/after each folder inspection,
 mapping, final ordering and projection, and before initial report freezing.
@@ -53,7 +77,7 @@ incremental inspection, cross-page inspection exclusion or installed speedup;
 installed lifecycle acceptance remains Backlog #65.
 
 The sync page now opens a device-local **Not synced** view. For every enabled
-sync folder it asks the Rust sync engine for a read-only plan — the same
+idle sync folder it asks the Rust sync engine for a read-only plan — the same
 three-way reconciliation a real sync would apply — and lists each item with a
 text status and a plain-language reason: **Cloud only**, **Local only**,
 **Pending** (queued deletion, move, rename or revision adoption), **Failed**

@@ -271,12 +271,23 @@ Future<UnsyncedOverview> buildUnsyncedOverview({
   final notices = <UnsyncedNotice>[];
   var truncated = false;
   for (var i = 0; i < frozen.length; i++) {
-    final folder = frozen[i];
+    var folder = frozen[i];
+    cancellation?.check();
+    // A later folder can start syncing while an earlier mapping is awaited.
+    // Keep its initial display snapshot, but never admit a now-redundant scan.
+    if (!folder.running && sources[i].running) {
+      folder = _withActiveProgress(folder, sources[i].progress);
+    }
     Map<String, dynamic> plan = const {};
     var inspectionFailed = false;
-    if (!folder.storageAccessRequired) {
+    if (!folder.running && !folder.storageAccessRequired) {
       try {
         plan = await _overviewStage(cancellation, () => inspect(sources[i]));
+        // The controller also checks after permission/journal awaits. Its
+        // admission marker is not an empty successful comparison.
+        if (sources[i].running) {
+          folder = _withActiveProgress(folder, sources[i].progress);
+        }
       } on OverviewCancelled {
         rethrow;
       } catch (_) {
@@ -305,7 +316,9 @@ Future<UnsyncedOverview> buildUnsyncedOverview({
 /// objects. Reports are frozen before inspection can suspend or mutate config.
 class OverviewFolderInput {
   const OverviewFolderInput(this.id, this.name, this.lastSync,
-      this.storageAccessRequired, this.excluded, this.lastReport);
+      this.storageAccessRequired, this.excluded, this.lastReport,
+      {this.running = false, this.progressPath, this.progressDirection,
+      this.progressComplete});
 
   final String id;
   final String name;
@@ -313,6 +326,24 @@ class OverviewFolderInput {
   final bool storageAccessRequired;
   final List<String> excluded;
   final Map<String, dynamic>? lastReport;
+  final bool running;
+  final String? progressPath;
+  final String? progressDirection;
+  final bool? progressComplete;
+}
+
+// The native callback emits path/direction/bytes/total/complete, not scan phases.
+// Only consumed scalar fields are read; never enumerate callback diagnostics.
+OverviewFolderInput _withActiveProgress(
+    OverviewFolderInput folder, Map<String, dynamic>? progress) {
+  final path = progress?['path'];
+  final direction = progress?['direction'];
+  final complete = progress?['complete'];
+  return OverviewFolderInput(folder.id, folder.name, folder.lastSync,
+      folder.storageAccessRequired, folder.excluded, null,
+      running: true, progressPath: path is String ? path : null,
+      progressDirection: direction is String ? direction : null,
+      progressComplete: complete is bool ? complete : null);
 }
 
 // Freeze only fields consumed by mapping. Recursively copying whole error
@@ -338,13 +369,15 @@ List<Map<String, dynamic>> _freezeItemErrors(Object? value) {
   return List<Map<String, dynamic>>.unmodifiable(errors);
 }
 
-OverviewFolderInput _freezeOverviewFolder(SyncFolderConfig folder) =>
-    OverviewFolderInput(
+OverviewFolderInput _freezeOverviewFolder(SyncFolderConfig folder) {
+  final input = OverviewFolderInput(
       folder.id, folder.name, folder.lastSync, folder.storageAccessRequired,
       List<String>.unmodifiable(folder.excluded),
-      folder.lastReport == null ? null : <String, dynamic>{
+      folder.running || folder.lastReport == null ? null : <String, dynamic>{
         'item_errors': _freezeItemErrors(folder.lastReport!['item_errors']),
       });
+  return folder.running ? _withActiveProgress(input, folder.progress) : input;
+}
 
 class OverviewFolderMapping {
   const OverviewFolderMapping(this.entries, this.summary, this.notices, this.truncated);
@@ -369,9 +402,40 @@ Future<OverviewFolderMapping> mapUnsyncedFolder(
 OverviewFolderMapping _mapUnsyncedFolder(
     OverviewFolderInput folder, Map<String, dynamic> plan,
     int maxEntries, bool inspectionFailed) {
+  // A sync can finish again before its controller admission marker arrives.
+  // Preserve root-level active evidence instead of calling that an empty plan.
+  if (!folder.running && !inspectionFailed && plan['sync_running'] == true) {
+    folder = _withActiveProgress(folder, null);
+  }
   final entries = <UnsyncedEntry>[];
   final notices = <UnsyncedNotice>[];
   var truncated = false;
+  if (folder.running) {
+    final direction = folder.progressDirection;
+    final path = folder.progressPath;
+    final transferring = folder.progressComplete == false &&
+        (direction == 'upload' || direction == 'download') &&
+        path != null && path.isNotEmpty;
+    if (maxEntries > 0) {
+      entries.add(UnsyncedEntry(
+        status: UnsyncedStatus.pending,
+        folderId: folder.id,
+        folderName: folder.name,
+        path: transferring ? path : '',
+        isDirectory: !transferring,
+        retryable: false,
+        reason: transferring
+            ? (direction == 'upload' ? 'Uploading this file.' : 'Downloading this file.')
+            : 'Sync is running.',
+      ));
+    } else {
+      truncated = true;
+    }
+    notices.add(UnsyncedNotice(folder.name,
+        'Active sync evidence only; not all active descendants are enumerated. '
+        'Full comparison awaits an idle refresh.'));
+    return _mappedFolder(folder, entries, notices, truncated);
+  }
   final failed = <String, String>{};
   final report = folder.lastReport;
   final itemErrors = report?['item_errors'];
