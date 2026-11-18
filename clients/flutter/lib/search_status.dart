@@ -4,7 +4,7 @@ import 'search_status_errors.dart';
 import 'search_status_conflicts.dart';
 import 'conflict_paths.dart';
 import 'search_status_ancestry.dart';
-import 'local_availability.dart';
+import 'search_status_filesystem.dart';
 import 'sync_controller.dart';
 
 // Only local_availability's consumed fields belong in this refresh snapshot.
@@ -76,6 +76,8 @@ Future<Map<String, SearchStatus>> inspectSearchStatuses({
           Stream<List<SearchStatusNode>>, Set<String>, Stream<List<String>>,
           Future<void> Function(List<SearchStatusAncestry>)) inspectAncestries =
       inspectSearchStatusAncestries,
+  Future<void> Function(List<SearchStatusRoot>, SearchStatusFilesystemProducer)
+      inspectFilesystem = inspectSearchStatusFilesystem,
   required bool Function() cancelled,
 }) async {
   void check() {
@@ -113,9 +115,6 @@ Future<Map<String, SearchStatus>> inspectSearchStatuses({
 
   final indexes = await indexErrors(roots.length, errorBatches());
   check();
-  final failedPathsByFolder = <SyncFolderConfig, Set<String>>{
-    for (var i = 0; i < roots.length; i++) roots[i]: indexes[i],
-  };
   Stream<List<SearchStatusConflictPath>> conflictBatches() async* {
     var batch = <SearchStatusConflictPath>[];
     for (var i = 0; i < roots.length; i++) {
@@ -136,9 +135,6 @@ Future<Map<String, SearchStatus>> inspectSearchStatuses({
   }
   final conflictIndexes = await indexConflicts(roots.length, conflictBatches());
   check();
-  final conflictPathsByFolder = <SyncFolderConfig, PreparedConflictPaths>{
-    for (var i = 0; i < roots.length; i++) roots[i]: conflictIndexes[i],
-  };
   Stream<List<SearchStatusName>> nameBatches() async* {
     var batch = <SearchStatusName>[];
     for (final entry in snapshot.values) {
@@ -186,38 +182,30 @@ Future<Map<String, SearchStatus>> inspectSearchStatuses({
     if (batch.isNotEmpty) yield batch;
     check();
   }
-  var processed = 0;
+  final filesystemRoots = <SearchStatusRoot>[
+    for (var i = 0; i < roots.length; i++) (
+      id: roots[i].id,
+      name: roots[i].name,
+      localPath: roots[i].localPath,
+      remoteRootId: roots[i].remoteRootId,
+      excluded: roots[i].excluded,
+      running: roots[i].running,
+      progressPath: roots[i].progress?['path'] as String?,
+      progressComplete: roots[i].progress?['complete'] as bool?,
+      errors: indexes[i],
+      conflicts: conflictIndexes[i],
+    ),
+  ];
   final result = <String, SearchStatus>{};
-  await inspectAncestries(nodeBatches(), safeIds, requestBatches(), (batch) async {
-    for (final entry in batch) {
+  await inspectFilesystem(filesystemRoots, (inspect) async {
+    await inspectAncestries(nodeBatches(), safeIds, requestBatches(), (batch) async {
       check();
-      final ancestry = entry.ancestry;
-      var status = SearchStatus.unknown;
-      if (ancestry != null) {
-        final availability = await inspectLocalAvailability(
-          ancestry: ancestry,
-          folders: roots,
-          failedPathsByFolder: failedPathsByFolder,
-          conflictPathsByFolder: conflictPathsByFolder,
-          isDir: entry.isDir,
-          cancelled: cancelled);
-        check();
-        status = switch (availability.displayLabel) {
-          'Local' => SearchStatus.local,
-          'Cloud only' => SearchStatus.cloudOnly,
-          'Not covered' => SearchStatus.notCovered,
-          'Syncing' => SearchStatus.syncing,
-          'Conflict' => SearchStatus.conflict,
-          'Error' => SearchStatus.error,
-          _ => SearchStatus.unknown,
-        };
+      final statuses = await inspect(batch);
+      check();
+      for (final entry in statuses) {
+        result[entry.id] = entry.status;
       }
-      result[entry.id] = status;
-      if (++processed % 128 == 0) {
-        await Future<void>.delayed(Duration.zero);
-        check();
-      }
-    }
+    });
   });
   check();
   return result;

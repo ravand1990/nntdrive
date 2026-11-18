@@ -411,6 +411,37 @@ original can still require multiple filesystem probes. This is bounded streaming
 and execution-location evidence, not bounded total index RAM, a measured UI
 speedup, whole-build isolation or installed-device acceptance (#93).
 
+The search-status filesystem follow-up (#80) moves local availability inspection
+onto one refresh-owned port-loop worker. Frozen scalar root configuration and
+prepared error/conflict indexes are sent once; the worker reconstructs its own
+`SyncFolderConfig` instances, never receiving controllers, native libraries,
+producer/cancellation closures or lifecycle completers. The ancestry consumer
+awaits sequential batches of at most 128 entries before requesting more. Only
+opaque IDs and scalar status enums return, not local paths or diagnostics.
+Existing no-follow root/component checks, canonical confinement, portable path
+validation, fresh conflict-copy probes, exclusions and status precedence are
+unchanged. Filesystem acceptance is never cached and remains refresh-time
+presence evidence, not journal equality or protection against hostile path swaps.
+
+The parent canonical `dev-check.sh flutter` run rebuilt the release FFI, passed
+clean analysis and **530 tests / four Windows skips**. The focused
+`dev-check.sh flutter-exec` run passed clean analysis and **78 tests** across
+`search*.dart` and `local_availability_test.dart`, using the warm native
+library. A guarded sendable ancestry batch rejects caller-side reads: it failed
+on the original per-entry production loop and also after replacing only the
+filesystem worker's `Isolate.run` with `Future.sync`; both were restored before
+the green run. Ordered 128/128/1 production batches, real files/deletion/links/
+traversal/type mismatch, invalid batch rejection, success/failure finalization,
+previous-snapshot retention and suspended filesystem-worker session close/drain
+are covered. Existing real Session/native/loopback and conflict confinement
+regressions also pass. Link creation in the new fixture is omitted on Windows,
+where privileges may be required. Cancellation is checked before/after a batch;
+an admitted batch finishes before drain returns. Required synchronous freezing,
+scalar batch assembly, message copying, caller-side final merges, worker startup,
+whole-refresh root/index RAM and per-candidate filesystem probe costs remain.
+This is execution-location/security/lifecycle evidence, not a measured speedup,
+whole-build isolation or installed-device acceptance; #93 remains separate.
+
 Typing coalesces for 40 ms before dispatching a query worker (previously 180 ms,
 which alone exceeded the ~150 ms keystroke-to-results target). Immediate query
 actions consume any pending typing timer to avoid duplicate dispatch. Widget

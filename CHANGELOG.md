@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Bug fixes
+
+- Encrypted search inspects local availability on a refresh-owned device-local worker. Frozen scalar root evidence is transferred once; sequential ancestry batches contain at most 128 entries and return only IDs/status enums. Fresh no-follow component/canonical checks and conflict-copy probes retain existing confinement and precedence, with no filesystem acceptance cache. Cancellation and failures finish and await the worker before session drain. Required freezing, message copies and final merging remain caller-side costs; no whole-build isolation or measured speedup is claimed (#80).
+
 ## [0.28.6] - 2026-11-18
 
 ### Bug fixes
