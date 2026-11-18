@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Bug fixes
+
+- Not synced shows one Pending active-sync observation per running folder: the exact nonterminal upload/download path when known, otherwise the root. It suppresses historical failures and redundant inspection, including sync starting during permission/journal admission. Counts cover retained observations, not all active descendants; full comparison awaits an idle refresh. Native inspection remains non-incremental (#79).
+
 ## [0.28.9] - 2026-11-18
 
 ### Bug fixes
