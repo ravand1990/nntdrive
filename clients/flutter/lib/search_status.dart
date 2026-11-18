@@ -1,5 +1,6 @@
 import 'account_search.dart';
 import 'search_status_names.dart';
+import 'search_status_errors.dart';
 import 'local_availability.dart';
 import 'sync_controller.dart';
 
@@ -62,6 +63,9 @@ Future<Map<String, SearchStatus>> inspectSearchStatuses({
   required List<SyncFolderConfig> folders,
   Future<Set<String>> Function(Stream<List<SearchStatusName>>) groupNames =
       groupSearchStatusNames,
+  Future<List<Set<String>>> Function(
+          int, Stream<List<SearchStatusErrorPath>>) indexErrors =
+      indexSearchStatusErrors,
   required bool Function() cancelled,
 }) async {
   void check() {
@@ -73,16 +77,35 @@ Future<Map<String, SearchStatus>> inspectSearchStatuses({
   // Freeze controller evidence before the first await. Never retain mutable
   // progress/reports across inspections or send controller objects to workers.
   final roots = [for (final folder in folders) _freezeStatusFolder(folder, check)];
-  final failedPathsByFolder = <SyncFolderConfig, Set<String>>{};
-  for (final root in roots) {
-    final errors = root.lastReport?['item_errors'];
-    failedPathsByFolder[root] = await indexSyncErrorPaths(
-        errors is List ? errors : const [],
-        cancelled: cancelled);
+  Stream<List<SearchStatusErrorPath>> errorBatches() async* {
+    var batch = <SearchStatusErrorPath>[];
+    for (var i = 0; i < roots.length; i++) {
+      check();
+      final errors = roots[i].lastReport!['item_errors'] as List;
+      for (final error in errors) {
+        check();
+        for (final path in error['paths'] as List<String>) {
+          check();
+          batch.add((root: i, path: path));
+          if (batch.length == searchStatusErrorBatchSize) {
+            yield batch;
+            check();
+            batch = <SearchStatusErrorPath>[];
+          }
+        }
+      }
+      // No per-entry report retention/rescanning after the index is built.
+      roots[i].lastReport = null;
+    }
+    if (batch.isNotEmpty) yield batch;
     check();
-    // Inspection must use the indexed snapshot, not retain or rescan reports.
-    root.lastReport = null;
   }
+
+  final indexes = await indexErrors(roots.length, errorBatches());
+  check();
+  final failedPathsByFolder = <SyncFolderConfig, Set<String>>{
+    for (var i = 0; i < roots.length; i++) roots[i]: indexes[i],
+  };
   Stream<List<SearchStatusName>> nameBatches() async* {
     var batch = <SearchStatusName>[];
     for (final entry in snapshot.values) {
