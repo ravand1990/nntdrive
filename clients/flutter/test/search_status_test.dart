@@ -163,7 +163,7 @@ void main() {
         groupNames: (_) async {
           grouped = true;
           return {};
-        }), throwsA(isA<StateError>()));
+        }), throwsA(isA<SearchUnavailable>()));
     scheduleMicrotask(() => cancelled = true);
     await inspection;
     expect(grouped, isFalse);

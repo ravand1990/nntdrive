@@ -317,11 +317,40 @@ a late root alias across the 128 boundary, then restores local presence after
 its removal, without plaintext requests. Replacing only this worker's
 `Isolate.run` with `Future.sync` failed the location test; it was restored before
 the green run. This is isolation/semantic evidence, not a speedup measurement.
-Required-field freezing, error-index immutable-set construction, scalar input
-copying, ancestry walks, conflict/filesystem inspection and final snapshot merging
-remain caller-side; worker spawn/message/final set-transfer costs and retained
-whole-snapshot grouping RAM remain. Full cold-build isolation and installed-device
-performance are not established.
+Required-field freezing, scalar input copying, ancestry walks, conflict/filesystem
+inspection and final snapshot merging remain caller-side; error-index construction
+was also caller-side at this stage (moved by the follow-up below). Worker
+spawn/message/final set-transfer costs and retained whole-snapshot grouping RAM
+remain. Full cold-build isolation and installed-device performance are not
+established.
+
+The search-status error-index follow-up (#80) sends only validated frozen string
+paths with a scalar root ordinal to one refresh-owned worker. Sequential batches
+contain at most 128 paths, including within a single large error; acknowledgements
+bound in-flight input without resending accumulated sets/maps. Deduplication and
+final immutable per-root sets/list are constructed on that worker; even roots
+with no valid paths receive an empty set (never absent-index browser fallback).
+All roots' consumed operation/code/path evidence and config are still frozen
+before the first await, malformed records are ignored, matching is exact and
+conflict/running/active-transfer precedence is unchanged. Live browser consumers
+remain unchanged. Cancellation and producer failures send finish and await worker
+completion in finally; failed refreshes retain the previous complete snapshot and
+session close/drain waits before discarding late results.
+Deterministic sendable getter tests reject caller-isolate indexing, including the
+production bounded-batch wiring. Replacing this worker's Isolate.run with
+Future.sync fails the execution-location regression; restoring the original
+caller-side indexSyncErrorPaths production dispatch fails the wiring regression
+(expected 128/128/2 batches, observed none). Worker-finalization gates cover both
+producer success and failure, and a suspended real-worker producer covers close
+and session drain. The existing real Session/native/loopback status fixture,
+all-roots mutation, malformed projection, root/exact-path isolation and browser
+empty-versus-absent semantics remain covered. Pinned `dev-check.sh flutter`
+passed **505 tests / four Windows-only skips**, clean analysis and a real release
+FFI build. Required-field/path copying before await, bounded scalar batch assembly
+and message transfer, ancestry/conflict/filesystem inspection, final map merging,
+worker startup and retained whole-refresh error-path RAM remain costs. This is
+execution-location/lifecycle evidence, not whole-build isolation, a measured UI
+speedup or installed-device acceptance; #93 remains separate.
 
 Typing coalesces for 40 ms before dispatching a query worker (previously 180 ms,
 which alone exceeded the ~150 ms keystroke-to-results target). Immediate query
