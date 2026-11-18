@@ -6,6 +6,8 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.28.4] - 2026-11-18
+
 ### Bug fixes
 
 - Encrypted search builds per-root exact-path error indexes, including final immutable sets, on one refresh-owned device-local worker using sequential batches of at most 128 validated frozen paths. Cancellation and producer failures finish and await the worker before the build drains; all roots still freeze before the first await and browser error semantics remain unchanged. Required-field copying, ancestry/conflict/filesystem inspection and result merging remain separate caller-side costs; no whole-build isolation or measured speedup is claimed (#80).
