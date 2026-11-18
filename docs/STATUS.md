@@ -225,6 +225,28 @@ under #79; installed permission/revocation and TalkBack acceptance remain #65.
 
 ## Account-wide encrypted-name search (#80 partial)
 
+### Final status publication worker
+
+The final status-to-entry projection now runs once on a top-level worker over
+completed sendable entry/status maps, inside the session-owned rebuild. It keeps
+snapshot keys, original names/folded names and metadata unchanged; missing statuses
+and `All` become `Unknown`, and extra status IDs are ignored. Only the complete
+result is published after cancellation and final authorization checks. Failed
+projection retains the previous searchable snapshot; close rejects late results
+while drain still awaits completion. No inspector means no projection.
+
+Canonical `dev-check.sh flutter` passed release FFI build, clean analysis and
+**536 tests / four platform skips**. Six new tests cover production worker reads,
+a real single-entry event turn, status semantics, failure/retry, single-flight
+rebuild, suspended close/drain and final authorization. The production worker-read
+regression failed on original code; `Future.sync` sabotage failed both execution
+location and event-turn tests before restoration. Independent diff review found
+no blocker. These are not installed-performance measurements (#93). The up-to-100k
+entry map is transferred once for this stage, with transient old/new maps retained;
+spawn/copy cost, earlier candidate merges, freezing and transport collection stay
+separate caller-side costs. Cancellation waits for the admitted projection rather
+than interrupting it. This does not establish whole-build isolation or freshness.
+
 Search now supports refresh-time **All/Unknown/Local/Cloud only/Not covered/Syncing/
 Conflict/Error** filters and badges, composed with existing filters and restored
 from session-local recent/saved combinations. The file browser supplies loaded

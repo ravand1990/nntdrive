@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Bug fixes
+
+- Encrypted search applies the completed refresh's status map to entries on a device-local worker before atomic snapshot publication, rather than constructing every replacement entry on the UI isolate. Missing/unknown status semantics, authenticated names and metadata remain unchanged; failed refreshes retain the previous snapshot and session shutdown drains the admitted worker. Full-map message copies and earlier candidate merges remain costs; no whole-build isolation or measured speedup is claimed (#80).
+
 ## [0.28.7] - 2026-11-18
 
 ### Bug fixes
