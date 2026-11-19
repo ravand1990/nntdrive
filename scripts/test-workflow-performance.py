@@ -64,6 +64,29 @@ class WorkflowPerformanceTests(unittest.TestCase):
             self.assertIn("cache: gradle", body)
             self.assertIn("clients/flutter/android/**/*.gradle.kts", body)
             self.assertIn("clients/flutter/android/gradle/wrapper/gradle-wrapper.properties", body)
+        # A pub dependency bump can change Gradle requirements, so the lockfile
+        # belongs in the cache key or a stale module cache is reused.
+        self.assertIn("clients/flutter/pubspec.lock", jobs(self.clients)["android-native-smoke"])
+
+    def test_android_smoke_builds_outside_the_emulator_and_stays_bounded(self):
+        # The emulator job used to resolve Gradle dependencies and compile plugin
+        # Kotlin inside the emulator/timer window: a repository failure burned the
+        # boot budget and an unbounded Dart VM service wait consumed the rest.
+        smoke = jobs(self.clients)["android-native-smoke"]
+        self.assertIn("flutter pub get --enforce-lockfile", smoke)
+        self.assertIn("flutter build apk --debug --target-platform android-x64", smoke)
+        self.assertIn("test -f build/app/outputs/flutter-apk/app-debug.apk", smoke)
+        self.assertIn("--no-pub", smoke)
+        self.assertIn("timeout --signal=INT --kill-after=30 600", smoke)
+        self.assertIn("android-native-smoke-logcat.txt", smoke)
+        self.assertIn("if: failure()", smoke)
+        self.assertIn("timeout-minutes: 40", smoke)
+        # The assertions themselves must stay: KVM, the real packaged core and the
+        # integration test file are unchanged by this reliability work.
+        self.assertIn("test -c /dev/kvm", smoke)
+        self.assertIn("integration_test/android_native_test.dart", smoke)
+        self.assertIn("lib/x86_64/libnntdrive_ffi.so", smoke)
+        self.assertNotIn("continue-on-error", smoke)
 
     def test_release_gates_and_tag_cancellation_are_preserved(self):
         release = jobs(self.release)
