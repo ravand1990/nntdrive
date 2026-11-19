@@ -32,6 +32,7 @@ import 'file_rename.dart';
 import 'file_move.dart';
 import 'file_copy.dart';
 import 'item_actions.dart';
+import 'login_autostart.dart';
 import 'move_dialog.dart';
 import 'folder_picker.dart';
 import 'discard_on_back.dart';
@@ -138,6 +139,7 @@ class _NntDriveAppState extends State<NntDriveApp> {
   SyncController? _sync;
   DesktopLifecycle? _desktop;
   String? _desktopError;
+  String? _loginAutostartError;
   String? _trayState;
   String? _shutdownError;
   bool _ending = false;
@@ -227,8 +229,43 @@ class _NntDriveAppState extends State<NntDriveApp> {
       },
     );
     await _desktop!.start();
+    await _repairLoginAutostart();
     _updateTray();
     if (mounted) setState(() {});
+  }
+
+  /// Re-applies a remembered login item so a moved or updated binary is
+  /// registered again. Failures stay visible in the account menu instead of
+  /// blocking startup.
+  Future<void> _repairLoginAutostart() async {
+    if (widget.prefs.getBool(loginAutostartPreferenceKey) != true) return;
+    try {
+      await platformLoginAutostart()
+          .apply(enabled: true, executable: Platform.resolvedExecutable);
+      _loginAutostartError = null;
+    } catch (e) {
+      _loginAutostartError = e.toString();
+    }
+  }
+
+  /// Applies and remembers the user's login-autostart choice. Returns the
+  /// failure text so the page can report it, or null when it was applied.
+  Future<String?> _setLoginAutostart(bool enabled) async {
+    final autostart = platformLoginAutostart();
+    if (!autostart.supported) {
+      return 'Starting with the system is not supported on this platform.';
+    }
+    String? failure;
+    try {
+      await autostart.apply(
+          enabled: enabled, executable: Platform.resolvedExecutable);
+      await widget.prefs.setBool(loginAutostartPreferenceKey, enabled);
+    } catch (e) {
+      failure = e.toString();
+    }
+    _loginAutostartError = failure;
+    if (mounted) setState(() {});
+    return failure;
   }
 
   void _updateTray() {
@@ -434,6 +471,10 @@ class _NntDriveAppState extends State<NntDriveApp> {
         onTheme: _setTheme,
         onSignOut: _signOut,
         onRenameDevice: _renameDevice,
+        loginAutostartEnabled:
+            widget.prefs.getBool(loginAutostartPreferenceKey) ?? false,
+        loginAutostartError: _loginAutostartError,
+        onSetLoginAutostart: _setLoginAutostart,
       );
     } else if (_token != null && _keyfile != null && _accountId != null && _email != null) {
       home = UnlockPage(
@@ -1027,6 +1068,9 @@ class FilesPage extends StatefulWidget {
     required this.onSignOut,
     this.api,
     this.onRenameDevice,
+    this.loginAutostartEnabled = false,
+    this.loginAutostartError,
+    this.onSetLoginAutostart,
   });
   final Session session;
   final SyncController sync;
@@ -1040,6 +1084,11 @@ class FilesPage extends StatefulWidget {
   /// constructing one from the session.
   final ApiClient? api;
   final VoidCallback? onRenameDevice;
+
+  /// Desktop login-item state, owned by the app so startup can re-register it.
+  final bool loginAutostartEnabled;
+  final String? loginAutostartError;
+  final Future<String?> Function(bool enabled)? onSetLoginAutostart;
 
   @override
   State<FilesPage> createState() => _FilesPageState();
@@ -2012,6 +2061,30 @@ class _FilesPageState extends State<FilesPage> {
                 _showUpdateSettings();
               },
             ),
+            if (Platform.isWindows || Platform.isLinux)
+              ListTile(
+                leading: const Icon(Icons.login),
+                title: const Text('Start when I sign in'),
+                subtitle: Text(widget.loginAutostartError ??
+                    (widget.loginAutostartEnabled
+                        ? 'On — sync resumes after you sign in'
+                        : 'Off — you open NNTDrive yourself')),
+                onTap: () async {
+                  final enable = !widget.loginAutostartEnabled;
+                  Navigator.pop(context);
+                  final failure =
+                      await widget.onSetLoginAutostart?.call(enable);
+                  if (!mounted) return;
+                  if (failure == null) {
+                    _toast(enable
+                        ? 'NNTDrive will start when you sign in.'
+                        : 'NNTDrive will no longer start when you sign in.');
+                  } else {
+                    _showError(
+                        'Could not ${enable ? 'enable' : 'disable'} login autostart: $failure');
+                  }
+                },
+              ),
             ListTile(
               leading: const Icon(Icons.system_update_alt),
               title: const Text('Check for updates'),

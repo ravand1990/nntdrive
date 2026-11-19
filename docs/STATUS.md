@@ -1287,7 +1287,8 @@ many files were already changed instead of claiming nothing happened.
   Move the keyfile to the platform keystore for a hardened build.
 - Sync runs while the unlocked desktop process lives, including its hidden tray
   window on supported Windows/Linux desktops. It is not an independent service;
-  autostart and cold-process resumption remain future work. The unlock screen
+  login autostart is opt-in and still requires the password after launch, and
+  cold-process resumption remains future work. The unlock screen
   explicitly shows sync paused while the vault is locked. Native regressions
   reject cold-start/revoked handles before network or journal access; unit tests
   and a Linux release build are not installed background-service acceptance.

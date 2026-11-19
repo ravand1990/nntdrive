@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Features
+
+- Desktop clients can opt into **Start when I sign in**. The account menu writes an XDG autostart entry on Linux or a per-user Run value on Windows for the running binary, removes it when switched off, and re-registers a remembered choice at launch so an updated or moved client keeps starting. Registration failures are reported in the menu and never flip the stored choice; the client still starts locked and needs its password. Installed login acceptance remains #66, and mobile scheduling is still unimplemented (#6).
+
 ## [0.29.0] - 2026-11-19
 
 ### Features
