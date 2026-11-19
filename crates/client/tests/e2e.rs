@@ -16,6 +16,8 @@ use uuid::Uuid;
 mod copy_pool_tests;
 #[path = "e2e/copy_tree.rs"]
 mod copy_tree_tests;
+#[path = "e2e/interruption.rs"]
+mod interruption_tests;
 
 struct Stack {
     _db: TestDb,

@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Bug fixes
+
+- An interrupted download no longer leaves a partial `.nntdrive-part` file next to the destination: the temporary file is removed when fetching, verification or materialization fails, so only complete, hash-verified content is ever materialized. Failed uploads keep no visible version and a retry reuses chunks that were already stored. Covered by new client end-to-end interruption tests (#17).
+
 ## [0.30.0] - 2026-11-19
 
 ### Features
