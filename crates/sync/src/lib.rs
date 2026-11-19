@@ -8,6 +8,7 @@
 //! * [`engine`] applies actions through a [`Remote`] transport.
 
 pub mod engine;
+pub mod inspection_pages;
 pub mod journal;
 pub mod reconcile;
 pub mod scanner;

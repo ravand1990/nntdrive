@@ -33,6 +33,16 @@ typedef SyncRunner = Future<Map<String, dynamic>> Function(
 typedef SyncInspector = Future<Map<String, dynamic>> Function(
     int handle, Map<String, dynamic> request);
 
+typedef SyncOverviewConsumer = Future<void> Function(
+    int handle, Map<String, dynamic> request,
+    Future<void> Function(Map<String, dynamic>) onPage,
+    bool Function() shouldContinue);
+
+Future<void> _runNativeOverview(int handle, Map<String, dynamic> request,
+    Future<void> Function(Map<String, dynamic>) onPage,
+    bool Function() shouldContinue) => NativeBridge.instance.syncOverviewPagesAsync(
+        handle, request, onPage: onPage, shouldContinue: shouldContinue);
+
 /// Bootstraps and lists the fixed account roots. Injected for tests.
 typedef AccountRootsLoader = Future<AccountRootsResult> Function();
 
@@ -120,6 +130,7 @@ class SyncController extends ChangeNotifier {
     this.storageAccess = const StorageAccess(),
     this.syncRunner = _runNativeSync,
     this.inspectRunner = _runNativeInspect,
+    this.overviewRunner = _runNativeOverview,
     PendingMoveQueue? pendingMoves,
     this.pendingMoveFlusher = flushPendingMoves,
     RootNameSealer? nameSealer,
@@ -149,6 +160,7 @@ class SyncController extends ChangeNotifier {
   final StorageAccess storageAccess;
   final SyncRunner syncRunner;
   final SyncInspector inspectRunner;
+  final SyncOverviewConsumer overviewRunner;
   final RootNameSealer nameSealer;
   final AccountRootsLoader rootsLoader;
 
@@ -898,8 +910,32 @@ class SyncController extends ChangeNotifier {
           ? Future.value(const {})
           : _operations.run(0, () => _inspectFolder(folder));
 
+  /// Complete comparison, consumed sequentially while controller/session drain
+  /// owns every admitted native page and its finally-close.
+  Future<void> consumeOverviewPages(SyncFolderConfig folder,
+      Future<void> Function(Map<String, dynamic>) onPage,
+      bool Function() shouldContinue) async {
+    if (_stopped || !shouldContinue()) return;
+    await _operations.run(0, () async {
+      var delivered = false;
+      final marker = await _inspectFolder(folder, consume: (request) async {
+        await overviewRunner(handle, request, (page) async {
+          if (_stopped || !shouldContinue()) return;
+          if (!folders.contains(folder)) throw StateError('Folder was removed');
+          delivered = true;
+          await onPage(page);
+        }, () => !_stopped && shouldContinue());
+        return const <String, dynamic>{};
+      });
+      if (!delivered && !_stopped && shouldContinue() && marker.isNotEmpty) {
+        await onPage(marker);
+      }
+    });
+  }
+
   Future<Map<String, dynamic>> _inspectFolder(
-      SyncFolderConfig folder) async {
+      SyncFolderConfig folder,
+      {Future<Map<String, dynamic>> Function(Map<String, dynamic>)? consume}) async {
     if (!folders.contains(folder)) {
       throw StateError('Folder was removed');
     }
@@ -920,7 +956,7 @@ class SyncController extends ChangeNotifier {
     if (_stopped) return const {};
     if (!folders.contains(folder)) throw StateError('Folder was removed');
     if (folder.running) return const {'sync_running': true};
-    return inspectRunner(handle, {
+    final request = <String, dynamic>{
       'baseUrl': server,
       'token': token,
       'remoteRootId': folder.remoteRootId,
@@ -928,7 +964,8 @@ class SyncController extends ChangeNotifier {
       'journalPath': journal,
       'deviceName': 'Device',
       'excluded': folder.excluded,
-    });
+    };
+    return consume == null ? inspectRunner(handle, request) : consume(request);
   }
 
   /// Local-only evidence for an overview row, owned until inspection completes.

@@ -261,9 +261,12 @@ contain path, direction, logical bytes/total and commit/verification completion.
 `tool/sync_smoke.dart` verifies two-folder progress and all conflict choices
 against a real HTTP backend and mock NNTP fixture (see Development).
 
-`nntdrive_sync_inspect(handle, request_json)` is the read-only counterpart used
-by the "Not synced" overview. It opens an existing journal without creating or
-locking it, scans the folder, walks the encrypted remote tree and returns the
+`nntdrive_sync_inspect(handle, request_json)` remains the legacy capped read-only
+counterpart. The production "Not synced" overview uses the additive owned
+`nntdrive_sync_overview_open`/`nntdrive_sync_overview_page` cursor instead (see
+[bounded result loading](OVERVIEW-PAGING.md)). Both paths open an existing journal
+without creating or locking it, scan the folder, walk the encrypted remote tree
+and return the
 plan a real sync would apply (`upload`, `download`, `create_local_dir`,
 `create_remote_dir`, `delete_local`, `delete_remote`, `rename_local`,
 `move_remote`, `adopt_revision`, `conflict`) with relative paths, sizes and the
@@ -275,7 +278,7 @@ it as a delete/download pair. A local root/scan I/O failure instead returns
 `filesystem_blocked` (`permission_denied`, `not_found`, `not_a_directory` or
 `io`) with empty item/skip/collision lists, before remote snapshot access or
 reconciliation. Codes come from typed filesystem error kinds, never diagnostic
-text, and contain no absolute paths or OS messages. The field is absent on
+text, and contain no absolute paths or OS messages. The field is absent or null on
 successful inspection; journal availability is not comparison evidence when
 blocked. The overview counts one non-retryable **Blocked** root row, not an
 invented count of unreadable descendants, and offers local access/drive guidance
@@ -289,23 +292,30 @@ inspection requests broader access. Add-folder and ordinary sync retain their
 full permission-and-listing preflight. Ordinary sync still aborts on scan failure
 before reconciliation; this API does not change deletion behavior. The call runs off
 the UI thread in a session-owned worker capturing only the handle and encoded
-request. Large-tree incremental loading remains unfinished (#79), and installed
-permission/revocation acceptance is separate (#65).
+request. The cursor completes the full safe comparison before its first page,
+then transfers at most 256 combined actions/skips/collision pairs per page.
+Installed performance/permission/revocation acceptance remains separate (#65).
 
-The Dart overview maps folders on sequential entry-producing workers, orders the
-bounded retained rows once, then prepares immutable status counts and ordered
-all/status/folder/combined projections on one top-level entry-only worker per
-snapshot. `UnsyncedOverview.counts` and `filtered()` reuse these prepared values
-without full-entry scans or per-rebuild workers. Lists/maps are read-only;
-unknown folder IDs return an empty list. Counts cover retained rows only, not
-items omitted by the global cap (20,000 by default). The direct synchronous
-`UnsyncedOverview(...)` constructor remains available for small hand-built
-snapshots and prepares the same projections once on its caller; production uses
-the worker-prepared private construction path. Native inspection remains
-non-incremental. Report freezing, transfer/copying, result merges and final
-folder-summary/notice freezing still have caller-side costs; projections retain
-up to four row references per retained entry plus grouping maps. This is not an
-installed frame-time or whole-refresh speedup guarantee.
+The production Dart overview maps, orders and projects each bounded page once on
+workers, then appends immutable chunked all/status/folder/combined projections.
+Counts and filters cover loaded mapped rows; partial publications are labelled
+“loaded so far”, empty partial/error results never claim everything is in sync,
+and all subsequent pages remain reachable without a 10k/20k cutoff. Status/folder
+filters reuse prepared chunk lists without full-entry scans on rebuild. Only
+within-batch ordering is applied; the growing result is not globally re-sorted.
+Exclusions are emitted once in bounded batches after blocked/active precedence;
+historical errors are indexed once and exact per-page endpoint matches preserve
+current-conflict precedence. Native complete-set collision annotations keep
+later collision pages from implying earlier action safety.
+
+Legacy `buildUnsyncedOverview` retains its 20,000 default cap/global-sort contract.
+The synchronous `UnsyncedOverview(...)` constructor remains for small hand-built
+snapshots; production uses worker-prepared construction. Native comparison is
+still whole-tree. Required report freezing/indexing, retained native/UI result
+RAM, transfers, bounded endpoint selection, chunk-reference/group-map merges and
+folder-summary/notice publication remain costs. Each row is referenced by up to
+four filter projections. This is not a per-record byte bound, an installed
+frame-time result or a whole-refresh speedup guarantee.
 
 For a running folder, the Dart overview skips read-only inspection and shows one
 non-retryable Pending observation: the exact path from a nonterminal upload or

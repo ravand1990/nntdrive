@@ -5,9 +5,12 @@
 // every write. Names, paths and reasons stay on this device; the backend only
 // ever sees the opaque listing it already serves.
 
+import 'dart:collection';
 import 'dart:isolate';
 
 import 'sync_controller.dart';
+
+part 'sync_overview_incremental.dart';
 
 /// Orders one already bounded, device-local result without blocking UI sorting.
 /// Only entries cross the isolate boundary: never a controller, inspector,
@@ -188,6 +191,7 @@ class UnsyncedOverview {
     required List<UnsyncedNotice> notices,
     required this.inspectedAt,
     required this.truncated,
+    this.complete = true,
   }) : _projection = projection,
        folders = List<UnsyncedFolderSummary>.unmodifiable([
          for (final folder in folders)
@@ -202,6 +206,8 @@ class UnsyncedOverview {
   final List<UnsyncedNotice> notices;
   final DateTime inspectedAt;
   final bool truncated;
+  /// False while more result pages/folders remain. Counts describe loaded rows.
+  final bool complete;
 
   int get total => entries.length;
   Map<UnsyncedStatus, int> get counts => _projection.counts;
@@ -216,6 +222,13 @@ class OverviewCancellation {
   bool _cancelled = false;
 
   bool get isCancelled => _cancelled;
+
+  /// Page-owned publication hook; legacy loaders can ignore it.
+  void Function(UnsyncedOverview)? onPublication;
+  void publish(UnsyncedOverview overview) {
+    check();
+    onPublication?.call(overview);
+  }
 
   void cancel() => _cancelled = true;
 
@@ -318,7 +331,7 @@ class OverviewFolderInput {
   const OverviewFolderInput(this.id, this.name, this.lastSync,
       this.storageAccessRequired, this.excluded, this.lastReport,
       {this.running = false, this.progressPath, this.progressDirection,
-      this.progressComplete});
+      this.progressComplete, this.errorReasons});
 
   final String id;
   final String name;
@@ -330,6 +343,7 @@ class OverviewFolderInput {
   final String? progressPath;
   final String? progressDirection;
   final bool? progressComplete;
+  final Map<String, String>? errorReasons;
 }
 
 // The native callback emits path/direction/bytes/total/complete, not scan phases.
@@ -436,8 +450,8 @@ OverviewFolderMapping _mapUnsyncedFolder(
         'Full comparison awaits an idle refresh.'));
     return _mappedFolder(folder, entries, notices, truncated);
   }
-  final failed = <String, String>{};
-  final report = folder.lastReport;
+  final failed = folder.errorReasons ?? <String, String>{};
+  final report = folder.errorReasons == null ? folder.lastReport : null;
   final itemErrors = report?['item_errors'];
   if (itemErrors is List) {
     for (final error in itemErrors) {
@@ -542,7 +556,13 @@ OverviewFolderMapping _mapUnsyncedFolder(
       }
     }
     final blockedPaths = <String>{
-      for (final pair in _stringPairs(plan['case_collisions'])) ...[pair.$1, pair.$2]
+      for (final pair in _stringPairs(plan['case_collisions'])) ...[pair.$1, pair.$2],
+      // Cursor annotations cover complete evidence, including later pages and
+      // move destinations. Never infer safety from just this page's pairs.
+      if (plan['items'] is List)
+        for (final item in plan['items'] as List)
+          if (item is Map && item['case_collision'] == true && item['path'] is String)
+            item['path'] as String,
     };
     for (final item in _planItems(plan['items'])) {
       final kind = item.$1;
