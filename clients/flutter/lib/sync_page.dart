@@ -204,8 +204,8 @@ class _SyncPageState extends State<SyncPage> {
     final folders = c.folders.where((folder) => folder.enabled).toList();
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => SyncOverviewPage(
-        load: (cancellation) => buildUnsyncedOverview(
-            folders: folders, inspect: c.inspectFolder,
+        load: (cancellation) => buildIncrementalUnsyncedOverview(
+            folders: folders, inspectPages: c.consumeOverviewPages,
             cancellation: cancellation),
         onSyncFolder: (folderId) async {
           final match =

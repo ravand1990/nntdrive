@@ -136,6 +136,13 @@ class _SyncOverviewPageState extends State<SyncOverviewPage> {
         _refreshQueued = false;
         _explicitRefreshQueued = false;
         try {
+          cancellation.onPublication = (overview) {
+            if (!mounted || _canDrainRefresh || cancellation.isCancelled) return;
+            setState(() {
+              _overview = overview;
+              _loading = false;
+            });
+          };
           final overview = await widget.load(cancellation);
           if (!mounted) return;
           // A change during inspection needs a fresh plan, not this old result.
@@ -249,7 +256,9 @@ class _SyncOverviewPageState extends State<SyncOverviewPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                overview.total == 0
+                !overview.complete || overview.truncated
+                    ? '${overview.total} items loaded so far. Counts cover loaded rows only.'
+                    : overview.total == 0
                     ? 'Nothing is waiting for sync.'
                     : overview.total == 1
                         ? '1 item is not fully in sync.'
@@ -305,15 +314,18 @@ class _SyncOverviewPageState extends State<SyncOverviewPage> {
               subtitle: Text(notice.message),
             ),
           ),
+        if (!overview.complete) const LinearProgressIndicator(),
         if (overview.truncated)
           const Padding(
             padding: EdgeInsets.fromLTRB(16, 8, 16, 0),
             child: Text(
-                'The list is limited. Sync and check again to see the remaining items.'),
+                'The comparison is incomplete. Check again to retry loading the remaining items.'),
           ),
         const SizedBox(height: 8),
         Expanded(
-          child: entries.isEmpty
+          child: entries.isEmpty && (!overview.complete || overview.truncated)
+              ? const Center(child: Text('No matching loaded rows. The comparison is not complete.'))
+              : entries.isEmpty
               ? _emptyState(theme)
               : ListView.builder(
                   itemCount: entries.length,

@@ -81,6 +81,19 @@ Future<Map<String, dynamic>> _runCopy(int handle, String request) =>
 Future<bool> _runLocalFileMatches(String request) =>
     Isolate.run(() => NativeBridge.instance._localFileMatches(request));
 
+Future<Map<String, dynamic>> _runOverviewCall(
+        int handle, String symbol, String encoded) =>
+    Isolate.run(() {
+      final bridge = NativeBridge.instance;
+      final f = bridge._lib.lookupFunction<_BackfillNative, _BackfillDart>(symbol);
+      final input = bridge._cstr(encoded);
+      try {
+        return bridge._decode(f(handle, input));
+      } finally {
+        malloc.free(input);
+      }
+    });
+
 Future<Map<String, dynamic>> _runSyncInspect(int handle, String encoded) =>
     Isolate.run(() {
       final bridge = NativeBridge.instance;
@@ -492,6 +505,42 @@ class NativeBridge {
           int handle, Map<String, dynamic> request) =>
       _operations.run(handle,
           () => _runSyncInspect(handle, jsonEncode(request)));
+
+  /// Overview-specific complete comparison followed by bounded owned pages.
+  /// The consumer is awaited before requesting another page. The whole workflow
+  /// (including cancellation/failure cleanup) stays in session drain; an idle
+  /// cursor is never exposed to callers. This is result paging, not scan paging.
+  /// Each action's `case_collision` already covers BOTH endpoints against the
+  /// complete evidence, independent of where collision pairs are paged.
+  Future<void> syncOverviewPagesAsync(
+    int handle,
+    Map<String, dynamic> request, {
+    required Future<void> Function(Map<String, dynamic>) onPage,
+    bool Function()? shouldContinue,
+    int pageSize = 256,
+  }) => _operations.run(handle, () async {
+    if (pageSize < 1 || pageSize > 256) {
+      throw ArgumentError.value(pageSize, 'pageSize');
+    }
+    if (shouldContinue?.call() == false) return;
+    final opened = await _runOverviewCall(handle, 'nntdrive_sync_overview_open',
+        jsonEncode({...request, 'pageSize': pageSize}));
+    final cursor = opened['cursor'] as int;
+    try {
+      while (shouldContinue?.call() != false) {
+        final page = await _runOverviewCall(handle, 'nntdrive_sync_overview_page',
+            jsonEncode({'cursor': cursor, 'operation': 'next'}));
+        if (shouldContinue?.call() == false) return;
+        await onPage(page);
+        if (page['done'] == true) return;
+      }
+    } finally {
+      // Shutdown can reject new admissions; cleanup is part of this admitted
+      // workflow and must finish before session drain permits key revocation.
+      await _runOverviewCall(handle, 'nntdrive_sync_overview_page',
+          jsonEncode({'cursor': cursor, 'operation': 'close'}));
+    }
+  });
 
   // Isolate helpers: all parameters are primitives, so nothing unsafe crosses
   /// Runs the core off the UI thread. NativeCallable.listener is deliberately

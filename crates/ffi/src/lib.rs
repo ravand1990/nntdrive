@@ -20,6 +20,8 @@ use std::sync::{Mutex, OnceLock};
 use tokio::runtime::Runtime;
 use uuid::Uuid;
 
+mod overview;
+
 static HANDLES: OnceLock<Mutex<HashMap<u64, MasterKey>>> = OnceLock::new();
 static NEXT_HANDLE: AtomicU64 = AtomicU64::new(1);
 static RUNTIME: OnceLock<Runtime> = OnceLock::new();
@@ -183,6 +185,9 @@ pub unsafe extern "C" fn nntdrive_unlock(
 pub extern "C" fn nntdrive_lock(handle: u64) {
     if let Ok(mut map) = handles().lock() {
         map.remove(&handle);
+        // Same lock order as overview admission/publication. A revoked handle
+        // cannot retain plaintext results or publish a late completed snapshot.
+        overview::revoke(handle);
     }
 }
 

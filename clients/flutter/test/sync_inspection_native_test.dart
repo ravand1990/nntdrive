@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -70,6 +71,93 @@ void main() {
         'deviceName': 'fixture',
         'excluded': <String>[],
       };
+
+  test('production controller to incremental builder reaches 20017 native rows', () async {
+    emptySnapshot = true;
+    final root = await Directory('${state.path}/paged-root').create();
+    for (var i = 0; i < 20017; i++) {
+      File('${root.path}/file-$i').writeAsBytesSync(const []);
+    }
+    final api = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+    final sync = SyncController(server: api.baseUrl, token: 'fixture-token',
+        handle: handle, api: api);
+    addTearDown(sync.dispose);
+    final folder = SyncFolderConfig(id: 'paged', name: 'Paged',
+        localPath: root.path,
+        remoteRootId: '00000000-0000-0000-0000-000000000001');
+    sync.folders.add(folder);
+    final token = OverviewCancellation();
+    var publications = 0;
+    var last = 0;
+    token.onPublication = (snapshot) {
+      publications++;
+      expect(snapshot.total - last, lessThanOrEqualTo(256));
+      expect(snapshot.total, greaterThanOrEqualTo(last));
+      last = snapshot.total;
+    };
+    final result = await buildIncrementalUnsyncedOverview(folders: sync.folders,
+        inspectPages: sync.consumeOverviewPages, cancellation: token);
+    expect(result.total, 20017);
+    expect(result.entries.map((e) => e.path).toSet().length, 20017);
+    expect(result.counts, {UnsyncedStatus.localOnly: 20017});
+    expect(result.filtered(folderId: 'paged').length, 20017);
+    expect(result.truncated, isFalse);
+    expect(result.complete, isTrue);
+    expect(publications, greaterThan(79));
+    expect(requests, 1);
+    expect(File('${state.path}/sync/paged.sqlite').existsSync(), isFalse);
+    expect(root.listSync().length, 20017);
+    expect(folder.lastReport, isNull);
+  });
+
+  test('controller drains suspended page mapping and rejects late overview admissions', () async {
+    emptySnapshot = true;
+    final root = await Directory('${state.path}/drain-root').create();
+    for (var i = 0; i < 257; i++) {
+      File('${root.path}/file-$i').writeAsBytesSync(const []);
+    }
+    final api = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}');
+    final sync = SyncController(server: api.baseUrl, token: 'fixture-token',
+        handle: handle, api: api);
+    addTearDown(sync.dispose);
+    final folder = SyncFolderConfig(id: 'drain', name: 'Drain',
+        localPath: root.path,
+        remoteRootId: '00000000-0000-0000-0000-000000000001');
+    sync.folders.add(folder);
+    final token = OverviewCancellation();
+    final entered = Completer<void>();
+    final release = Completer<void>();
+    var maps = 0;
+    var publications = 0;
+    token.onPublication = (_) => publications++;
+    final load = buildIncrementalUnsyncedOverview(folders: sync.folders,
+        inspectPages: sync.consumeOverviewPages, cancellation: token,
+        mapFolder: (f, p, cap, failed) async {
+          maps++;
+          entered.complete();
+          await release.future;
+          return mapUnsyncedFolder(f, p, cap, failed);
+        });
+    final assertion = expectLater(load, throwsA(isA<OverviewCancelled>()));
+    await entered.future.timeout(const Duration(seconds: 5));
+    token.cancel();
+    var drained = false;
+    final drain = sync.stopAndDrain().then((_) => drained = true);
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    expect(drained, isFalse);
+    await sync.consumeOverviewPages(folder, (_) async => fail('late admission'), () => true);
+    release.complete();
+    await assertion;
+    await drain;
+    expect(maps, 1);
+    expect(publications, 0);
+    expect(requests, 1);
+    // Controller shutdown did not revoke the key or leak its cursor.
+    var pages = 0;
+    await bridge.syncOverviewPagesAsync(handle, request(root.path),
+        onPage: (_) async { pages++; });
+    expect(pages, 2);
+  });
 
   test('current native symlink skips refresh without a completed sync', () async {
     emptySnapshot = true;

@@ -39,7 +39,48 @@ installed pass stays open on
 [#78](https://github.com/ravand1990/nntdrive/issues/78). See
 [navigation behaviour](CLIENTS.md#navigation-and-back-behaviour-78-partial).
 
-## Unsynced-items overview (#79 partial)
+## Unsynced-items overview (#79)
+
+The production Not synced screen now consumes complete native comparisons in
+sequential, session/controller-owned pages instead of dropping results at the
+legacy 10,000-action/20,000-row caps. Actions, current skips and collision pairs
+share a maximum 256-record native page. Complete scanning, remote snapshot,
+folder-move checks and reconciliation finish before the first page; action
+collision annotations cover the complete evidence and both move endpoints.
+
+Each bounded page is mapped, ordered and projected off-isolate once. Exclusions
+are emitted once in bounded batches; historical errors are indexed once per
+frozen root and only current-page exact endpoint matches reach mapping. Immutable
+chunked projections append rows without repeated whole-result sorting/copying.
+Rows preserve delivery order with within-batch ordering, not global sorting.
+The page publishes loaded rows/counts while consumption continues, labels partial
+counts explicitly, and filters include all later pages. Empty/incomplete results
+never claim everything is synced. Failed tails retain an incomplete warning and
+can be refreshed. Active-root, blocked-root, conflict/error precedence, explicit
+actions, single-flight refresh, cancellation and admitted-work drain remain.
+
+`SyncEngine::inspect`/the legacy ABI and capped overview builder retain their
+compatibility contracts. Cursors have one opening/live slot per unlocked handle
+and are freed on completion, close or revoke; late opening cannot republish after
+revoke. Admitted consumers/finally-close are awaited before shutdown drains.
+See [API, costs and verification](OVERVIEW-PAGING.md). Final pinned canonical
+Rust checks passed formatting/check/Clippy and 186 tests (one helper ignored);
+canonical Flutter rebuilt release FFI, passed clean analysis and 576 tests with
+four existing platform skips. Original-route 10,000/20,017 truncation and
+publication/collision sabotage failures were verified before restored green runs.
+
+This is bounded **result loading**, not incremental filesystem scanning or a
+measured/installed speedup. Native comparison, required report freezing/indexing,
+retained result RAM, caller merges/chunk metadata and worker transfer/startup
+remain costs. Already admitted scans are not interrupted and inspection is not
+globally serialized against sync. Full active-descendant enumeration and installed
+performance/permissions/TalkBack acceptance remain unverified under #65.
+
+### Earlier overview slices and verification history
+
+The following records describe the previously shipped capped builder and other
+retained contracts; the production pagination path and current costs above
+supersede their whole-plan/global-cap descriptions.
 
 Running folders now contribute one non-retryable **Pending** observation, using
 the exact nonterminal upload/download progress path or a root summary when no

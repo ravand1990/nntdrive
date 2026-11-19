@@ -587,6 +587,34 @@ impl SyncEngine {
         journal_path: &Path,
         now: &str,
     ) -> Result<SyncInspection> {
+        self.inspect_with_limit(remote, root, journal_path, now, INSPECT_ITEM_LIMIT)
+            .await
+    }
+
+    /// Complete, owned read-only overview snapshot. Comparison prerequisites
+    /// finish before any page can be read; paging never rescans the filesystem
+    /// or remote. Total snapshot RAM remains proportional to the whole tree.
+    pub async fn inspect_overview<R: Remote>(
+        &self,
+        remote: &mut R,
+        root: &Path,
+        journal_path: &Path,
+        now: &str,
+    ) -> Result<crate::inspection_pages::InspectionCursor> {
+        let inspection = self
+            .inspect_with_limit(remote, root, journal_path, now, usize::MAX)
+            .await?;
+        Ok(crate::inspection_pages::InspectionCursor::new(inspection))
+    }
+
+    async fn inspect_with_limit<R: Remote>(
+        &self,
+        remote: &mut R,
+        root: &Path,
+        journal_path: &Path,
+        now: &str,
+        item_limit: usize,
+    ) -> Result<SyncInspection> {
         let root_error = match tokio::fs::metadata(root).await {
             Ok(metadata) if metadata.is_dir() => None,
             Ok(_) => Some(FilesystemBlock::NotADirectory),
@@ -685,7 +713,7 @@ impl SyncEngine {
         let mut items = Vec::new();
         let mut truncated = false;
         for action in &actions {
-            if items.len() >= INSPECT_ITEM_LIMIT {
+            if items.len() >= item_limit {
                 truncated = true;
                 break;
             }
@@ -1924,6 +1952,57 @@ mod tests {
             .unwrap();
         assert!(!report.errors.is_empty());
         assert!(!root.path().parent().unwrap().join("escape.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn overview_pages_reach_every_action_after_one_complete_comparison() {
+        let root = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let journal = state.path().join("never-created.sqlite");
+        let mut remote = FakeRemote::default();
+        for i in 0..20_017 {
+            remote
+                .0
+                .lock()
+                .await
+                .files
+                .insert(format!("file-{i:05}.txt"), (Vec::new(), Uuid::new_v4()));
+        }
+        let engine = SyncEngine::new("fixture");
+        let legacy = engine
+            .inspect(&mut remote, root.path(), &journal, "now")
+            .await
+            .unwrap();
+        assert_eq!(legacy.items.len(), INSPECT_ITEM_LIMIT);
+        assert!(legacy.truncated);
+        let mut cursor = engine
+            .inspect_overview(&mut remote, root.path(), &journal, "now")
+            .await
+            .unwrap();
+        // Freeze proof: subsequent remote changes do not alter the owned result.
+        remote.0.lock().await.files.clear();
+        let mut seen = std::collections::HashSet::new();
+        loop {
+            let page = cursor.next_page(256).unwrap();
+            assert!(page.items.len() <= 256);
+            assert_eq!(page.totals.items, 20_017);
+            for row in page.items {
+                assert_eq!(row.item.kind, "download");
+                assert!(seen.insert(row.item.path));
+            }
+            if page.done {
+                break;
+            }
+        }
+        assert_eq!(seen.len(), 20_017);
+        let state = remote.0.lock().await;
+        assert_eq!(
+            state.snapshots, 2,
+            "one legacy call plus one cursor construction, never per-page scans"
+        );
+        assert_eq!(state.uploads, 0);
+        assert!(!journal.exists());
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 0);
     }
 
     #[tokio::test]
