@@ -3614,3 +3614,96 @@ async fn restore_version_moves_only_the_pointer() {
         .unwrap();
     assert_eq!(size, 90);
 }
+
+// A client that loses the response to a version commit retries the same
+// revision. #17 listed that replay as an uncovered production failure: the
+// retry must not store a second version, bump the file revision twice, publish a
+// second sync event, or answer with an opaque internal error the client cannot
+// classify.
+#[tokio::test]
+async fn replayed_version_commit_does_not_duplicate_state() {
+    let Some(env) = env().await else { return };
+    let alice = register(&env.state, "replay@example.com").await;
+    let file = Uuid::new_v4();
+    create_node(&env.state, &alice.token, file, None, false).await;
+    let chunk = insert_chunk(&env.state, alice.account_id, 7).await;
+    let revision = Uuid::new_v4();
+
+    let (s, body) = put_version(&env.state, &alice, file, revision, 10, Some(vec![chunk])).await;
+    assert_eq!(s, StatusCode::CREATED, "{body}");
+
+    let versions_before: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM file_versions WHERE account_id = $1 AND file_id = $2",
+    )
+    .bind(alice.account_id)
+    .bind(file)
+    .fetch_one(&env.state.pool)
+    .await
+    .unwrap();
+    let revision_before: i64 =
+        sqlx::query_scalar("SELECT revision FROM files WHERE account_id = $1 AND id = $2")
+            .bind(alice.account_id)
+            .bind(file)
+            .fetch_one(&env.state.pool)
+            .await
+            .unwrap();
+    let events_before: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM sync_events WHERE account_id = $1")
+            .bind(alice.account_id)
+            .fetch_one(&env.state.pool)
+            .await
+            .unwrap();
+    assert_eq!(versions_before, 1);
+
+    // The exact retry of an acknowledged commit must be a definite conflict.
+    let (s, body) = put_version(&env.state, &alice, file, revision, 10, Some(vec![chunk])).await;
+    assert_eq!(
+        s,
+        StatusCode::CONFLICT,
+        "a replayed commit must answer with a definite conflict, got {s}: {body}"
+    );
+    assert_eq!(body["error"], json!("conflict"), "{body}");
+
+    // Reusing the revision id for different content is also a conflict.
+    let (s, body) = put_version(&env.state, &alice, file, revision, 11, Some(vec![chunk])).await;
+    assert_eq!(s, StatusCode::CONFLICT, "{body}");
+
+    let versions_after: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM file_versions WHERE account_id = $1 AND file_id = $2",
+    )
+    .bind(alice.account_id)
+    .bind(file)
+    .fetch_one(&env.state.pool)
+    .await
+    .unwrap();
+    let revision_after: i64 =
+        sqlx::query_scalar("SELECT revision FROM files WHERE account_id = $1 AND id = $2")
+            .bind(alice.account_id)
+            .bind(file)
+            .fetch_one(&env.state.pool)
+            .await
+            .unwrap();
+    let events_after: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM sync_events WHERE account_id = $1")
+            .bind(alice.account_id)
+            .fetch_one(&env.state.pool)
+            .await
+            .unwrap();
+    assert_eq!(versions_after, versions_before, "a replay stored a version");
+    assert_eq!(revision_after, revision_before, "a replay bumped the file");
+    assert_eq!(events_after, events_before, "a replay published an event");
+
+    // The stored version still downloads as committed: one current version.
+    let versions = call(
+        &env.state,
+        req(
+            "GET",
+            &format!("/api/v1/files/{file}/versions"),
+            Some(&alice.token),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(versions.0, StatusCode::OK, "{}", versions.1);
+    assert_eq!(versions.1["versions"].as_array().unwrap().len(), 1);
+}

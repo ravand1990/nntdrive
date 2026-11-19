@@ -120,6 +120,10 @@ legacy folders move only through an explicit guarded move.
 
 `base_revision` provides optimistic concurrency: a mismatch returns `409`.
 A version is only visible after commit; clients must upload all chunks first.
+A `revision_id` is single-use per file: retrying a commit that already landed
+(the response was lost, for example) returns `409` without storing a second
+version, bumping the file revision again or publishing another event, so a
+client can refresh and see its own version instead of retrying blindly.
 
 ### Version restore
 

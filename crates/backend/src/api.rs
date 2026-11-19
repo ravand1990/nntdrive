@@ -603,6 +603,7 @@ fn reference_error(error: nntdrive_storage::StoreError) -> ApiError {
     match error {
         nntdrive_storage::StoreError::NotFound => ApiError::NotFound,
         nntdrive_storage::StoreError::Invalid(reason) => ApiError::BadRequest(reason),
+        nntdrive_storage::StoreError::Conflict(reason) => ApiError::Conflict(reason),
         other => ApiError::Store(other),
     }
 }

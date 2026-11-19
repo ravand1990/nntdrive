@@ -16,6 +16,8 @@ pub enum StoreError {
     NotFound,
     #[error("invalid stored data: {0}")]
     Invalid(String),
+    #[error("conflict: {0}")]
+    Conflict(String),
 }
 
 pub type Result<T> = std::result::Result<T, StoreError>;
@@ -509,6 +511,25 @@ impl Store {
             .bind(account_id.to_string())
             .execute(&mut *tx)
             .await?;
+        // A client retries a commit when the response to an acknowledged write is
+        // lost, so a revision id is single-use: a second write must be a definite
+        // conflict rather than a duplicate version, a double revision bump or an
+        // opaque database error. The advisory lock makes this check authoritative
+        // for every writer that publishes versions.
+        let existing: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM file_versions
+             WHERE account_id = $1 AND file_id = $2 AND revision_id = $3",
+        )
+        .bind(account_id)
+        .bind(file_id)
+        .bind(manifest.revision_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if existing.is_some() {
+            return Err(StoreError::Conflict(
+                "revision already stored for this file; refresh before retrying".into(),
+            ));
+        }
         let required: bool =
             sqlx::query_scalar("SELECT reference_commits_required FROM accounts WHERE id = $1")
                 .bind(account_id)
