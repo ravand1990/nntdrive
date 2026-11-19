@@ -6,6 +6,8 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-11-19
+
 ### Features
 
 - Not synced now loads every result through bounded, session/controller-owned native pages rather than stopping at 10,000 actions per folder or 20,000 overview rows (#79). Complete safe comparison precedes pages; each batch is mapped/ordered/projected once and appended without re-sorting accumulated rows. The screen publishes loaded-only partial counts, automatically consumes later pages, and keeps folder/status filters and incomplete/error labels truthful. Legacy APIs, current collision/conflict precedence and cancellation/drain remain. This is result loading, not incremental filesystem scanning or an installed performance claim (#65).
