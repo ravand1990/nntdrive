@@ -6,6 +6,12 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.30.2] - 2026-11-19
+
+### Bug fixes
+
+- A version commit that is sent twice is now rejected with a clear `409` conflict instead of an opaque internal error. A client that loses the response to an acknowledged commit learns that its revision is already stored and can refresh, and the retry creates no second version, revision bump or sync event (#17).
+
 ## [0.30.1] - 2026-11-19
 
 ### Bug fixes
