@@ -1032,7 +1032,7 @@ decrypt, verify) and through the Flutter FFI sync layer.
 | Encrypted upload/download, plaintext never on the wire, dedupe, shard loss, total loss, repair, refresh, wrong key, provider outage, version history | `nntdrive-storage/tests/storage.rs` |
 | Scanner ignore rules, case collisions, path validation, rename detection, concurrent offline edits, conflict preservation, delete propagation | `nntdrive-sync` tests |
 | Register/login/logout, revoked device, admin authorization, tenant isolation, ciphertext upload, article proxy, dedupe lookup, shard locations | `nntdrive-backend/tests/api.rs` |
-| Real client SDK: register → create node → encrypted upload → manifest → download → decrypt → verify; dedupe; unauthorized access | `crates/client/tests/e2e.rs` |
+| Real client SDK: register → create node → encrypted upload → manifest → download → decrypt → verify; dedupe; unauthorized access; interrupted upload retried without re-posting stored chunks; provider-rejected upload leaves no version; interrupted download leaves no destination or `.nntdrive-part` file | `crates/client/tests/e2e.rs`, `crates/client/tests/e2e/interruption.rs` |
 | Two-device sync: create/modify/delete propagation, conflict copies, independent multiple roots, selective-sync exclusions, remote file renames, node-ID folder moves, interrupted-move recovery and collision guards | `crates/client/tests/sync_e2e.rs` (real API + mock NNTP) |
 | Dart ↔ Rust FFI sync: two local folders, upload/download/edit propagation against the live backend | `clients/flutter/tool/sync_smoke.dart` (verified) |
 | Dart ↔ Rust FFI: account generation, keyfile unlock, name seal/open with wrong-key rejection | `clients/flutter/test/native_test.dart` + `crates/ffi` tests |
@@ -1335,9 +1335,10 @@ many files were already changed instead of claiming nothing happened.
 9. **Security review**: fuzz yEnc/NZB/article parsers, add proxy-level rate
    limiting guidance, password-reset policy, audit-log coverage and dependency
    review.
-10. **Test gaps**: interrupted upload/download, multi-GB streaming, replayed
-    manifest, provider backbone correlation, restore-from-dump automation, and
-    Flutter integration tests that actually add a folder and synchronize.
+10. **Test gaps**: multi-GB streaming, replayed manifest, provider backbone
+    correlation, restore-from-dump automation, and Flutter integration tests
+    that actually add a folder and synchronize. Interrupted upload/download now
+    has client-level coverage in `crates/client/tests/e2e/interruption.rs`.
 
 ## Known bugs / rough edges
 
@@ -1379,7 +1380,10 @@ many files were already changed instead of claiming nothing happened.
   for exact contracts and unverified branch-protection enforcement.
 - The app's "upload" of a new file creates the node first; if the upload fails it
   tombstones the node. An interrupted version upload leaves the previous version
-  intact (the manifest commits last).
+  intact (the manifest commits last). Retrying reuses chunks that were already
+  stored. An interrupted download writes only to a `.nntdrive-part` file, which
+  is removed on failure, so a partial or truncated destination is never left
+  behind.
 - Client auto-update runs only on Windows and Linux. It needs write access to the
   install directory. Public releases do not require a token; private release
   repositories require read access configured in update settings. Actual

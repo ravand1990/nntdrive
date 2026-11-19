@@ -593,6 +593,22 @@ async fn load_verified_manifest(
     Ok(manifest)
 }
 
+/// Removes an unfinished `.nntdrive-part` file unless the download completed
+/// and renamed it into place. Interrupted downloads must not leave partial
+/// plaintext behind on disk.
+struct PartialFile {
+    path: PathBuf,
+    armed: bool,
+}
+
+impl Drop for PartialFile {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
 /// Verified plaintext bytes written to the temporary destination. Completion
 /// follows whole-file verification and atomic materialization.
 pub async fn download_file_with_progress(
@@ -616,6 +632,10 @@ pub async fn download_file_with_progress(
     if let Some(parent) = destination.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
+    let mut guard = PartialFile {
+        path: tmp.clone(),
+        armed: true,
+    };
     let mut out = tokio::fs::File::create(&tmp).await?;
     let mut whole = blake3::Hasher::new();
     let mut shards_fetched = 0usize;
@@ -701,7 +721,6 @@ pub async fn download_file_with_progress(
     out.flush().await?;
     drop(out);
     if whole.finalize().to_hex().to_string() != manifest.content_hash {
-        let _ = tokio::fs::remove_file(&tmp).await;
         return Err(ClientError::Integrity(
             "whole-file hash does not match manifest".into(),
         ));
@@ -711,6 +730,7 @@ pub async fn download_file_with_progress(
         let _ = tokio::fs::remove_file(destination).await;
     }
     tokio::fs::rename(&tmp, destination).await?;
+    guard.armed = false;
     progress(completed, manifest.size, true);
     Ok(DownloadResult {
         revision_id,
