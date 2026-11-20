@@ -89,9 +89,32 @@ endpoint selection, chunk-metadata/group-map copying, folder-summary/notice
 publication and Flutter rebuilding. Persistent chunk-reference lists are copied
 on append; row data is not. Worker startup/message copies remain costs. No
 per-record byte cap, interruption of an admitted scan or global exclusion of
-inspection versus sync is claimed. Active folders still expose only the existing
-one transfer/root observation, not all active descendants. Installed/manual
-large-tree responsiveness, TalkBack and platform permission checks remain #65.
+inspection versus sync is claimed. Installed/manual large-tree responsiveness,
+TalkBack and platform permission checks remain #65.
+
+## Live queued items of a running sync
+
+A running folder no longer collapses to one Pending summary row. Before the
+first action is applied, `SyncEngine::run_once` reports its complete
+reconciliation plan through a client-local `PlanObserver`: bounded batches of
+at most 256 items plus the complete action total, in at most 4096 notified
+items. Blocked case-collision paths are excluded because they are never
+attempted. The `nntdrive_sync_request` callback emits the batch as
+`{"phase":"plan","items":[...],"total":N}` using the same item shape as the
+read-only comparison (`kind`, `path`, `path_to`, `size`, `is_dir`).
+
+`SyncFolderConfig.activePlan` retains at most 1024 entries plus the reported
+total and is reset at the start and end of every run; transfer events only mark
+which planned path is moving now. The overview lists one Pending row per queued
+path (Conflicts keep the Conflict status), with the current phase in the reason
+("Uploading this file.", "Waiting to download this file.", ...). A capped plan
+sets the existing truncation flag and states how many queued items are shown.
+
+The scan and remote-snapshot phases that precede reconciliation have no
+per-path events, so a folder still shows the single "Sync is running." root row
+with a notice until its plan arrives. The plan is client-local and never leaves
+the device; installed responsiveness and TalkBack acceptance remain unverified
+under #65.
 
 ## Verification
 

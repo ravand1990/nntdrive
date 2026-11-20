@@ -76,11 +76,27 @@ pub struct SyncReport {
     pub item_errors: Vec<ItemError>,
 }
 
+/// Client-local notification of the reconciliation plan for a running sync.
+///
+/// Each call carries one bounded batch of queued items and the complete number
+/// of planned items. Observers are invoked before the first action is applied,
+/// so a client can list every queued path instead of only the transfer that
+/// happens to be active. The callback must not block and never receives file
+/// content, names of other devices or account secrets beyond the local relative
+/// paths the client already owns.
+pub type PlanObserver = std::sync::Arc<dyn Fn(&[InspectItem], usize) + Send + Sync>;
+
+/// Bound on plan notifications for one run: at most this many queued items are
+/// reported. The observer still receives the complete total.
+const PLAN_BATCH: usize = 256;
+const PLAN_LIMIT: usize = 4096;
+
 pub struct SyncEngine {
     pub device_name: String,
     pub scan_options: ScanOptions,
     /// Relative paths excluded from syncing (selective sync).
     pub excluded_paths: Vec<String>,
+    plan_observer: Option<PlanObserver>,
 }
 
 /// One planned difference between this device and the account. `kind` is a
@@ -274,6 +290,7 @@ impl SyncEngine {
             device_name: device_name.into(),
             scan_options: ScanOptions::default(),
             excluded_paths: Vec::new(),
+            plan_observer: None,
         }
     }
 
@@ -282,10 +299,71 @@ impl SyncEngine {
         self
     }
 
+    /// Report the bounded reconciliation plan before the first action is
+    /// applied. Callers use this for a live "queued items" view; it never
+    /// changes what the run does.
+    pub fn with_plan_observer(mut self, observer: PlanObserver) -> Self {
+        self.plan_observer = Some(observer);
+        self
+    }
+
     fn is_excluded(&self, path: &str) -> bool {
         let mut opts = self.scan_options.clone();
         opts.excluded_paths = self.excluded_paths.clone();
         opts.is_excluded(path)
+    }
+
+    /// Emit the bounded reconciliation plan once, before the first action is
+    /// applied. Only paths this device already owns are reported; nothing is
+    /// invented for an unfinished scan or a failed comparison.
+    fn notify_plan(
+        &self,
+        actions: &[Action],
+        scanned: &[scanner::ScannedEntry],
+        remote: &[RemoteEntry],
+    ) {
+        let Some(observer) = &self.plan_observer else {
+            return;
+        };
+        let local: HashMap<&str, (u64, bool)> = scanned
+            .iter()
+            .map(|entry| (entry.path.as_str(), (entry.size, entry.is_dir)))
+            .collect();
+        let remote_state: HashMap<&str, (u64, bool)> = remote
+            .iter()
+            .filter(|entry| !entry.deleted)
+            .map(|entry| (entry.path.as_str(), (entry.size, entry.is_dir)))
+            .collect();
+        let size_of = |path: &str| {
+            local
+                .get(path)
+                .or_else(|| remote_state.get(path))
+                .map(|(size, _)| *size)
+        };
+        let dir_of = |path: &str| {
+            local
+                .get(path)
+                .or_else(|| remote_state.get(path))
+                .map(|(_, is_dir)| *is_dir)
+                .unwrap_or(false)
+        };
+        let items: Vec<InspectItem> = actions
+            .iter()
+            .map(|action| action_item(action, &size_of, &dir_of))
+            .collect();
+        let total = items.len();
+        let mut batches = items
+            .chunks(PLAN_BATCH)
+            .take(PLAN_LIMIT / PLAN_BATCH)
+            .peekable();
+        if batches.peek().is_none() {
+            // An empty plan is still evidence: the run has nothing queued left.
+            observer(&[], total);
+            return;
+        }
+        for batch in batches {
+            observer(batch, total);
+        }
     }
 
     /// Scans, reconciles and applies changes. `now` is a human-readable stamp
@@ -483,17 +561,20 @@ impl SyncEngine {
             .flat_map(|(a, b)| [a.as_str(), b.as_str()])
             .collect();
 
-        for action in actions {
-            if let Action::Upload { path, .. } = &action {
-                if blocked.contains(path.as_str()) {
-                    continue;
-                }
-            }
-            if let Action::Download { path, .. } | Action::AdoptRevision { path, .. } = &action {
-                if blocked.contains(path.as_str()) {
-                    continue;
-                }
-            }
+        // Paths that a running client may list as queued work. Blocked
+        // case-collision paths are never attempted, so they stay out of it.
+        let planned: Vec<Action> = actions
+            .into_iter()
+            .filter(|action| match action {
+                Action::Upload { path, .. }
+                | Action::Download { path, .. }
+                | Action::AdoptRevision { path, .. } => !blocked.contains(path.as_str()),
+                _ => true,
+            })
+            .collect();
+        self.notify_plan(&planned, &scan.entries, &remote_entries);
+
+        for action in planned {
             let label = action_label(&action);
             let mut item_error = action_item_error(&action);
             if let Action::AdoptRevision {
@@ -730,80 +811,7 @@ impl SyncEngine {
                     .map(|(_, is_dir)| *is_dir)
                     .unwrap_or(false)
             };
-            let item = match action {
-                Action::Upload { path, .. } => InspectItem {
-                    kind: "upload".into(),
-                    path: path.clone(),
-                    path_to: None,
-                    size: size_of(path),
-                    is_dir: false,
-                },
-                Action::AdoptRevision { path, size, .. } => InspectItem {
-                    kind: "adopt_revision".into(),
-                    path: path.clone(),
-                    path_to: None,
-                    size: Some(*size),
-                    is_dir: false,
-                },
-                Action::Download { path, .. } => InspectItem {
-                    kind: "download".into(),
-                    path: path.clone(),
-                    path_to: None,
-                    size: size_of(path),
-                    is_dir: false,
-                },
-                Action::DeleteRemote { path, .. } => InspectItem {
-                    kind: "delete_remote".into(),
-                    path: path.clone(),
-                    path_to: None,
-                    size: size_of(path),
-                    is_dir: dir_of(path),
-                },
-                Action::DeleteLocal { path } => InspectItem {
-                    kind: "delete_local".into(),
-                    path: path.clone(),
-                    path_to: None,
-                    size: size_of(path),
-                    is_dir: dir_of(path),
-                },
-                Action::CreateLocalDir { path } => InspectItem {
-                    kind: "create_local_dir".into(),
-                    path: path.clone(),
-                    path_to: None,
-                    size: None,
-                    is_dir: true,
-                },
-                Action::CreateRemoteDir { path } => InspectItem {
-                    kind: "create_remote_dir".into(),
-                    path: path.clone(),
-                    path_to: None,
-                    size: None,
-                    is_dir: true,
-                },
-                Action::RenameLocal { from, to } => InspectItem {
-                    kind: "rename_local".into(),
-                    path: from.clone(),
-                    path_to: Some(to.clone()),
-                    size: size_of(from),
-                    is_dir: false,
-                },
-                Action::MoveRemote { from, to } => InspectItem {
-                    kind: "move_remote".into(),
-                    path: from.clone(),
-                    path_to: Some(to.clone()),
-                    size: size_of(from),
-                    is_dir: false,
-                },
-                Action::Conflict {
-                    path, local_copy, ..
-                } => InspectItem {
-                    kind: "conflict".into(),
-                    path: path.clone(),
-                    path_to: Some(local_copy.clone()),
-                    size: size_of(path),
-                    is_dir: false,
-                },
-            };
+            let item = action_item(action, &size_of, &dir_of);
             items.push(item);
         }
         Ok(SyncInspection {
@@ -1065,6 +1073,90 @@ impl SyncEngine {
             }
         }
         Ok(())
+    }
+}
+
+/// Maps one planned action to the client-facing item shape. Shared by the
+/// read-only comparison and the live plan notification so both describe a
+/// queued path identically.
+fn action_item(
+    action: &Action,
+    size_of: &dyn Fn(&str) -> Option<u64>,
+    dir_of: &dyn Fn(&str) -> bool,
+) -> InspectItem {
+    match action {
+        Action::Upload { path, .. } => InspectItem {
+            kind: "upload".into(),
+            path: path.clone(),
+            path_to: None,
+            size: size_of(path),
+            is_dir: false,
+        },
+        Action::AdoptRevision { path, size, .. } => InspectItem {
+            kind: "adopt_revision".into(),
+            path: path.clone(),
+            path_to: None,
+            size: Some(*size),
+            is_dir: false,
+        },
+        Action::Download { path, .. } => InspectItem {
+            kind: "download".into(),
+            path: path.clone(),
+            path_to: None,
+            size: size_of(path),
+            is_dir: false,
+        },
+        Action::DeleteRemote { path, .. } => InspectItem {
+            kind: "delete_remote".into(),
+            path: path.clone(),
+            path_to: None,
+            size: size_of(path),
+            is_dir: dir_of(path),
+        },
+        Action::DeleteLocal { path } => InspectItem {
+            kind: "delete_local".into(),
+            path: path.clone(),
+            path_to: None,
+            size: size_of(path),
+            is_dir: dir_of(path),
+        },
+        Action::CreateLocalDir { path } => InspectItem {
+            kind: "create_local_dir".into(),
+            path: path.clone(),
+            path_to: None,
+            size: None,
+            is_dir: true,
+        },
+        Action::CreateRemoteDir { path } => InspectItem {
+            kind: "create_remote_dir".into(),
+            path: path.clone(),
+            path_to: None,
+            size: None,
+            is_dir: true,
+        },
+        Action::RenameLocal { from, to } => InspectItem {
+            kind: "rename_local".into(),
+            path: from.clone(),
+            path_to: Some(to.clone()),
+            size: size_of(from),
+            is_dir: false,
+        },
+        Action::MoveRemote { from, to } => InspectItem {
+            kind: "move_remote".into(),
+            path: from.clone(),
+            path_to: Some(to.clone()),
+            size: size_of(from),
+            is_dir: false,
+        },
+        Action::Conflict {
+            path, local_copy, ..
+        } => InspectItem {
+            kind: "conflict".into(),
+            path: path.clone(),
+            path_to: Some(local_copy.clone()),
+            size: size_of(path),
+            is_dir: false,
+        },
     }
 }
 
@@ -2277,5 +2369,110 @@ mod tests {
             .expect("conflict item");
         assert_eq!(conflict.path, "shared.txt");
         assert!(conflict.path_to.is_some());
+    }
+
+    type PlanCalls = Arc<std::sync::Mutex<Vec<(Vec<InspectItem>, usize)>>>;
+
+    fn plan_engine(calls: PlanCalls) -> SyncEngine {
+        SyncEngine::new("device").with_plan_observer(Arc::new(move |items, total| {
+            calls.lock().unwrap().push((items.to_vec(), total));
+        }))
+    }
+
+    #[tokio::test]
+    async fn plan_observer_lists_every_queued_path_before_transferring() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Journal::in_memory().await.unwrap();
+        for (name, data) in [("a.txt", &b"a"[..]), ("b.txt", b"bb")] {
+            tokio::fs::write(dir.path().join(name), data).await.unwrap();
+        }
+        let mut remote = FakeRemote::default();
+        let calls: PlanCalls = Arc::default();
+        let engine = plan_engine(calls.clone());
+        run(&engine, &mut remote, dir.path(), &journal).await;
+
+        let calls = calls.lock().unwrap().clone();
+        assert_eq!(calls.len(), 1, "one bounded batch for two actions");
+        assert_eq!(calls[0].1, 2, "total reports the complete plan");
+        let mut queued: Vec<(String, String)> = calls[0]
+            .0
+            .iter()
+            .map(|item| (item.kind.clone(), item.path.clone()))
+            .collect();
+        queued.sort();
+        assert_eq!(
+            queued,
+            vec![
+                ("upload".to_string(), "a.txt".to_string()),
+                ("upload".to_string(), "b.txt".to_string()),
+            ]
+        );
+        assert_eq!(remote.0.lock().await.uploads, 2);
+    }
+
+    #[tokio::test]
+    async fn plan_observer_batches_a_large_plan_without_losing_the_total() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Journal::in_memory().await.unwrap();
+        for index in 0..300 {
+            tokio::fs::write(dir.path().join(format!("{index}.txt")), b"x")
+                .await
+                .unwrap();
+        }
+        let mut remote = FakeRemote::default();
+        let calls: PlanCalls = Arc::default();
+        let engine = plan_engine(calls.clone());
+        run(&engine, &mut remote, dir.path(), &journal).await;
+
+        let calls = calls.lock().unwrap().clone();
+        assert_eq!(calls.len(), 2, "256 then 44");
+        assert!(calls.iter().all(|(_, total)| *total == 300));
+        assert_eq!(calls[0].0.len(), 256);
+        assert_eq!(calls[1].0.len(), 44);
+        let unique: std::collections::HashSet<String> = calls
+            .iter()
+            .flat_map(|(items, _)| items.iter().map(|item| item.path.clone()))
+            .collect();
+        assert_eq!(unique.len(), 300);
+    }
+
+    #[tokio::test]
+    async fn plan_observer_skips_blocked_case_collisions() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Journal::in_memory().await.unwrap();
+        for name in ["Readme.md", "README.md", "plain.txt"] {
+            tokio::fs::write(dir.path().join(name), b"x").await.unwrap();
+        }
+        let mut remote = FakeRemote::default();
+        let calls: PlanCalls = Arc::default();
+        let engine = plan_engine(calls.clone());
+        // Case collisions are reported as errors, so run directly rather than
+        // through the no-error helper.
+        engine
+            .run_once(&mut remote, dir.path(), &journal, "t")
+            .await
+            .unwrap();
+        let calls = calls.lock().unwrap().clone();
+        let queued: Vec<String> = calls
+            .iter()
+            .flat_map(|(items, _)| items.iter().map(|item| item.path.clone()))
+            .collect();
+        assert_eq!(queued, vec!["plain.txt".to_string()]);
+        assert_eq!(calls[0].1, 1);
+    }
+
+    #[tokio::test]
+    async fn plan_observer_reports_an_empty_plan() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Journal::in_memory().await.unwrap();
+        let mut remote = FakeRemote::default();
+        let calls: PlanCalls = Arc::default();
+        let engine = plan_engine(calls.clone());
+        run(&engine, &mut remote, dir.path(), &journal).await;
+
+        let calls = calls.lock().unwrap().clone();
+        assert_eq!(calls.len(), 1);
+        assert!(calls[0].0.is_empty());
+        assert_eq!(calls[0].1, 0);
     }
 }

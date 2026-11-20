@@ -88,6 +88,20 @@ class SyncFolderConfig {
   bool running = false;
   bool storageAccessRequired = false;
 
+  /// Bounded, device-local copy of the reconciliation plan of the running sync:
+  /// one entry per queued path with `kind`, `path`, `path_to`, `size` and
+  /// `is_dir`. Only relative paths, never absolute ones.
+  List<Map<String, dynamic>> activePlan = [];
+
+  /// Complete number of queued items the engine planned, when it reported one.
+  int? activePlanTotal;
+
+  /// Relative paths with a transfer in progress right now. Cleared per run.
+  Set<String> activeTransferPaths = {};
+
+  /// True once the engine's plan notification has arrived for this run.
+  bool get activePlanKnown => activePlanTotal != null;
+
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,
@@ -833,6 +847,57 @@ class SyncController extends ChangeNotifier {
           ? Future.value(null)
           : _operations.run(0, () => _syncFolder(folder, silent: silent));
 
+  /// Upper bound on plan entries retained for the live overview. The engine
+  /// already bounds its own notification; this keeps a larger or misbehaving
+  /// producer from growing client memory.
+  static const int activePlanLimit = 1024;
+
+  void _resetActivePlan(SyncFolderConfig folder) {
+    folder.activePlan = [];
+    folder.activePlanTotal = null;
+    folder.activeTransferPaths = {};
+  }
+
+  /// Consumes one native progress event. Plan batches carry the complete set of
+  /// queued paths; transfer events only mark which of them is moving now.
+  void _onSyncProgress(SyncFolderConfig folder, Map<String, dynamic> event) {
+    folder.progress = event;
+    if (event['phase'] == 'plan') {
+      final total = event['total'];
+      if (total is int && total >= 0) folder.activePlanTotal = total;
+      final items = event['items'];
+      if (items is List) {
+        for (final item in items) {
+          if (folder.activePlan.length >= activePlanLimit) break;
+          if (item is! Map) continue;
+          final kind = item['kind'];
+          final path = item['path'];
+          if (kind is! String || path is! String || path.isEmpty) continue;
+          folder.activePlan.add(<String, dynamic>{
+            'kind': kind,
+            'path': path,
+            'path_to': item['path_to'] is String ? item['path_to'] as String : null,
+            'size': item['size'] is int ? item['size'] as int : null,
+            'is_dir': item['is_dir'] == true,
+          });
+        }
+      }
+    } else {
+      final path = event['path'];
+      final direction = event['direction'];
+      if (path is String &&
+          path.isNotEmpty &&
+          (direction == 'upload' || direction == 'download')) {
+        if (event['complete'] == true) {
+          folder.activeTransferPaths.remove(path);
+        } else {
+          folder.activeTransferPaths.add(path);
+        }
+      }
+    }
+    notifyListeners();
+  }
+
   Future<Map<String, dynamic>?> _syncFolder(SyncFolderConfig folder,
       {bool silent = false}) async {
     if (!deviceNameConfirmed || rootsError != null || paused ||
@@ -844,6 +909,7 @@ class SyncController extends ChangeNotifier {
     _running.add(folder.id);
     folder.running = true;
     folder.progress = null;
+    _resetActivePlan(folder);
     notifyListeners();
     if (!silent) {
       lastStatus = 'Syncing ${folder.name}…';
@@ -862,10 +928,7 @@ class SyncController extends ChangeNotifier {
         'journalPath': journal,
         'deviceName': 'Device',
         'excluded': folder.excluded,
-      }, (event) {
-        folder.progress = event;
-        notifyListeners();
-      });
+      }, (event) => _onSyncProgress(folder, event));
       folder.lastReport = report;
       folder.lastSync = DateTime.now().toIso8601String();
       final errors = report['errors'];
@@ -889,6 +952,7 @@ class SyncController extends ChangeNotifier {
       _running.remove(folder.id);
       folder.running = false;
       folder.progress = null;
+      _resetActivePlan(folder);
       await _save();
       await scanConflicts();
     }
@@ -1062,6 +1126,8 @@ class SyncController extends ChangeNotifier {
     if (original == null) throw StateError('Cannot identify the original file');
     _running.add(folder.id);
     folder.running = true;
+    folder.progress = null;
+    _resetActivePlan(folder);
     notifyListeners();
     try {
       await storageAccess.check(folder.localPath);
@@ -1077,10 +1143,7 @@ class SyncController extends ChangeNotifier {
         'original': original,
         'copy': copy,
         'choice': choice,
-      }, (event) {
-        folder.progress = event;
-        notifyListeners();
-      });
+      }, (event) => _onSyncProgress(folder, event));
       folder.lastError = null;
       lastStatus =
           'Conflict resolved; both versions remain recoverable in synced files.';
@@ -1091,6 +1154,7 @@ class SyncController extends ChangeNotifier {
       _running.remove(folder.id);
       folder.running = false;
       folder.progress = null;
+      _resetActivePlan(folder);
       await _save();
       await scanConflicts();
     }

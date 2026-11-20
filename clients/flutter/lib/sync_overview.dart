@@ -289,7 +289,7 @@ Future<UnsyncedOverview> buildUnsyncedOverview({
     // A later folder can start syncing while an earlier mapping is awaited.
     // Keep its initial display snapshot, but never admit a now-redundant scan.
     if (!folder.running && sources[i].running) {
-      folder = _withActiveProgress(folder, sources[i].progress);
+      folder = _liveActiveProgress(folder, sources[i]);
     }
     Map<String, dynamic> plan = const {};
     var inspectionFailed = false;
@@ -299,7 +299,7 @@ Future<UnsyncedOverview> buildUnsyncedOverview({
         // The controller also checks after permission/journal awaits. Its
         // admission marker is not an empty successful comparison.
         if (sources[i].running) {
-          folder = _withActiveProgress(folder, sources[i].progress);
+          folder = _liveActiveProgress(folder, sources[i]);
         }
       } on OverviewCancelled {
         rethrow;
@@ -331,7 +331,8 @@ class OverviewFolderInput {
   const OverviewFolderInput(this.id, this.name, this.lastSync,
       this.storageAccessRequired, this.excluded, this.lastReport,
       {this.running = false, this.progressPath, this.progressDirection,
-      this.progressComplete, this.errorReasons});
+      this.progressComplete, this.errorReasons,
+      this.activePlan = const [], this.planTotal, this.activeTransfers = const []});
 
   final String id;
   final String name;
@@ -344,12 +345,40 @@ class OverviewFolderInput {
   final String? progressDirection;
   final bool? progressComplete;
   final Map<String, String>? errorReasons;
+
+  /// Bounded, device-local reconciliation plan of the running sync. Only the
+  /// fields mapping consumes are retained.
+  final List<Map<String, dynamic>> activePlan;
+
+  /// Complete number of queued items the engine planned, when known.
+  final int? planTotal;
+
+  /// Relative paths with a transfer in progress right now.
+  final List<String> activeTransfers;
 }
+
+/// Copies only the scalar plan fields the mapper consumes. Paths are already
+/// relative and device-local; this never runs over unused diagnostics.
+List<Map<String, dynamic>> _freezeActivePlan(List<Map<String, dynamic>> plan) =>
+    List<Map<String, dynamic>>.unmodifiable([
+      for (final item in plan)
+        if (item['kind'] is String && item['path'] is String)
+          <String, dynamic>{
+            'kind': item['kind'],
+            'path': item['path'],
+            'path_to': item['path_to'] is String ? item['path_to'] : null,
+            'size': item['size'] is int ? item['size'] : null,
+            'is_dir': item['is_dir'] == true,
+          },
+    ]);
 
 // The native callback emits path/direction/bytes/total/complete, not scan phases.
 // Only consumed scalar fields are read; never enumerate callback diagnostics.
 OverviewFolderInput _withActiveProgress(
-    OverviewFolderInput folder, Map<String, dynamic>? progress) {
+    OverviewFolderInput folder, Map<String, dynamic>? progress,
+    {List<Map<String, dynamic>> activePlan = const [],
+    int? planTotal,
+    List<String> activeTransfers = const []}) {
   final path = progress?['path'];
   final direction = progress?['direction'];
   final complete = progress?['complete'];
@@ -357,8 +386,18 @@ OverviewFolderInput _withActiveProgress(
       folder.storageAccessRequired, folder.excluded, null,
       running: true, progressPath: path is String ? path : null,
       progressDirection: direction is String ? direction : null,
-      progressComplete: complete is bool ? complete : null);
+      progressComplete: complete is bool ? complete : null,
+      activePlan: activePlan, planTotal: planTotal,
+      activeTransfers: activeTransfers);
 }
+
+/// Live recheck of a folder that started syncing after the initial freeze.
+OverviewFolderInput _liveActiveProgress(
+        OverviewFolderInput folder, SyncFolderConfig source) =>
+    _withActiveProgress(folder, source.progress,
+        activePlan: _freezeActivePlan(source.activePlan),
+        planTotal: source.activePlanTotal,
+        activeTransfers: List<String>.unmodifiable(source.activeTransferPaths));
 
 // Freeze only fields consumed by mapping. Recursively copying whole error
 // records would traverse unused diagnostic payloads on the UI isolate and
@@ -390,7 +429,12 @@ OverviewFolderInput _freezeOverviewFolder(SyncFolderConfig folder) {
       folder.running || folder.lastReport == null ? null : <String, dynamic>{
         'item_errors': _freezeItemErrors(folder.lastReport!['item_errors']),
       });
-  return folder.running ? _withActiveProgress(input, folder.progress) : input;
+  return folder.running
+      ? _withActiveProgress(input, folder.progress,
+          activePlan: _freezeActivePlan(folder.activePlan),
+          planTotal: folder.activePlanTotal,
+          activeTransfers: List<String>.unmodifiable(folder.activeTransferPaths))
+      : input;
 }
 
 class OverviewFolderMapping {
@@ -425,6 +469,48 @@ OverviewFolderMapping _mapUnsyncedFolder(
   final notices = <UnsyncedNotice>[];
   var truncated = false;
   if (folder.running) {
+    // Plan evidence covers every path the engine intends to apply, in bounded
+    // batches plus a complete total. List them all; the root summary row is
+    // only a fallback for the scan/compare phase before the plan arrives.
+    if (folder.activePlan.isNotEmpty) {
+      final active = folder.activeTransfers.toSet();
+      final items = List<Map<String, dynamic>>.of(folder.activePlan)
+        ..sort((a, b) =>
+            (a['path'] as String).compareTo(b['path'] as String));
+      for (final item in items) {
+        final kind = item['kind'] as String;
+        final path = item['path'] as String;
+        final status = _activeStatusFor(kind);
+        if (status == null) continue;
+        if (entries.length >= maxEntries) {
+          truncated = true;
+          break;
+        }
+        entries.add(UnsyncedEntry(
+          status: status,
+          folderId: folder.id,
+          folderName: folder.name,
+          path: path,
+          pathTo: item['path_to'] as String?,
+          size: item['size'] as int?,
+          isDirectory: item['is_dir'] == true,
+          retryable: false,
+          reason: _activeReasonFor(kind, item['path_to'] as String?,
+              active.contains(path)),
+        ));
+      }
+      final total = folder.planTotal;
+      if (total != null && total > folder.activePlan.length) truncated = true;
+      if (truncated) {
+        final shown = entries.length;
+        notices.add(UnsyncedNotice(
+          folder.name,
+          'Showing $shown of ${total ?? folder.activePlan.length} queued items. '
+          'The rest appear when sync finishes and the list refreshes.',
+        ));
+      }
+      return _mappedFolder(folder, entries, notices, truncated);
+    }
     final direction = folder.progressDirection;
     final path = folder.progressPath;
     final transferring = folder.progressComplete == false &&
@@ -446,8 +532,8 @@ OverviewFolderMapping _mapUnsyncedFolder(
       truncated = true;
     }
     notices.add(UnsyncedNotice(folder.name,
-        'Active sync evidence only; not all active descendants are enumerated. '
-        'Full comparison awaits an idle refresh.'));
+        'Sync is scanning and comparing this folder. Queued items appear as '
+        'soon as the plan is ready.'));
     return _mappedFolder(folder, entries, notices, truncated);
   }
   final failed = folder.errorReasons ?? <String, String>{};
@@ -658,6 +744,38 @@ UnsyncedStatus? _statusFor(String kind) => switch (kind) {
         UnsyncedStatus.pending,
       'conflict' => UnsyncedStatus.conflict,
       _ => null,
+    };
+
+/// Status of a queued item during a running sync: in flight, so `Pending`, with
+/// the phase carried by the reason. A conflict keeps its own status because it
+/// needs a decision after the run.
+UnsyncedStatus? _activeStatusFor(String kind) {
+  if (kind == 'conflict') return UnsyncedStatus.conflict;
+  return _statusFor(kind) == null ? null : UnsyncedStatus.pending;
+}
+
+String _activeReasonFor(String kind, String? pathTo, bool transferring) =>
+    switch (kind) {
+      'upload' =>
+        transferring ? 'Uploading this file.' : 'Waiting to upload this file.',
+      'download' => transferring
+          ? 'Downloading this file.'
+          : 'Waiting to download this file.',
+      'create_local_dir' => 'Waiting to create this folder on this device.',
+      'create_remote_dir' => 'Waiting to create this folder in the account.',
+      'delete_local' => 'Waiting to remove the local copy.',
+      'delete_remote' => 'Waiting to remove the account copy.',
+      'rename_local' => pathTo == null
+          ? 'Waiting to rename this item.'
+          : 'Waiting to rename it to $pathTo.',
+      'move_remote' => pathTo == null
+          ? 'Waiting to move this item in the account.'
+          : 'Waiting to move it to $pathTo in the account.',
+      'adopt_revision' =>
+        'Waiting to confirm an identical edit on both sides.',
+      'conflict' =>
+        'Both sides changed. Sync keeps both copies; then choose keep mine, keep theirs or keep both.',
+      _ => 'Queued for the running sync.',
     };
 
 String _reasonFor(String kind, String? pathTo) => switch (kind) {

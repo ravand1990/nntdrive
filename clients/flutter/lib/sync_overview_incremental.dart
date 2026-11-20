@@ -158,7 +158,7 @@ Future<UnsyncedOverview> buildIncrementalUnsyncedOverview({
     cancellation.check();
     var folder = frozen[i];
     if (!folder.running && sources[i].running) {
-      folder = _withActiveProgress(folder, sources[i].progress);
+      folder = _liveActiveProgress(folder, sources[i]);
     }
     final errors = folder.running
         ? const <String, String>{}
@@ -181,6 +181,9 @@ Future<UnsyncedOverview> buildIncrementalUnsyncedOverview({
       progressPath: folder.progressPath,
       progressDirection: folder.progressDirection,
       progressComplete: folder.progressComplete,
+      activePlan: folder.activePlan,
+      planTotal: folder.planTotal,
+      activeTransfers: folder.activeTransfers,
     );
     if (folder.running || folder.storageAccessRequired) {
       await append(input(const []), const {});
@@ -198,7 +201,7 @@ Future<UnsyncedOverview> buildIncrementalUnsyncedOverview({
           // started during permission/journal/comparison admission, expose its
           // current transfer/root once and close the now-redundant cursor.
           if (first && sources[i].running) {
-            folder = _withActiveProgress(folder, sources[i].progress);
+            folder = _liveActiveProgress(folder, sources[i]);
           }
           final blocked =
               _filesystemBlockReason(page['filesystem_blocked']) != null;

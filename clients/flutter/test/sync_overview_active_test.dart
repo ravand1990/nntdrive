@@ -56,8 +56,8 @@ void main() {
     expect(result.folders.single.counts, result.counts);
     expect(result.filtered(folderId: 'active', status: UnsyncedStatus.pending),
         [row]);
-    expect(result.notices.single.message, contains('idle'));
-    expect(result.notices.single.message, contains('descendants'));
+    expect(result.notices.single.message, contains('scanning'));
+    expect(result.notices.single.message, contains('plan'));
   });
 
   test('active root fallbacks do not invent completed or unknown transfers',
@@ -124,7 +124,7 @@ void main() {
         folders: [folder('a')], inspect: (_) async => {'sync_running': true});
     expect(result.entries.single.status, UnsyncedStatus.pending);
     expect(result.entries.single.path, '');
-    expect(result.notices.single.message, contains('idle'));
+    expect(result.notices.single.message, contains('plan'));
   });
 
   test('active rows share global budget and retained-only counts', () async {
@@ -153,7 +153,7 @@ void main() {
         })));
     await tester.pumpAndSettle();
     expect(find.text('Uploading this file.'), findsOneWidget);
-    expect(find.textContaining('not all active descendants'), findsOneWidget);
+    expect(find.textContaining('Queued items appear'), findsOneWidget);
     expect(find.text('Everything is in sync.'), findsNothing);
     expect(find.byTooltip('Sync active now'), findsNothing);
     await tester.tap(find.text('exact.txt'));

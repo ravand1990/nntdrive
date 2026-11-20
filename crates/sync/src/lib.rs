@@ -14,8 +14,8 @@ pub mod reconcile;
 pub mod scanner;
 
 pub use engine::{
-    FilesystemBlock, InspectItem, Remote, SyncEngine, SyncError, SyncInspection, SyncReport,
-    INSPECT_ITEM_LIMIT,
+    FilesystemBlock, InspectItem, PlanObserver, Remote, SyncEngine, SyncError, SyncInspection,
+    SyncReport, INSPECT_ITEM_LIMIT,
 };
 pub use journal::{Journal, JournalError, JournalSnapshot};
 pub use reconcile::{

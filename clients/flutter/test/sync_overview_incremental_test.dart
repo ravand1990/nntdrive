@@ -284,7 +284,7 @@ void main() {
       expect(result.truncated, isFalse);
       expect(
         result.notices.single.message,
-        contains('Active sync evidence only'),
+        contains('Queued items appear'),
       );
     },
   );
