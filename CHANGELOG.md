@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Features
+
+- The activity feed has a local search field. Typing narrows the rows by local name, folder, kind or failure reason, ignoring case, and every word typed must appear in a row; search combines with the existing kind and folder filters. The query stays in memory: it is never stored, logged or sent to the backend (#87).
+
 ## [0.32.0] - 2026-11-20
 
 ### Features

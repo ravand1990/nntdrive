@@ -21,6 +21,7 @@ class ActivityPage extends StatefulWidget {
 class _ActivityPageState extends State<ActivityPage> {
   ActivityKind? _kind;
   String? _folder;
+  final TextEditingController _search = TextEditingController();
 
   @override
   void initState() {
@@ -32,6 +33,7 @@ class _ActivityPageState extends State<ActivityPage> {
   @override
   void dispose() {
     widget.log.removeListener(_changed);
+    _search.dispose();
     super.dispose();
   }
 
@@ -80,7 +82,8 @@ class _ActivityPageState extends State<ActivityPage> {
     final folder = _folder != null && folders.contains(_folder)
         ? _folder
         : null;
-    final entries = log.filtered(kind: _kind, folder: folder);
+    final query = _search.text.trim();
+    final entries = log.filtered(kind: _kind, folder: folder, query: query);
     final notifications = log.notifications;
     return Scaffold(
       appBar: AppBar(
@@ -108,6 +111,15 @@ class _ActivityPageState extends State<ActivityPage> {
                 onDismiss: log.dismiss,
                 onDismissAll: log.dismissAll,
               ),
+            if (log.entries.isNotEmpty)
+              _ActivitySearchField(
+                controller: _search,
+                onChanged: (_) => setState(() {}),
+                onClear: () {
+                  _search.clear();
+                  setState(() {});
+                },
+              ),
             if (folders.length > 1 || _kind != null)
               _FilterBar(
                 kind: _kind,
@@ -119,7 +131,9 @@ class _ActivityPageState extends State<ActivityPage> {
             Expanded(
               child: entries.isEmpty
                   ? _EmptyActivity(
-                      filtered: _kind != null || folder != null,
+                      filtered:
+                          _kind != null || folder != null || query.isNotEmpty,
+                      searching: query.isNotEmpty,
                       hasHistory: log.entries.isNotEmpty,
                     )
                   : ListView.builder(
@@ -353,16 +367,63 @@ class _FilterBar extends StatelessWidget {
   }
 }
 
+/// Local free-text search over the feed. Nothing typed here is stored or
+/// transmitted: it only narrows the rows already decrypted for this session.
+class _ActivitySearchField extends StatelessWidget {
+  const _ActivitySearchField({
+    required this.controller,
+    required this.onChanged,
+    required this.onClear,
+  });
+
+  final TextEditingController controller;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      child: TextField(
+        key: const Key('activity-search-field'),
+        controller: controller,
+        onChanged: onChanged,
+        textInputAction: TextInputAction.search,
+        decoration: InputDecoration(
+          hintText: 'Search activity',
+          prefixIcon: const Icon(Icons.search),
+          suffixIcon: controller.text.isEmpty
+              ? null
+              : IconButton(
+                  onPressed: onClear,
+                  icon: const Icon(Icons.clear),
+                  tooltip: 'Clear search',
+                ),
+          border: const OutlineInputBorder(),
+          isDense: true,
+        ),
+      ),
+    );
+  }
+}
+
 class _EmptyActivity extends StatelessWidget {
-  const _EmptyActivity({required this.filtered, required this.hasHistory});
+  const _EmptyActivity({
+    required this.filtered,
+    required this.searching,
+    required this.hasHistory,
+  });
 
   final bool filtered;
+  final bool searching;
   final bool hasHistory;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final message = filtered
+    final message = searching
+        ? 'No entries match this search.'
+        : filtered
         ? 'No entries match these filters.'
         : (hasHistory
               ? 'No entries match these filters.'

@@ -106,6 +106,27 @@ class ActivityEntry {
   /// `Copied budget.pdf`, used as the row title.
   String describe() => '${kind.label} $subject';
 
+  /// Everything a local search can match on this row: the local name or
+  /// summary, the folder, the kind and the secret-free reason.
+  ///
+  /// Derived on demand from device-local data; never persisted or sent.
+  String get searchText => '${kind.label} $subject $folder ${reason ?? ''}';
+
+  /// Whether this row matches a free-text [query].
+  ///
+  /// Matching is case-insensitive and every whitespace-separated word must
+  /// appear somewhere in [searchText], so `failed docs` finds a failed row in
+  /// the Documents folder. An empty or whitespace-only query matches every row.
+  bool matchesQuery(String query) {
+    final words = query
+        .toLowerCase()
+        .split(RegExp(r'\s+'))
+        .where((word) => word.isNotEmpty);
+    if (words.isEmpty) return true;
+    final haystack = searchText.toLowerCase();
+    return words.every((word) => haystack.contains(word));
+  }
+
   Map<String, dynamic> toJson() => <String, dynamic>{
     'id': id,
     'at': at.toUtc().toIso8601String(),
@@ -342,11 +363,16 @@ class ActivityLog extends ChangeNotifier {
   }
 
   /// Entries matching every supplied filter, newest first.
+  ///
+  /// [query] is the local free-text search; it only looks at the bounded
+  /// in-memory log, so it never reads files, hits the network or touches names
+  /// that are not already decrypted for this session.
   List<ActivityEntry> filtered({
     ActivityKind? kind,
     String? folder,
     String? folderRootId,
     DateTime? since,
+    String? query,
   }) {
     return _entries.where((entry) {
       if (kind != null && entry.kind != kind) return false;
@@ -355,6 +381,7 @@ class ActivityLog extends ChangeNotifier {
         return false;
       }
       if (since != null && entry.at.isBefore(since)) return false;
+      if (query != null && !entry.matchesQuery(query)) return false;
       return true;
     }).toList();
   }

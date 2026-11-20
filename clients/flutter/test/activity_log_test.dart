@@ -85,6 +85,48 @@ void main() {
     );
   });
 
+  test('search matches names, folders, reasons and kinds', () async {
+    final log = newLog(MemoryActivityStore());
+    await log.load();
+    log.record(
+      kind: ActivityKind.uploaded,
+      folder: 'Documents',
+      subject: 'Budget.pdf',
+    );
+    log.record(
+      kind: ActivityKind.failed,
+      folder: 'Photos',
+      subject: 'sync',
+      reason: 'Server unreachable',
+    );
+    log.record(
+      kind: ActivityKind.downloaded,
+      folder: 'Documents',
+      subject: 'b.png',
+    );
+
+    // Subject, case-insensitively.
+    expect(log.filtered(query: 'budget').single.subject, 'Budget.pdf');
+    expect(log.filtered(query: 'BUDGET').single.subject, 'Budget.pdf');
+    // Folder, reason and kind label are searchable too.
+    expect(log.filtered(query: 'photos').single.subject, 'sync');
+    expect(log.filtered(query: 'unreachable').single.kind, ActivityKind.failed);
+    expect(log.filtered(query: 'failed').single.kind, ActivityKind.failed);
+    expect(log.filtered(query: 'documents').length, 2);
+    // Every word must match, and a blank query matches every row.
+    expect(log.filtered(query: 'budget png'), isEmpty);
+    expect(log.filtered(query: 'documents b.png').single.subject, 'b.png');
+    expect(log.filtered(query: '   ').length, 3);
+    // Search composes with the existing filters.
+    expect(
+      log
+          .filtered(kind: ActivityKind.uploaded, query: 'documents')
+          .single
+          .subject,
+      'Budget.pdf',
+    );
+  });
+
   test('notifications hide on dismissal but the entry stays', () async {
     final log = newLog(MemoryActivityStore());
     await log.load();
