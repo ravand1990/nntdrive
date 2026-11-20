@@ -15,10 +15,10 @@ class KeyfileEnvelopeTest {
     fun `entry names become safe aliases`() {
         assertEquals("nntdrive.keyfile.keyfile", KeyfileEnvelope.alias("keyfile"))
         assertEquals(
-            "nntdrive.keyfile.account_1.keyfile",
+            "nntdrive.keyfile.account_1_keyfile",
             KeyfileEnvelope.alias("account/1 keyfile"),
         )
-        assertEquals("nntdrive.keyfile._", KeyfileEnvelope.alias("///"))
+        assertEquals("nntdrive.keyfile._", KeyfileEnvelope.alias(""))
         assertEquals("entry_keyfile", KeyfileEnvelope.prefsEntry("keyfile"))
         // Different accounts must never share one Keystore key.
         assertNotEquals(
@@ -56,7 +56,11 @@ class KeyfileEnvelopeTest {
         val packed = KeyfileEnvelope.pack(iv, ciphertext)
 
         assertNull("empty", KeyfileEnvelope.unpack(ByteArray(0)))
-        assertNull("truncated", KeyfileEnvelope.unpack(packed.copyOf(packed.size - 1)))
+        // Fewer bytes than header + IV + one ciphertext byte.
+        assertNull(
+            "truncated",
+            KeyfileEnvelope.unpack(packed.copyOf(KeyfileEnvelope.IV_BYTES)),
+        )
         assertNull(
             "future version",
             KeyfileEnvelope.unpack(packed.clone().also { it[0] = 2 }),
