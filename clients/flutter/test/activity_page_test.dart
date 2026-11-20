@@ -22,6 +22,11 @@ void main() {
     WidgetTester tester, {
     void Function(ActivityLog log)? seed,
   }) async {
+    // A tall surface keeps every lazily built row in the ListView, so the
+    // assertions below do not depend on the shorter default test viewport.
+    tester.view.physicalSize = const Size(900, 1800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
     final log = ActivityLog(
       store: MemoryActivityStore(),
       accountId: 'account-1',
@@ -134,6 +139,50 @@ void main() {
     await tester.pumpAndSettle();
     expect(log.entries, isEmpty);
     expect(find.textContaining('No activity yet'), findsOneWidget);
+  });
+
+  testWidgets('search narrows the feed and can be cleared', (tester) async {
+    await pumpPage(tester);
+    final search = find.byKey(const Key('activity-search-field'));
+    expect(search, findsOneWidget);
+    expect(find.byType(ActivityRow), findsNWidgets(3));
+
+    await tester.enterText(search, 'budget');
+    await tester.pumpAndSettle();
+    expect(find.byType(ActivityRow), findsOneWidget);
+    expect(find.text('Uploaded budget.pdf'), findsOneWidget);
+
+    await tester.enterText(search, 'nothing matches this');
+    await tester.pumpAndSettle();
+    expect(find.byType(ActivityRow), findsNothing);
+    expect(find.textContaining('No entries match this search'), findsOneWidget);
+    // The notification centre stays reachable while the feed is filtered.
+    expect(find.text('Needs attention'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Clear search'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ActivityRow), findsNWidgets(3));
+  });
+
+  testWidgets('search combines with the kind and folder filters', (
+    tester,
+  ) async {
+    await pumpPage(tester);
+    final search = find.byKey(const Key('activity-search-field'));
+
+    await tester.enterText(search, 'documents');
+    await tester.pumpAndSettle();
+    expect(find.byType(ActivityRow), findsNWidgets(2));
+
+    await tester.tap(find.widgetWithText(FilterChip, 'Uploaded'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ActivityRow), findsOneWidget);
+    expect(find.text('Uploaded budget.pdf'), findsOneWidget);
+
+    await tester.enterText(search, 'photos');
+    await tester.pumpAndSettle();
+    expect(find.byType(ActivityRow), findsNothing);
+    expect(find.textContaining('No entries match this search'), findsOneWidget);
   });
 
   testWidgets('each row reads as one sentence for screen readers', (

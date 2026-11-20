@@ -11,14 +11,19 @@ notification but keeps the row in the feed. The feed is bounded (500 rows, 30
 days), stored per account in local preferences, cleared on sign-out, and never
 sent to the backend. Export produces a plain-text report that is redacted to
 opaque node/root ids by default, with local names only on an explicit choice.
+A search field narrows the feed by local name, folder, kind or failure reason;
+matching ignores case, every typed word must match, and the query is combined
+with the kind and folder filters without ever being stored or sent.
 
-Verified in the pinned isolated wrapper: clean Flutter analysis and **618
-passing tests / 4 platform skips**, including 18 new activity rows, filtering,
-dismissal, retention, per-account storage, redacted export and two real
-`SyncController` runs. Removing either run hook or the redaction branch fails
-those tests; all sabotage was restored before the successful run. Not verified:
-per-file transfer rows (the engine reports counts, not per-item results),
-retention/export settings UI, #79 deep links, and any installed build.
+Verified in the pinned isolated wrapper: clean Flutter analysis and **621
+passing tests / 4 platform skips**, including 21 activity tests (rows,
+filtering, search, dismissal, retention, per-account storage, redacted export
+and two real `SyncController` runs). Removing either run hook, the redaction
+branch, the dismissal, the query check or the reason in the search text fails
+the matching test; all sabotage was restored before the successful run. Not
+verified: per-file transfer rows (the engine reports counts, not per-item
+results), retention/export settings UI, #79 deep links, and any installed
+build.
 
 ## Markdown update notes (#154)
 
