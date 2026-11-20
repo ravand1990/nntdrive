@@ -7,23 +7,27 @@ account: uploads, downloads, copies, moves, renames and deletes performed in the
 browser, plus one row set per finished sync run (uploaded, downloaded and
 conflict counts, and a failure row with a short reason). Failures and conflicts
 also appear in a **Needs attention** section; dismissing one hides the
-notification but keeps the row in the feed. The feed is bounded (500 rows, 30
-days), stored per account in local preferences, cleared on sign-out, and never
-sent to the backend. Export produces a plain-text report that is redacted to
-opaque node/root ids by default, with local names only on an explicit choice.
-A search field narrows the feed by local name, folder, kind or failure reason;
-matching ignores case, every typed word must match, and the query is combined
-with the kind and folder filters without ever being stored or sent.
+notification but keeps the row in the feed. The feed is bounded (500 rows) and
+keeps a retention window the user can change in the activity settings (7, 30, 90
+or 365 days; 30 by default), stored per account in local preferences, cleared on
+sign-out, and never sent to the backend. Export produces a plain-text report that
+is redacted to opaque node/root ids by default, with local names only on an
+explicit choice. A search field narrows the feed by local name, folder, kind or
+failure reason; matching ignores case, every typed word must match, and the
+query is combined with the kind and folder filters without ever being stored or
+sent. The settings dialog applies a shorter window immediately, cancelling
+changes nothing, and the choice survives a restart.
 
-Verified in the pinned isolated wrapper: clean Flutter analysis and **621
-passing tests / 4 platform skips**, including 21 activity tests (rows,
-filtering, search, dismissal, retention, per-account storage, redacted export
-and two real `SyncController` runs). Removing either run hook, the redaction
-branch, the dismissal, the query check or the reason in the search text fails
-the matching test; all sabotage was restored before the successful run. Not
-verified: per-file transfer rows (the engine reports counts, not per-item
-results), retention/export settings UI, #79 deep links, and any installed
-build.
+Verified in the pinned isolated wrapper: clean Flutter analysis and **648
+passing tests / 4 platform skips**, including 26 activity tests (rows,
+filtering, search, dismissal, retention and retention settings, per-account
+storage, redacted export and two real `SyncController` runs). Removing either
+run hook, the redaction branch, the dismissal, the query check, the reason in
+the search text, the prune or the restore of the chosen window, or the dialog's
+apply call fails the matching test; all sabotage was restored before the
+successful run. Not verified: per-file transfer rows (the engine reports
+counts, not per-item results), #79 deep links, and any installed build (the
+retention dialog was only exercised in widget tests).
 
 ## Markdown update notes (#154)
 
