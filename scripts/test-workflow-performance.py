@@ -44,6 +44,11 @@ class WorkflowPerformanceTests(unittest.TestCase):
             self.assertIn("flutter test --reporter expanded", jobs(self.clients)[name])
             self.assertIn("NNTDRIVE_FFI_PATH", jobs(self.clients)[name])
         self.assertIn("check-android-apk.py", jobs(self.clients)["build-android"])
+        # The disaster-recovery round trip must stay in CI: it is the only
+        # automated proof that a dump produced by scripts/backup.sh restores.
+        self.assertIn("test-restore.py", jobs(self.ci)["wrapper-contracts"])
+        self.assertIn("scripts/backup.sh", jobs(self.ci)["wrapper-contracts"])
+        self.assertIn("scripts/restore.sh", jobs(self.ci)["wrapper-contracts"])
         smoke = jobs(self.clients)["android-native-smoke"]
         self.assertIn("test -c /dev/kvm", smoke)
         self.assertIn("lib/x86_64/libnntdrive_ffi.so", smoke)

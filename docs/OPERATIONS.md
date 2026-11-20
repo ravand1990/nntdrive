@@ -341,7 +341,16 @@ dump off-host. The recovery kit and code must be stored **separately**. Verify
 restores periodically in a staging stack.
 
 `scripts/restore.sh <dir> --yes` restores destructively and stops the backend
-first.
+first, checks `SHA256SUMS` before dropping anything, and still requires typing
+`RESTORE`.
+
+Both scripts also accept `PG_CONTAINER=<container>` (with `PG_USER`, `PG_DB`,
+`PG_ADMIN_DB`) to run `pg_dump`/`pg_restore` inside an existing PostgreSQL
+container instead of the compose service, and refuse to run when `USE_LOCAL_PG=1`
+is combined with it. `python3 scripts/test-restore.py` exercises that path
+end-to-end in CI: it starts a disposable PostgreSQL container, applies the
+migrations, seeds rows, backs up, damages the database, restores and verifies
+that the rows return and that a tampered dump is rejected before any drop.
 
 ## Upgrades
 

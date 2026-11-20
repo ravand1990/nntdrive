@@ -13,7 +13,7 @@ workflow, not proof of repository branch protection.
 
 | Job | Contract |
 |---|---|
-| `CI / wrapper-contracts` | Four Python wrapper/real Compose configuration tests; five subprocess tests for the fail-closed database gate; four workflow performance/coverage contracts; agent policy contracts and actionlint. No SDK image build. |
+| `CI / wrapper-contracts` | Four Python wrapper/real Compose configuration tests; five subprocess tests for the fail-closed database gate; four workflow performance/coverage contracts; a disaster-recovery round trip (dump, damage, restore, checksum and checkpoint verification against disposable PostgreSQL in Docker); agent policy contracts; Bash syntax checks for the backup/restore scripts and actionlint. No SDK image build. |
 | `CI / rust` | fmt, Clippy, full workspace tests against disposable PostgreSQL 16 and mock NNTP, release backend/CLI build, storage demo. `psql` must succeed and any PostgreSQL skip notice fails the job. Test output uses `--nocapture`; pipeline failures propagate. |
 | `CI / docker` | Container build only, no push/deploy. |
 | `Clients / analyze` | Linux release Rust FFI build, Flutter analysis and full unit/native bridge suite with explicit native library path. Missing native path/file now fails rather than returning a false pass. |
