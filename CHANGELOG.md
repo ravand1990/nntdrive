@@ -6,6 +6,12 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-11-20
+
+### Features
+
+- The client now keeps a device-local activity feed and notification centre for the signed-in account: uploads, downloads, copies, moves, renames and deletes made in the browser, plus one row set per finished sync run (uploaded/downloaded counts, conflicts, and a failure with a short reason). Failures and conflicts also raise a dismissible notification that never hides the underlying row. The feed is filtered by kind and folder, bounded to 500 rows and 30 days, stored per account, cleared on sign-out and never sent to the backend; the export report uses opaque ids unless local names are explicitly chosen (#87).
+
 ## [0.31.1] - 2026-11-20
 
 ### Bug fixes

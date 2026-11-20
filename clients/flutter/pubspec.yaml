@@ -1,7 +1,7 @@
 name: nntdrive
 description: NNTDrive cross-platform client (UI/API scaffold)
 publish_to: "none"
-version: 0.31.1+84
+version: 0.32.0+85
 
 environment:
   sdk: ">=3.11.0 <4.0.0"
