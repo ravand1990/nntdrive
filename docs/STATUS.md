@@ -1314,12 +1314,14 @@ many files were already changed instead of claiming nothing happened.
 - The backend is not trusted with plaintext; do not add a server-side decrypt
   path.
 - No security audit. No production durability claim.
-- On Linux and Windows the client keeps the password-wrapped keyfile in the OS
-  credential store (Secret Service / Credential Manager), migrating it once from
-  shared preferences; Android, iOS and macOS still use shared preferences. The
-  stored value is Argon2id-protected either way, and an unavailable or locked
-  keyring falls back to the preferences copy rather than blocking sign-in. The
-  unused device-identity secret is no longer persisted.
+- On Linux, Windows and Android the client keeps the password-wrapped keyfile
+  protected by an OS credential store: Secret Service, Credential Manager, and
+  on Android a non-exportable Keystore AES key encrypting the value in a private
+  preference file. Installs migrate it once from shared preferences; iOS and
+  macOS still use shared preferences. The stored value is Argon2id-protected
+  either way, and an unavailable or locked store falls back to the preferences
+  copy rather than blocking sign-in. The unused device-identity secret is no
+  longer persisted.
 - Sync runs while the unlocked desktop process lives, including its hidden tray
   window on supported Windows/Linux desktops. It is not an independent service;
   login autostart is opt-in and still requires the password after launch, and
@@ -1348,9 +1350,9 @@ many files were already changed instead of claiming nothing happened.
    Per-file progress and explicit conflict actions are implemented (NNT-005);
    container Rust/Flutter suites and a two-device Dart FFI smoke exercise real
    HTTP + mock NNTP. New platform-specific release validation remains with CI.
-2. **Secure local key storage**: Linux Secret Service and Windows Credential
-   Manager are implemented with crash-safe migration and a preferences fallback
-   (#7). Still to do: Keychain (iOS/macOS) and Android Keystore backends, plus
+2. **Secure local key storage**: Linux Secret Service, Windows Credential
+   Manager and the Android Keystore are implemented with crash-safe migration
+   and a preferences fallback (#7). Still to do: Keychain (iOS/macOS), plus
    unlock-after-upgrade checks on each platform; keep the recovery kit policy
    documented.
 3. **Device revocation + AMK epoch rotation**: implement client-side rotation,

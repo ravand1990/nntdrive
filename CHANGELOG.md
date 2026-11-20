@@ -9,6 +9,7 @@ release workflow refuses to publish if the entry is missing.
 ### Features
 
 - The password-wrapped keyfile now lives in the operating-system credential store on Linux (Secret Service, the API behind GNOME Keyring, KWallet and KeePassXC) and Windows (Credential Manager) instead of shared preferences. Existing installs migrate once on the next start: the new copy is written and verified before the old one is removed, so an interrupted migration leaves a duplicate rather than a lost login. When no credential store is available or it is locked, the wrapped keyfile stays in shared preferences exactly as before and sign-in still works (#7).
+- On Android the password-wrapped keyfile is now encrypted with a non-exportable Android Keystore key (AES-256-GCM) before it reaches a private preference file, and the client picks that store automatically; the same one-time migration and preferences fallback as on desktop apply. Keystore failures, including a missing or unreadable entry, keep sign-in working through the wrapped copy in preferences (#7).
 - The activity feed has a local search field. Typing narrows the rows by local name, folder, kind or failure reason, ignoring case, and every word typed must appear in a row; search combines with the existing kind and folder filters. The query stays in memory: it is never stored, logged or sent to the backend (#87).
 
 ## [0.32.0] - 2026-11-20

@@ -5,8 +5,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/services.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:nntdrive/native.dart';
+import 'package:nntdrive/secure_keyfile.dart';
 import 'package:nntdrive/storage_access.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -77,5 +79,40 @@ void main() {
     } finally {
       bridge.lock(handle);
     }
+  });
+
+  testWidgets('Android Keystore keeps the keyfile encrypted at rest',
+      (tester) async {
+    final store = AndroidKeyStoreStore();
+    // The app must select the Keystore backend on a real Android runtime.
+    expect(createPlatformCredentialStore(), isA<AndroidKeyStoreStore>());
+    // Synthetic fixture, not real key material: the point is where it lands.
+    const value = '{"version":1,"wrapped":"keystore-at-rest-smoke"}';
+
+    await store.write('keyfile', value);
+    try {
+      expect(await store.read('keyfile'), value);
+
+      // The legacy preferences entry the old client used stays empty.
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('keyfile'), isNull);
+
+      // The Keystore-backed record is ciphertext, not the keyfile JSON.
+      final prefsDir =
+          Directory('/data/data/dev.nntdrive.nntdrive/shared_prefs');
+      expect(await prefsDir.exists(), isTrue);
+      final atRest = (await prefsDir
+              .list()
+              .where((entry) => entry is File)
+              .cast<File>()
+              .toList())
+          .map((file) => file.readAsStringSync())
+          .join('\n');
+      expect(atRest, isNot(contains('keystore-at-rest-smoke')));
+      expect(atRest, isNot(contains('wrapped"')));
+    } finally {
+      await store.delete('keyfile');
+    }
+    expect(await store.read('keyfile'), isNull);
   });
 }
