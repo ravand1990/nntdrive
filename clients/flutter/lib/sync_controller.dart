@@ -149,6 +149,7 @@ class SyncController extends ChangeNotifier {
     this.pendingMoveFlusher = flushPendingMoves,
     RootNameSealer? nameSealer,
     AccountRootsLoader? rootsLoader,
+    this.onRunFinished,
   })  : _requireDeviceRoot = rootsLoader == null,
         pendingMoves = pendingMoves ??
             PendingMoveQueue(store: const PreferencesPendingMoveStore()),
@@ -181,6 +182,12 @@ class SyncController extends ChangeNotifier {
   /// Moves saved on this device while the server was unreachable.
   final PendingMoveQueue pendingMoves;
   final PendingMoveFlusher pendingMoveFlusher;
+
+  /// Called once per finished sync run, with the engine report or null when the
+  /// run failed before producing one. The client uses it for the local activity
+  /// feed; it must not send anything off the device.
+  final void Function(SyncFolderConfig folder, Map<String, dynamic>? report)?
+      onRunFinished;
 
   final List<SyncFolderConfig> folders = [];
 
@@ -939,6 +946,8 @@ class SyncController extends ChangeNotifier {
         lastStatus = '${folder.name}: ${report['uploaded']} uploaded, '
             '${report['downloaded']} downloaded, ${report['conflicts']} conflict(s).';
       }
+      // One activity row set per finished run; the report carries the counts.
+      onRunFinished?.call(folder, report);
       return report;
     } catch (e) {
       folder.storageAccessRequired =
@@ -947,6 +956,7 @@ class SyncController extends ChangeNotifier {
           ? e.toString()
           : 'Sync failed. Check storage access and server connectivity, then retry.';
       if (!silent) lastStatus = '${folder.name}: ${folder.lastError}';
+      onRunFinished?.call(folder, null);
       return null;
     } finally {
       _running.remove(folder.id);
