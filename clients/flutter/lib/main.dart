@@ -28,6 +28,7 @@ import 'search_status.dart';
 import 'desktop_host.dart';
 import 'desktop_instance.dart';
 import 'desktop_lifecycle.dart';
+import 'secure_keyfile.dart';
 import 'session_operations.dart';
 import 'local_availability.dart';
 import 'local_availability_widgets.dart';
@@ -114,7 +115,7 @@ class Session {
 
 class NntDriveApp extends StatefulWidget {
   const NntDriveApp({super.key, required this.prefs, this.instance, this.apiFactory,
-    this.updateCheck, this.androidUpdateCheck});
+    this.updateCheck, this.androidUpdateCheck, this.keyfileVault});
   final SharedPreferences prefs;
   final DesktopInstance? instance;
   /// Transport seam for exercising unlock/onboarding/session lifecycle together.
@@ -122,6 +123,8 @@ class NntDriveApp extends StatefulWidget {
   /// Feed seams; the app still owns scheduling, presentation and confirmation.
   final Future<UpdateInfo?> Function()? updateCheck;
   final Future<AndroidUpdateInfo?> Function()? androidUpdateCheck;
+  /// Credential-store seam; defaults to this platform's OS keyring.
+  final KeyfileVault? keyfileVault;
 
   @override
   State<NntDriveApp> createState() => _NntDriveAppState();
@@ -134,6 +137,11 @@ class _NntDriveAppState extends State<NntDriveApp> {
   late String _server;
   String? _token;
   String? _keyfile;
+  late final KeyfileVault _keyfileVault = widget.keyfileVault ??
+      KeyfileVault(
+        store: createPlatformCredentialStore(),
+        prefs: widget.prefs,
+      );
   String? _accountId;
   String? _email;
   Session? _session;
@@ -185,6 +193,7 @@ class _NntDriveAppState extends State<NntDriveApp> {
 
   @override
   void dispose() {
+    unawaited(_keyfileVault.dispose());
     _updates.dispose();
     _androidUpdates.dispose();
     _desktop?.dispose();
@@ -203,6 +212,7 @@ class _NntDriveAppState extends State<NntDriveApp> {
     _keyfile = widget.prefs.getString('keyfile');
     _accountId = widget.prefs.getString('accountId');
     _email = widget.prefs.getString('email');
+    unawaited(_loadStoredKeyfile());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _automaticUpdates?.start();
       if (widget.instance != null) unawaited(_startDesktop());
@@ -212,6 +222,19 @@ class _NntDriveAppState extends State<NntDriveApp> {
   void _setTheme(ThemeMode mode) {
     setState(() => _themeMode = mode);
     widget.prefs.setInt('theme', mode.index);
+  }
+
+  /// Adopts the wrapped keyfile from the OS credential store, after a
+  /// migration or when preferences no longer hold it. An in-memory value from
+  /// this start is never replaced.
+  Future<void> _loadStoredKeyfile() async {
+    try {
+      final stored = await _keyfileVault.load();
+      if (!mounted || _ending || stored == null || _keyfile != null) return;
+      setState(() => _keyfile = stored);
+    } catch (_) {
+      // The preferences value read in initState remains authoritative.
+    }
   }
 
   Future<void> _startDesktop() async {
@@ -321,7 +344,7 @@ class _NntDriveAppState extends State<NntDriveApp> {
       if (!mounted || _ending) return;
       await widget.prefs.setString('server', server);
       await widget.prefs.setString('token', token);
-      await widget.prefs.setString('keyfile', keyfileJson);
+      await _keyfileVault.save(keyfileJson);
       await widget.prefs.setString('accountId', accountId);
       await widget.prefs.setString('email', email);
       if (!mounted || _ending) return;
@@ -440,10 +463,10 @@ class _NntDriveAppState extends State<NntDriveApp> {
       unawaited(ApiClient(baseUrl: session.server, token: session.token)
           .logout().then<void>((_) {}, onError: (Object _) {}));
     }
-    // Signing out removes this account's device-local history.
+    // Signing out removes this account's device-local history and keyfile.
     await _activity?.clear();
     await widget.prefs.remove('token');
-    await widget.prefs.remove('keyfile');
+    await _keyfileVault.clear();
     await widget.prefs.remove('accountId');
     if (!mounted) return;
     _navigatorKey.currentState?.popUntil((route) => route.isFirst);
