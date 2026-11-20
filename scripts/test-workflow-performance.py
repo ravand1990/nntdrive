@@ -47,7 +47,11 @@ class WorkflowPerformanceTests(unittest.TestCase):
         smoke = jobs(self.clients)["android-native-smoke"]
         self.assertIn("test -c /dev/kvm", smoke)
         self.assertIn("lib/x86_64/libnntdrive_ffi.so", smoke)
-        self.assertIn("integration_test/android_native_test.dart", smoke)
+        # The bounded run lives in a repository script because the emulator action
+        # executes each `script` line in its own shell.
+        self.assertIn("run-android-native-smoke.sh", smoke)
+        self.assertIn("integration_test/android_native_test.dart",
+                      (ROOT / "scripts/run-android-native-smoke.sh").read_text())
         windows_smoke = jobs(self.clients)["windows-app-smoke"]
         self.assertIn("nntdrive-windows-x64", windows_smoke)
         self.assertIn("integration_test/windows_app_smoke_test.dart", windows_smoke)
@@ -64,6 +68,42 @@ class WorkflowPerformanceTests(unittest.TestCase):
             self.assertIn("cache: gradle", body)
             self.assertIn("clients/flutter/android/**/*.gradle.kts", body)
             self.assertIn("clients/flutter/android/gradle/wrapper/gradle-wrapper.properties", body)
+        # A pub dependency bump can change Gradle requirements, so the lockfile
+        # belongs in the cache key or a stale module cache is reused.
+        self.assertIn("clients/flutter/pubspec.lock", jobs(self.clients)["android-native-smoke"])
+
+    def test_android_smoke_builds_outside_the_emulator_and_stays_bounded(self):
+        # The emulator job used to resolve Gradle dependencies and compile plugin
+        # Kotlin inside the emulator/timer window: a repository failure burned the
+        # boot budget and an unbounded Dart VM service wait consumed the rest.
+        smoke = jobs(self.clients)["android-native-smoke"]
+        self.assertIn("flutter pub get --enforce-lockfile", smoke)
+        self.assertIn("flutter build apk --debug --target-platform android-x64", smoke)
+        self.assertIn("test -f build/app/outputs/flutter-apk/app-debug.apk", smoke)
+        # Shared hosted-runner egress gets 429 from Maven Central; keep Gradle's
+        # own artifact retry and the bounded wrapper retry in place.
+        self.assertIn("org.gradle.internal.repository.max.tentatives", smoke)
+        self.assertIn("for attempt in 1 2 3", smoke)
+        # The emulator action runs each `script` line in its own shell, so a
+        # multi-line block silently breaks; keep it a single delegated line and
+        # hold the bounded run in the repository script instead.
+        self.assertIn('script: bash "$GITHUB_WORKSPACE/scripts/run-android-native-smoke.sh"',
+                      smoke)
+        self.assertNotIn("script: |", smoke)
+        runner = (ROOT / "scripts/run-android-native-smoke.sh").read_text()
+        self.assertIn("timeout --signal=INT --kill-after=30", runner)
+        self.assertIn("timeout_seconds", runner)
+        self.assertIn("--no-pub", runner)
+        self.assertIn("integration_test/android_native_test.dart", runner)
+        self.assertIn("logcat -d -t 3000", runner)
+        self.assertIn("android-native-smoke-logcat.txt", smoke)
+        self.assertIn("if: failure()", smoke)
+        self.assertIn("timeout-minutes: 40", smoke)
+        # The assertions themselves must stay: KVM, the real packaged core and the
+        # integration test file are unchanged by this reliability work.
+        self.assertIn("test -c /dev/kvm", smoke)
+        self.assertIn("lib/x86_64/libnntdrive_ffi.so", smoke)
+        self.assertNotIn("continue-on-error", smoke)
 
     def test_release_gates_and_tag_cancellation_are_preserved(self):
         release = jobs(self.release)
