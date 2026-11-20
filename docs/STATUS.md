@@ -1314,9 +1314,12 @@ many files were already changed instead of claiming nothing happened.
 - The backend is not trusted with plaintext; do not add a server-side decrypt
   path.
 - No security audit. No production durability claim.
-- The client stores the password-wrapped keyfile in shared preferences; it is
-  Argon2id-protected. The unused device-identity secret is no longer persisted.
-  Move the keyfile to the platform keystore for a hardened build.
+- On Linux and Windows the client keeps the password-wrapped keyfile in the OS
+  credential store (Secret Service / Credential Manager), migrating it once from
+  shared preferences; Android, iOS and macOS still use shared preferences. The
+  stored value is Argon2id-protected either way, and an unavailable or locked
+  keyring falls back to the preferences copy rather than blocking sign-in. The
+  unused device-identity secret is no longer persisted.
 - Sync runs while the unlocked desktop process lives, including its hidden tray
   window on supported Windows/Linux desktops. It is not an independent service;
   login autostart is opt-in and still requires the password after launch, and
@@ -1345,9 +1348,11 @@ many files were already changed instead of claiming nothing happened.
    Per-file progress and explicit conflict actions are implemented (NNT-005);
    container Rust/Flutter suites and a two-device Dart FFI smoke exercise real
    HTTP + mock NNTP. New platform-specific release validation remains with CI.
-2. **Secure local key storage**: move the password-wrapped keyfile from shared
-   preferences into Keychain (iOS/macOS), Android Keystore, Windows Credential
-   Manager and Secret Service (Linux); keep the recovery kit policy documented.
+2. **Secure local key storage**: Linux Secret Service and Windows Credential
+   Manager are implemented with crash-safe migration and a preferences fallback
+   (#7). Still to do: Keychain (iOS/macOS) and Android Keystore backends, plus
+   unlock-after-upgrade checks on each platform; keep the recovery kit policy
+   documented.
 3. **Device revocation + AMK epoch rotation**: implement client-side rotation,
    re-wrap for remaining devices, and retain old epoch keys for old revisions;
    today the backend only instructs the client to rotate.
