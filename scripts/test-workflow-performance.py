@@ -80,6 +80,10 @@ class WorkflowPerformanceTests(unittest.TestCase):
         self.assertIn("flutter pub get --enforce-lockfile", smoke)
         self.assertIn("flutter build apk --debug --target-platform android-x64", smoke)
         self.assertIn("test -f build/app/outputs/flutter-apk/app-debug.apk", smoke)
+        # Shared hosted-runner egress gets 429 from Maven Central; keep Gradle's
+        # own artifact retry and the bounded wrapper retry in place.
+        self.assertIn("org.gradle.internal.repository.max.tentatives", smoke)
+        self.assertIn("for attempt in 1 2 3", smoke)
         # The emulator action runs each `script` line in its own shell, so a
         # multi-line block silently breaks; keep it a single delegated line and
         # hold the bounded run in the repository script instead.
