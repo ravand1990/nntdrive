@@ -6,6 +6,8 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-11-20
+
 ### Features
 
 - The Not synced screen now lists every queued item of a running sync instead of one summary row per folder. Before the first action the sync engine reports its complete reconciliation plan in bounded batches, so uploads, downloads, folder work, moves, deletes and conflicts appear with their current phase ("Uploading this file.", "Waiting to download this file.") and a truncation notice when the plan exceeds the reported bound (#79).
