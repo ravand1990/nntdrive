@@ -301,18 +301,9 @@ jobs:
           disable-linux-hw-accel: false
           emulator-boot-timeout: 300
           working-directory: clients/flutter
-          # Bounded at 10 minutes, with a hard kill 30 s later, so a wait for the
-          # Dart VM service cannot silently consume the job budget. Device logs are
-          # captured before the action tears the emulator down.
-          script: |
-            set +e
-            timeout --signal=INT --kill-after=30 600 \
-              flutter test integration_test/android_native_test.dart -d emulator-5554 --no-pub --reporter expanded
-            status=$?
-            if [ "$status" -ne 0 ]; then
-              adb -s emulator-5554 logcat -d -t 3000 > "$GITHUB_WORKSPACE/android-native-smoke-logcat.txt" 2>&1 || true
-            fi
-            exit "$status"
+          # One line: the action runs each script line in its own shell, so the
+          # bounded run and its log capture live in scripts/run-android-native-smoke.sh.
+          script: bash "$GITHUB_WORKSPACE/scripts/run-android-native-smoke.sh"
       - name: Upload emulator logs on failure
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
