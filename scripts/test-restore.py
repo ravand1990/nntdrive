@@ -71,20 +71,42 @@ class RestoreRoundTrip(unittest.TestCase):
         )
         if started.returncode != 0:
             raise RuntimeError(f"cannot start {IMAGE}: {started.stderr.strip()}")
-        for _ in range(60):
-            if docker("exec", cls.container, "pg_isready", "-U", DB_USER, "-d", DB_NAME).returncode == 0:
-                break
-            time.sleep(1)
-        else:
-            raise RuntimeError("PostgreSQL did not become ready in 60 seconds")
+        cls.wait_for_server()
+
         for name in migrations():
-            result = docker(
+            # A fresh data directory runs a temporary server during initdb that
+            # answers one probe and is then shut down, so a migration can still
+            # lose its connection right after readiness. Retry that transient
+            # window only; a real SQL error fails immediately.
+            for attempt in range(4):
+                result = docker(
+                    "exec", "-i", cls.container,
+                    "psql", "-U", DB_USER, "-d", DB_NAME, "-v", "ON_ERROR_STOP=1", "-q",
+                    stdin=(ROOT / "migrations" / name).read_text(),
+                )
+                if result.returncode == 0:
+                    break
+                transient = ("terminating connection" in result.stderr
+                             or "shutting down" in result.stderr
+                             or "starting up" in result.stderr)
+                if not transient or attempt == 3:
+                    raise RuntimeError(f"migration {name} failed: {result.stderr.strip()}")
+                time.sleep(2)
+
+    @classmethod
+    def wait_for_server(cls):
+        """Require two consecutive successful connections a moment apart."""
+        successes = 0
+        for _ in range(120):
+            probe = docker(
                 "exec", "-i", cls.container,
-                "psql", "-U", DB_USER, "-d", DB_NAME, "-v", "ON_ERROR_STOP=1", "-q",
-                stdin=(ROOT / "migrations" / name).read_text(),
+                "psql", "-U", DB_USER, "-d", DB_NAME, "-tA", "-c", "SELECT 1",
             )
-            if result.returncode != 0:
-                raise RuntimeError(f"migration {name} failed: {result.stderr.strip()}")
+            successes = successes + 1 if probe.returncode == 0 and probe.stdout.strip() == "1" else 0
+            if successes >= 2:
+                return
+            time.sleep(1)
+        raise RuntimeError("PostgreSQL did not stay ready for two consecutive probes")
 
     @classmethod
     def tearDownClass(cls):
