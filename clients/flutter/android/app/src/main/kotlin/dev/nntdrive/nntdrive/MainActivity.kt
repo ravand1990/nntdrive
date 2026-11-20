@@ -16,11 +16,17 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
 import java.io.IOException
+import java.util.concurrent.Executors
 
 class MainActivity : FlutterActivity() {
     private var storageChannel: MethodChannel? = null
     private var updateChannel: MethodChannel? = null
     private var deviceNameChannel: MethodChannel? = null
+    private var keyfileChannel: MethodChannel? = null
+    // Keystore crypto is slow enough to stall a frame; the channel answers from
+    // a dedicated thread and posts the result back to the main thread.
+    private val keyfileExecutor = Executors.newSingleThreadExecutor()
+    private var keyfileStore: KeyfileCredentialStore? = null
     private var pendingStorageRequest: MethodChannel.Result? = null
     // Keep OS admission separate from the engine's result lifetime: detaching
     // an engine cannot dismiss a settings screen/runtime permission dialog.
@@ -55,6 +61,60 @@ class MainActivity : FlutterActivity() {
             flutterEngine.dartExecutor.binaryMessenger,
             "dev.nntdrive/update_install",
         ).also { it.setMethodCallHandler(::handleUpdateInstall) }
+        keyfileChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "dev.nntdrive/secure_keyfile",
+        ).also { it.setMethodCallHandler(::handleSecureKeyfile) }
+    }
+
+    /**
+     * Backs [dev.nntdrive/secure_keyfile]: the wrapped keyfile is encrypted with
+     * a non-exportable Keystore key before it reaches the preference file.
+     * Answers `read` (value or null), `write` and `delete`, and reports any
+     * Keystore or preference failure as `unavailable` so the Dart side falls
+     * back to shared preferences instead of losing the login.
+     */
+    private fun handleSecureKeyfile(call: MethodCall, result: MethodChannel.Result) {
+        if (call.method != "read" && call.method != "write" && call.method != "delete") {
+            result.notImplemented()
+            return
+        }
+        val arguments = call.arguments as? Map<*, *>
+        val key = arguments?.get("key") as? String
+        val value = arguments?.get("value") as? String
+        if (key.isNullOrEmpty() || (call.method == "write" && value == null)) {
+            result.error("invalid_request", "A credential name is required.", null)
+            return
+        }
+        val store = keyfileStore ?: KeyfileCredentialStore(applicationContext).also {
+            keyfileStore = it
+        }
+        keyfileExecutor.execute {
+            val outcome: Any? = try {
+                when (call.method) {
+                    "read" -> store.read(key)
+                    "write" -> {
+                        store.write(key, value!!)
+                        true
+                    }
+                    else -> {
+                        store.delete(key)
+                        true
+                    }
+                }
+            } catch (e: Exception) {
+                // Message only: a Keystore failure must never carry the value.
+                runOnUiThread {
+                    if (!isDestroyed && !isFinishing) {
+                        result.error("unavailable", "Keystore is unavailable.", null)
+                    }
+                }
+                return@execute
+            }
+            runOnUiThread {
+                if (!isDestroyed && !isFinishing) result.success(outcome)
+            }
+        }
     }
 
     /**
@@ -344,6 +404,7 @@ class MainActivity : FlutterActivity() {
         deviceNameChannel = null
         disposeStorageAccess()
         disposeUpdateInstall()
+        disposeKeyfile()
         super.cleanUpFlutterEngine(flutterEngine)
     }
 
@@ -352,7 +413,14 @@ class MainActivity : FlutterActivity() {
         deviceNameChannel = null
         disposeStorageAccess()
         disposeUpdateInstall()
+        disposeKeyfile()
+        keyfileExecutor.shutdownNow()
         super.onDestroy()
+    }
+
+    private fun disposeKeyfile() {
+        keyfileChannel?.setMethodCallHandler(null)
+        keyfileChannel = null
     }
 
     private fun disposeUpdateInstall() {

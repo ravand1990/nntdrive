@@ -5,6 +5,7 @@ import 'dart:io';
 
 import 'package:dbus/dbus.dart';
 import 'package:ffi/ffi.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// A key/value store backed by an operating-system credential store.
@@ -31,17 +32,17 @@ abstract class CredentialStore {
 
 /// Where the password-wrapped keyfile is kept.
 ///
-/// The preferred location is an OS credential store (Linux Secret Service or
-/// Windows Credential Manager). Installs that migrated from an older client
-/// still have the wrapped keyfile in shared preferences; [load] moves it once,
-/// writing the new copy before deleting the old one so an interrupted
-/// migration can only leave a duplicate, never lose the login.
+/// The preferred location is an OS credential store (Linux Secret Service,
+/// Windows Credential Manager or the Android Keystore). Installs that migrated
+/// from an older client still have the wrapped keyfile in shared preferences;
+/// [load] moves it once, writing the new copy before deleting the old one so an
+/// interrupted migration can only leave a duplicate, never lose the login.
 ///
-/// When no credential store is available (Android, macOS/iOS until their
-/// backends land, a locked or missing Linux keyring, or a headless session)
-/// the wrapped keyfile stays in shared preferences exactly as before. The
-/// value is already password-wrapped, so this is the pre-existing exposure,
-/// not plaintext key material.
+/// When no credential store is available (macOS/iOS until their backends land,
+/// a locked or missing Linux keyring, a headless session, or an Android Keystore
+/// that refuses the operation) the wrapped keyfile stays in shared preferences
+/// exactly as before. The value is already password-wrapped, so this is the
+/// pre-existing exposure, not plaintext key material.
 class KeyfileVault {
   KeyfileVault({
     CredentialStore? store,
@@ -210,6 +211,7 @@ CredentialStore? createPlatformCredentialStore() {
       return LinuxSecretServiceStore();
     }
     if (Platform.isWindows) return WindowsCredentialStore();
+    if (Platform.isAndroid) return AndroidKeyStoreStore();
   } catch (_) {
     // A missing session bus or advapi32 entry point is a fallback, not a
     // startup failure: the caller keeps using shared preferences.
@@ -537,4 +539,63 @@ class WindowsCredentialStore implements CredentialStore {
 
   @override
   Future<void> close() async {}
+}
+
+/// Android Keystore, reached through the app's native channel.
+///
+/// The Kotlin side generates a non-exportable AES-256 key inside the Android
+/// Keystore and encrypts the value with AES-GCM before writing it to a private
+/// preference file, so the wrapped keyfile is never readable text at rest. All
+/// Keystore work runs on a background thread in the app process; a failure is
+/// reported as [CredentialStoreUnavailable] so the caller keeps its fallback.
+class AndroidKeyStoreStore implements CredentialStore {
+  AndroidKeyStoreStore({
+    MethodChannel? channel,
+    this.timeout = const Duration(seconds: 5),
+  }) : _channel = channel ?? const MethodChannel(channelName);
+
+  /// Channel served by `MainActivity`; exposed for tests and diagnostics.
+  static const channelName = 'dev.nntdrive/secure_keyfile';
+
+  final MethodChannel _channel;
+
+  /// Keystore operations are quick but not instant; a hung one must not stall
+  /// startup, so the caller still falls back to the preferences copy.
+  final Duration timeout;
+
+  @override
+  String get label => 'Android Keystore';
+
+  @override
+  Future<String?> read(String key) async {
+    final value = await _invoke<String>('read', {'key': key});
+    return (value == null || value.isEmpty) ? null : value;
+  }
+
+  @override
+  Future<void> write(String key, String value) async {
+    await _invoke<bool>('write', {'key': key, 'value': value});
+  }
+
+  @override
+  Future<void> delete(String key) async {
+    await _invoke<bool>('delete', {'key': key});
+  }
+
+  @override
+  Future<void> close() async {}
+
+  /// Runs one channel call. Errors keep the method and code only: the wrapped
+  /// keyfile must never appear in a message or a log.
+  Future<T?> _invoke<T>(String method, Map<String, Object?> arguments) async {
+    try {
+      return await _channel.invokeMethod<T>(method, arguments).timeout(timeout);
+    } on MissingPluginException {
+      throw CredentialStoreUnavailable('Keystore channel is missing');
+    } on PlatformException catch (error) {
+      throw CredentialStoreUnavailable('Keystore call failed (${error.code})');
+    } on TimeoutException {
+      throw CredentialStoreUnavailable('Keystore did not answer in time');
+    }
+  }
 }
