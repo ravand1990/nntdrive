@@ -248,27 +248,35 @@ is not issue acceptance and does not automatically satisfy dependency acceptance
 
 ## Post-merge release (standing authorization)
 
-The user authorizes a release after every merge to `main`, delegated to the
-worker that merged the PR or, if it stopped, to the next run before new work.
+The user authorizes one release per day, after the day's last task, not a
+release after every merge. Workers do not tag immediately after merging.
+
+At the end of a run, check for unreleased changes on `main`. Cut one release
+covering all of them when any of these is true:
+
+- no eligible task remains for this run;
+- the last release was at least 24 hours ago;
+- this is the last scheduled run of the UTC day.
+
+An urgent security or data-loss fix may release immediately. A batch that
+touches only docs, governance or CI does not need a release; record that.
 
 Procedure:
 
-1. Confirm the merge commit is on remote `main` and its required checks are green.
-2. Skip a release only when the merged diff touches no shipped code, deployment
-   file or client asset (pure docs/governance/CI); record that decision.
-3. Choose the bump: patch by default; minor when the merge adds a user-visible
+1. Confirm every included merge commit is on remote `main` and its required
+   checks are green.
+2. Choose the bump: patch by default; minor when the batch adds a user-visible
    feature or changes compatibility; never major automatically.
-4. Update `CHANGELOG.md` with the new `## [X.Y.Z] - YYYY-MM-DD` heading and
+3. Update `CHANGELOG.md` with the new `## [X.Y.Z] - YYYY-MM-DD` heading and
    `### Features`/`### Bug fixes`; bump Rust and Flutter versions (build +1);
    update README, image guide, operations and status version references.
-5. Commit as `release: X.Y.Z`, tag `vX.Y.Z`, push `main`, then the tag.
-6. Run the Release workflow; verify the image tags, assets, checksums and notes.
-7. If the release fails, do not delete or move the tag; fix forward with the
+4. Commit as `release: X.Y.Z`, tag `vX.Y.Z`, push `main`, then the tag.
+5. Run the Release workflow; verify the image tags, assets, checksums and notes.
+6. If the release fails, do not delete or move the tag; fix forward with the
    next patch and record the exact failure. Never claim a published release
    that the workflow did not produce.
 
-One release per merge. If several PRs are merged between runs, cut one release
-covering them instead of one per PR. Do not release from a dirty tree or a red
+One release per day and per batch. Do not release from a dirty tree or a red
 `main`.
 
 ## Mandatory post-merge completion transaction

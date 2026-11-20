@@ -44,13 +44,14 @@ class AgentPolicyTests(unittest.TestCase):
         self.assertIn("not permission gates", other)
         self.assertIn("requires the completion rules", " ".join(other.split()))
 
-    def test_release_after_merge(self):
-        text = self.read("AGENTS.md").lower()
-        self.assertIn("release after every merge", text)
+    def test_daily_release_cycle(self):
+        text = " ".join(self.read("AGENTS.md").lower().split())
+        self.assertIn("release once per day", text)
+        self.assertIn("not after every merge", text)
         self.assertIn("never retag", text)
-        other = self.read("docs/GITHUB-TASK-ISSUES.md").lower()
+        other = " ".join(self.read("docs/GITHUB-TASK-ISSUES.md").lower().split())
         self.assertIn("post-merge release", other)
-        self.assertIn("one release per merge", other)
+        self.assertIn("one release per day", other)
 
     def test_agent_comment_format(self):
         text = self.read("AGENTS.md")

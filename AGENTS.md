@@ -270,19 +270,25 @@ rather than shipping an unverified security boundary.
    as follow-up issues instead. Never claim verification that did not happen.
 5. If a required state update fails or cannot be read back, report an
    incomplete reconciliation—never claim `Done` from a merge alone.
-6. Release after every merge. The worker that merged the PR owns the release; if
-   it cannot finish, the next run cuts it before selecting new work.
-   - Skip only when the merged diff touches no shipped code, deployment file or
-     client asset (pure docs/governance/CI); say so in the completion comment.
+6. Release once per day, after the day's last task, not after every merge.
+   Do not tag immediately after a merge; finish the run's work first.
+   - At the end of a run, cut one release covering every unreleased change when
+     any of these is true: no eligible task remains; the last release was 24
+     hours ago or more; or this is the last scheduled run of the UTC day.
+   - Batch all merges since the last tag into that one release; never one
+     release per PR.
+   - An urgent security or data-loss fix may release immediately.
+   - Skip a release when all unreleased commits touch only docs/governance/CI;
+     record that decision.
    - Bump `Cargo.toml`/`Cargo.lock` and Flutter `pubspec.yaml` (build number +1):
-     patch by default, minor when the merge adds a user-visible feature or
+     patch by default, minor when the batch adds a user-visible feature or
      changes compatibility, never major automatically.
    - Add the new `CHANGELOG.md` heading with `### Features`/`### Bug fixes` and
      update the version references in `README.md`, `deploy/README-IMAGES.md`,
      `docs/OPERATIONS.md` and `docs/STATUS.md`. Commit, tag `vX.Y.Z`, push `main`
      and the tag, and start the Release workflow.
-   - Release only from a clean `main` whose merge commit's required checks are
-     green. Never retag a failed release; fix forward with the next patch.
+   - Release only from a clean `main` whose required checks are green. Never
+     retag a failed release; fix forward with the next patch.
    - Verify the published assets, image tags, checksums and notes, or leave a
      handoff for the next run. Never claim a release that did not publish.
 
