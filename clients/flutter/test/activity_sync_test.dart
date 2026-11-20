@@ -11,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class MemoryActivityStore implements ActivityStore {
   ActivitySnapshot snapshot = const ActivitySnapshot();
+  Duration? retention;
 
   @override
   Future<ActivitySnapshot> load() async => snapshot;
@@ -18,6 +19,14 @@ class MemoryActivityStore implements ActivityStore {
   @override
   Future<void> save(ActivitySnapshot value) async {
     snapshot = value;
+  }
+
+  @override
+  Future<Duration?> loadRetention() async => retention;
+
+  @override
+  Future<void> saveRetention(Duration value) async {
+    retention = value;
   }
 }
 

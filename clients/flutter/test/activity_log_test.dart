@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class MemoryActivityStore implements ActivityStore {
   ActivitySnapshot snapshot = const ActivitySnapshot();
+  Duration? retention;
   int saves = 0;
 
   @override
@@ -17,6 +18,14 @@ class MemoryActivityStore implements ActivityStore {
   Future<void> save(ActivitySnapshot value) async {
     snapshot = value;
     saves++;
+  }
+
+  @override
+  Future<Duration?> loadRetention() async => retention;
+
+  @override
+  Future<void> saveRetention(Duration value) async {
+    retention = value;
   }
 }
 
@@ -172,6 +181,70 @@ void main() {
       at: clock.subtract(const Duration(days: 40)),
     );
     expect(log.entries.any((e) => e.subject == 'old'), isFalse);
+  });
+
+  test('a shorter retention window prunes, saves and survives reload', () async {
+    final store = MemoryActivityStore();
+    final log = newLog(store);
+    await log.load();
+    log.record(
+      kind: ActivityKind.uploaded,
+      folder: 'Documents',
+      subject: 'old.pdf',
+      at: clock.subtract(const Duration(days: 20)),
+    );
+    log.record(
+      kind: ActivityKind.uploaded,
+      folder: 'Documents',
+      subject: 'new.pdf',
+    );
+    expect(log.entries.map((e) => e.subject), ['new.pdf', 'old.pdf']);
+
+    await log.setRetention(const Duration(days: 7));
+
+    expect(log.retention, const Duration(days: 7));
+    expect(log.entries.map((e) => e.subject), ['new.pdf']);
+    expect(store.retention, const Duration(days: 7));
+    expect(store.snapshot.entries.map((e) => e.subject), ['new.pdf']);
+
+    final restored = newLog(store);
+    await restored.load();
+    expect(restored.retention, const Duration(days: 7));
+    expect(restored.entries.map((e) => e.subject), ['new.pdf']);
+  });
+
+  test('an unusable retention window is ignored', () async {
+    final store = MemoryActivityStore();
+    final log = newLog(store);
+    await log.load();
+    var saves = store.saves;
+
+    await log.setRetention(const Duration(hours: 5));
+    expect(log.retention, activityRetention);
+    expect(store.retention, isNull);
+    expect(store.saves, saves);
+
+    // The window already in use is not written again.
+    await log.setRetention(activityRetention);
+    expect(store.retention, isNull);
+    expect(store.saves, saves);
+
+    await log.setRetention(const Duration(days: 90));
+    expect(log.retention, const Duration(days: 90));
+    expect(store.retention, const Duration(days: 90));
+    expect(store.saves, saves + 1);
+  });
+
+  test('preferences store keeps the retention window per account', () async {
+    SharedPreferences.setMockInitialValues({});
+    const store = PreferencesActivityStore(accountId: 'account-1');
+    expect(await store.loadRetention(), isNull);
+
+    await store.saveRetention(const Duration(days: 90));
+    expect(await store.loadRetention(), const Duration(days: 90));
+
+    const other = PreferencesActivityStore(accountId: 'account-2');
+    expect(await other.loadRetention(), isNull);
   });
 
   test('export redacts local names unless asked', () async {

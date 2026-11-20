@@ -60,6 +60,25 @@ const int activityEntryLimit = 500;
 /// Default retention window. Older entries are dropped when the log is pruned.
 const Duration activityRetention = Duration(days: 30);
 
+/// Retention windows the activity settings offer, shortest first.
+///
+/// The window only controls how long this device keeps its local feed; nothing
+/// is uploaded, and changing it never touches files or sync reports.
+const List<Duration> activityRetentionChoices = [
+  Duration(days: 7),
+  Duration(days: 30),
+  Duration(days: 90),
+  Duration(days: 365),
+];
+
+/// Human label for a retention window, for example `30 days`.
+String describeRetention(Duration retention) {
+  final days = retention.inDays;
+  if (days == 365) return '1 year';
+  if (days == 7) return '7 days (1 week)';
+  return days == 1 ? '1 day' : '$days days';
+}
+
 /// One readable activity row.
 ///
 /// Everything here is device-local. [folder] and [subject] are local, decrypted
@@ -182,6 +201,13 @@ class ActivitySnapshot {
 abstract class ActivityStore {
   Future<ActivitySnapshot> load();
   Future<void> save(ActivitySnapshot snapshot);
+
+  /// Retention window the user chose for this account, or null when they never
+  /// changed it. Implementations that cannot persist it keep the default.
+  Future<Duration?> loadRetention() async => null;
+
+  /// Remembers the chosen retention window for this account.
+  Future<void> saveRetention(Duration retention) async {}
 }
 
 /// Per-account preferences storage.
@@ -195,6 +221,21 @@ class PreferencesActivityStore implements ActivityStore {
 
   String get entriesKey => 'activity.$accountId';
   String get dismissedKey => 'activityDismissed.$accountId';
+  String get retentionKey => 'activityRetention.$accountId';
+
+  @override
+  Future<Duration?> loadRetention() async {
+    final prefs = await SharedPreferences.getInstance();
+    final days = prefs.getInt(retentionKey);
+    if (days == null || days < 1) return null;
+    return Duration(days: days);
+  }
+
+  @override
+  Future<void> saveRetention(Duration retention) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(retentionKey, retention.inDays);
+  }
 
   @override
   Future<ActivitySnapshot> load() async {
@@ -256,15 +297,22 @@ class ActivityLog extends ChangeNotifier {
     required this.accountId,
     DateTime Function()? clock,
     this.maxEntries = activityEntryLimit,
-    this.retention = activityRetention,
+    Duration retention = activityRetention,
   }) : _clock = clock ?? DateTime.now,
-       assert(maxEntries > 0);
+       _retention = retention,
+       assert(maxEntries > 0),
+       assert(retention.inDays >= 1);
 
   final ActivityStore store;
   final String accountId;
   final int maxEntries;
-  final Duration retention;
   final DateTime Function() _clock;
+
+  Duration _retention;
+
+  /// How far back this device keeps entries. The value a user chose in the
+  /// settings is restored on [load]; it prunes only the local feed.
+  Duration get retention => _retention;
 
   final List<ActivityEntry> _entries = [];
   final Set<String> _dismissed = {};
@@ -301,6 +349,12 @@ class ActivityLog extends ChangeNotifier {
       ..addAll(merged.values);
     _dismissed.addAll(snapshot.dismissed);
     _loaded = true;
+    try {
+      final stored = await store.loadRetention();
+      if (stored != null && stored.inDays >= 1) _retention = stored;
+    } catch (_) {
+      // An unreadable preference keeps the default window for this session.
+    }
     _prune(notify: false);
     _sort();
     notifyListeners();
@@ -351,6 +405,25 @@ class ActivityLog extends ChangeNotifier {
     if (!changed) return;
     notifyListeners();
     _persist();
+  }
+
+  /// Applies a new retention window for this account.
+  ///
+  /// Rows older than the new window are dropped immediately, then the pruned
+  /// feed and the choice are saved. A window shorter than a day is ignored, and
+  /// changing it never touches files, sync folders or sync reports.
+  Future<void> setRetention(Duration retention) async {
+    if (retention.inDays < 1 || retention == _retention) return;
+    _retention = retention;
+    _prune(notify: false);
+    notifyListeners();
+    try {
+      await store.saveRetention(retention);
+    } catch (_) {
+      // The window still applies for this session; the next change retries.
+    }
+    _persist();
+    await flush();
   }
 
   /// Clears the whole history, for example on sign-out.

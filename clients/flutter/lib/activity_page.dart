@@ -48,6 +48,13 @@ class _ActivityPageState extends State<ActivityPage> {
     );
   }
 
+  Future<void> _settings() async {
+    await showDialog<void>(
+      context: context,
+      builder: (_) => ActivitySettingsDialog(log: widget.log),
+    );
+  }
+
   Future<void> _clear() async {
     final ok = await showDialog<bool>(
       context: context,
@@ -89,6 +96,11 @@ class _ActivityPageState extends State<ActivityPage> {
       appBar: AppBar(
         title: const Text('Activity'),
         actions: [
+          IconButton(
+            onPressed: _settings,
+            icon: const Icon(Icons.tune),
+            tooltip: 'Activity settings',
+          ),
           IconButton(
             onPressed: _export,
             icon: const Icon(Icons.ios_share),
@@ -437,6 +449,78 @@ class _EmptyActivity extends StatelessWidget {
           style: theme.textTheme.bodyMedium,
         ),
       ),
+    );
+  }
+}
+
+/// Settings dialog for the local feed: how long this device keeps entries.
+///
+/// The window never leaves the device and never affects stored files; choosing
+/// a shorter one drops older rows immediately.
+class ActivitySettingsDialog extends StatefulWidget {
+  const ActivitySettingsDialog({super.key, required this.log});
+
+  final ActivityLog log;
+
+  @override
+  State<ActivitySettingsDialog> createState() => _ActivitySettingsDialogState();
+}
+
+class _ActivitySettingsDialogState extends State<ActivitySettingsDialog> {
+  late int _days = widget.log.retention.inDays;
+  bool _saving = false;
+
+  Future<void> _save() async {
+    setState(() => _saving = true);
+    await widget.log.setRetention(Duration(days: _days));
+    if (!mounted) return;
+    Navigator.pop(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AlertDialog(
+      title: const Text('Activity settings'),
+      content: SizedBox(
+        width: 420,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'How long this device keeps its activity history. A shorter '
+              'window removes older rows now; files, sync folders and sync '
+              'reports are not changed, and the feed never leaves this device.',
+              style: theme.textTheme.bodySmall,
+            ),
+            const SizedBox(height: 8),
+            for (final choice in activityRetentionChoices)
+              ListTile(
+                key: Key('activity-retention-${choice.inDays}'),
+                dense: true,
+                selected: _days == choice.inDays,
+                title: Text(describeRetention(choice)),
+                trailing: _days == choice.inDays
+                    ? const Icon(Icons.check)
+                    : null,
+                onTap: _saving
+                    ? null
+                    : () => setState(() => _days = choice.inDays),
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _saving ? null : _save,
+          child: const Text('Save'),
+        ),
+      ],
     );
   }
 }

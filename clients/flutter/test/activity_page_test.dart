@@ -5,6 +5,7 @@ import 'package:nntdrive/activity_page.dart';
 
 class MemoryActivityStore implements ActivityStore {
   ActivitySnapshot snapshot = const ActivitySnapshot();
+  Duration? retention;
 
   @override
   Future<ActivitySnapshot> load() async => snapshot;
@@ -12,6 +13,14 @@ class MemoryActivityStore implements ActivityStore {
   @override
   Future<void> save(ActivitySnapshot value) async {
     snapshot = value;
+  }
+
+  @override
+  Future<Duration?> loadRetention() async => retention;
+
+  @override
+  Future<void> saveRetention(Duration value) async {
+    retention = value;
   }
 }
 
@@ -199,5 +208,49 @@ void main() {
       ),
       findsOneWidget,
     );
+  });
+
+  testWidgets('the settings dialog shortens the retention window', (
+    tester,
+  ) async {
+    final log = await pumpPage(
+      tester,
+      seed: (log) => log.record(
+        kind: ActivityKind.uploaded,
+        folder: 'Documents',
+        subject: 'old.pdf',
+        at: clock.subtract(const Duration(days: 20)),
+      ),
+    );
+    expect(log.retention, activityRetention);
+    expect(find.text('Uploaded old.pdf'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Activity settings'));
+    await tester.pumpAndSettle();
+    expect(find.text('Activity settings'), findsOneWidget);
+    expect(find.text('7 days (1 week)'), findsOneWidget);
+    expect(find.text('1 year'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('activity-retention-7')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+    await tester.pumpAndSettle();
+
+    expect(log.retention, const Duration(days: 7));
+    expect(find.text('Activity settings'), findsNothing);
+    expect(find.text('Uploaded old.pdf'), findsNothing);
+  });
+
+  testWidgets('cancelling the settings dialog keeps the window', (
+    tester,
+  ) async {
+    final log = await pumpPage(tester);
+    await tester.tap(find.byTooltip('Activity settings'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('activity-retention-365')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
+    await tester.pumpAndSettle();
+    expect(log.retention, activityRetention);
   });
 }
