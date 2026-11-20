@@ -29,6 +29,20 @@ older than the newest writes, those newer revisions are not referenced and look
 like version loss; the underlying articles may still exist but their Message-IDs
 are unknown. This is why backups must be frequent and verified.
 
+## Verifying backup and restore
+
+The dump/restore path is checked automatically on every change: the CI
+`wrapper-contracts` job runs `python3 scripts/test-restore.py`. It starts a
+disposable PostgreSQL container, applies the migrations, seeds rows, runs
+`scripts/backup.sh`, damages the live database, restores with
+`scripts/restore.sh`, and verifies that the rows return, that `checkpoint.json`
+names the shipped migrations, and that a dump failing `SHA256SUMS` is rejected
+before anything is dropped.
+
+That covers the scripts and a logical dump round trip, not your off-host
+storage, `NNTDRIVE_SECRET_KEY` custody or the recovery kit. Test those
+separately: restore a real backup into a staging stack and open one file.
+
 ## Scenario: backend server lost
 
 1. Provision a new Linux host, Docker + Compose (and Python 3 for image-launcher installs).
