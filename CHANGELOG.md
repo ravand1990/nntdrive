@@ -6,6 +6,16 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.30.3] - 2026-11-20
+
+### Features
+
+- `scripts/backup.sh` and `scripts/restore.sh` can target an existing PostgreSQL container with `PG_CONTAINER` (plus `PG_USER`, `PG_DB`, `PG_ADMIN_DB`) instead of the Compose stack, and refuse the ambiguous combination with `USE_LOCAL_PG=1`. A new `scripts/test-restore.py` runs in CI: it migrates and seeds a disposable database, backs it up, damages it, restores it, and verifies that the rows return and that an unconfirmed, missing or tampered restore is rejected before anything is dropped (#17).
+
+### Bug fixes
+
+- `checkpoint.json` now lists the migrations the repository actually ships instead of the fixed `0001_init.sql,0002_account_keys.sql` pair, which had been stale since migration 0003 (#17).
+
 ## [0.30.2] - 2026-11-19
 
 ### Bug fixes
