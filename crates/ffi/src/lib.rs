@@ -586,7 +586,18 @@ pub unsafe extern "C" fn nntdrive_sync_request(
         let excluded: Vec<String> =
             serde_json::from_value(config.get("excluded").cloned().unwrap_or(json!([])))
                 .map_err(|e| e.to_string())?;
-        let engine = nntdrive_sync::SyncEngine::new(text("deviceName")?).with_exclusions(excluded);
+        let engine = nntdrive_sync::SyncEngine::new(text("deviceName")?)
+            .with_exclusions(excluded)
+            .with_plan_observer(std::sync::Arc::new(move |items, total| {
+                if let Some(cb) = callback {
+                    // Bounded batches only: the engine never sends more than
+                    // its item limit, and `total` keeps truncation visible.
+                    let event = json!({"phase":"plan","items":items,"total":total});
+                    cb(CString::new(event.to_string())
+                        .expect("JSON contains no NUL")
+                        .into_raw());
+                }
+            }));
         let report = runtime().block_on(async {
             let journal = nntdrive_sync::Journal::open(journal_path)
                 .await

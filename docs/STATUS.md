@@ -69,12 +69,19 @@ canonical Flutter rebuilt release FFI, passed clean analysis and 576 tests with
 four existing platform skips. Original-route 10,000/20,017 truncation and
 publication/collision sabotage failures were verified before restored green runs.
 
+A running folder now lists its queued work instead of one summary row: before
+the first action the engine reports its complete reconciliation plan in bounded
+batches (256 items per event, at most 4096 items, each with the complete total),
+and the client lists one non-retryable Pending row per queued path with its
+phase as the reason. The preceding scan/snapshot phases still show the single
+"Sync is running." root row, and installed performance/permissions/TalkBack
+acceptance remain unverified under #65.
+
 This is bounded **result loading**, not incremental filesystem scanning or a
 measured/installed speedup. Native comparison, required report freezing/indexing,
 retained result RAM, caller merges/chunk metadata and worker transfer/startup
 remain costs. Already admitted scans are not interrupted and inspection is not
-globally serialized against sync. Full active-descendant enumeration and installed
-performance/permissions/TalkBack acceptance remain unverified under #65.
+globally serialized against sync.
 
 ### Earlier overview slices and verification history
 
