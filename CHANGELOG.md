@@ -6,6 +6,12 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.31.1] - 2026-11-20
+
+### Bug fixes
+
+- Adding a sync folder now has an end-to-end regression: a real local folder is selected through the client controller, synced through the native engine against a loopback backend, and checked for the remote folder, the encrypted chunk, the committed revision and the stored journal baseline. A future change that stops uploading, sends plaintext, or forgets the baseline row now fails CI instead of passing silently (#17).
+
 ## [0.31.0] - 2026-11-20
 
 ### Features
