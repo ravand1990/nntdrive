@@ -6,6 +6,8 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-11-20
+
 ### Features
 
 - The password-wrapped keyfile now lives in the operating-system credential store on Linux (Secret Service, the API behind GNOME Keyring, KWallet and KeePassXC) and Windows (Credential Manager) instead of shared preferences. Existing installs migrate once on the next start: the new copy is written and verified before the old one is removed, so an interrupted migration leaves a duplicate rather than a lost login. When no credential store is available or it is locked, the wrapped keyfile stays in shared preferences exactly as before and sign-in still works (#7).
