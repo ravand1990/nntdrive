@@ -18,6 +18,9 @@ import 'device_onboarding.dart';
 import 'device_name.dart';
 import 'app_layout.dart';
 import 'app_theme.dart';
+import 'activity_log.dart';
+import 'activity_page.dart';
+import 'activity_sync.dart';
 import 'space_notice.dart';
 import 'account_search.dart';
 import 'search_page.dart';
@@ -137,6 +140,7 @@ class _NntDriveAppState extends State<NntDriveApp> {
   bool _deviceReady = false;
   bool _renamingDevice = false;
   SyncController? _sync;
+  ActivityLog? _activity;
   DesktopLifecycle? _desktop;
   String? _desktopError;
   String? _loginAutostartError;
@@ -186,6 +190,7 @@ class _NntDriveAppState extends State<NntDriveApp> {
     _desktop?.dispose();
     _sync?.removeListener(_updateTray);
     _sync?.dispose();
+    _activity?.dispose();
     super.dispose();
   }
 
@@ -320,12 +325,19 @@ class _NntDriveAppState extends State<NntDriveApp> {
       await widget.prefs.setString('accountId', accountId);
       await widget.prefs.setString('email', email);
       if (!mounted || _ending) return;
+      final activity = ActivityLog(
+        store: PreferencesActivityStore(accountId: accountId),
+        accountId: accountId,
+      );
+      _activity = activity;
       final sync = SyncController(
         server: server,
         token: token,
         handle: unlocked['handle'] as int,
         api: _authenticatedApi(server, token),
         deviceNameConfirmed: false,
+        onRunFinished: (folder, report) =>
+            recordSyncRunActivity(activity, folder, report),
       );
       _sync = sync;
       sync.addListener(_updateTray);
@@ -428,6 +440,8 @@ class _NntDriveAppState extends State<NntDriveApp> {
       unawaited(ApiClient(baseUrl: session.server, token: session.token)
           .logout().then<void>((_) {}, onError: (Object _) {}));
     }
+    // Signing out removes this account's device-local history.
+    await _activity?.clear();
     await widget.prefs.remove('token');
     await widget.prefs.remove('keyfile');
     await widget.prefs.remove('accountId');
@@ -464,6 +478,7 @@ class _NntDriveAppState extends State<NntDriveApp> {
         key: ValueKey('${_session!.accountId}:${_session!.handle}'),
         session: _session!,
         sync: _sync!,
+        activity: _activity,
         operations: _fileOperations,
         updates: _automaticUpdates ?? _updates,
         api: widget.apiFactory?.call(_session!.server, _session!.token),
@@ -1067,6 +1082,7 @@ class FilesPage extends StatefulWidget {
     required this.onTheme,
     required this.onSignOut,
     this.api,
+    this.activity,
     this.onRenameDevice,
     this.loginAutostartEnabled = false,
     this.loginAutostartError,
@@ -1074,6 +1090,9 @@ class FilesPage extends StatefulWidget {
   });
   final Session session;
   final SyncController sync;
+
+  /// Session-owned device-local activity feed; tests may omit it.
+  final ActivityLog? activity;
   final SessionOperations operations;
   final AutomaticUpdateChecks<Object> updates;
   final ThemeMode themeMode;
@@ -1106,6 +1125,11 @@ class _FilesPageState extends State<FilesPage> {
   String _search = '';
   final _folderFilter = TextEditingController();
   late final SyncController _sync;
+  late final ActivityLog _activity = widget.activity ??
+      ActivityLog(
+        store: PreferencesActivityStore(accountId: widget.session.accountId),
+        accountId: widget.session.accountId,
+      );
   bool _wasSyncing = false;
   bool _syncLoaded = false;
   Map<String, LocalAvailability> _availability = {};
@@ -1211,6 +1235,27 @@ class _FilesPageState extends State<FilesPage> {
     if (!mounted || !index.ready || _error != null || entry.file.isDir) return;
     final current = _files.where((file) => file.id == entry.file.id).firstOrNull;
     if (current != null) _open(current);
+  }
+
+  /// Local folder name used by activity rows for actions in this view.
+  String get _activityFolder => _path.isEmpty ? 'My files' : _name(_path.last);
+
+  void _recordActivity(ActivityKind kind, String subject,
+      {String? itemId, int? size, String? reason}) {
+    _activity.record(
+      kind: kind,
+      folder: _activityFolder,
+      subject: subject,
+      itemId: itemId,
+      size: size,
+      reason: reason,
+    );
+  }
+
+  Future<void> _openActivity() async {
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => ActivityPage(log: _activity),
+    ));
   }
 
   Future<void> _openSync() async {
@@ -1409,6 +1454,8 @@ class _FilesPageState extends State<FilesPage> {
       final attempted = await showDialog<bool>(context: context,
         barrierDismissible: false,
         builder: (_) => CopyFileDialog(isDir: file.isDir,
+          onConfirmed: () => _recordActivity(ActivityKind.copied, _name(file),
+            itemId: file.id, size: file.size),
           runCopy: () => widget.operations.run(widget.session.handle,
             () => copyRemoteFile(api: _api, handle: widget.session.handle,
               file: file, parentId: destination.parentId))));
@@ -1433,6 +1480,8 @@ class _FilesPageState extends State<FilesPage> {
       await widget.operations.run(widget.session.handle, () =>
         moveRemoteEntry(api: _api, handle: widget.session.handle,
           file: file, parentId: destination!.parentId));
+      _recordActivity(ActivityKind.moved, _name(file),
+          itemId: file.id, size: file.size);
       if (mounted) await _refresh();
     } on RenameFailure catch (e) {
       if (mounted) _showError(e.message);
@@ -1471,6 +1520,8 @@ class _FilesPageState extends State<FilesPage> {
       await widget.operations.run(widget.session.handle, () =>
         renameRemoteEntry(api: _api, handle: widget.session.handle,
           file: file, name: name));
+      _recordActivity(ActivityKind.renamed, '${_name(file)} → $name',
+          itemId: file.id);
       if (mounted) await _refresh();
     } on RenameFailure catch (e) {
       if (mounted) _showError(e.message);
@@ -1573,6 +1624,9 @@ class _FilesPageState extends State<FilesPage> {
         path: path,
       );
       if (mounted) Navigator.of(context, rootNavigator: true).pop();
+      _recordActivity(ActivityKind.uploaded, name,
+          itemId: fileId,
+          size: result['size'] is int ? result['size'] as int : null);
       await _refresh();
       _toast('Uploaded $name — ${result['chunks_new']} new chunk(s), '
           '${result['chunks_reused']} reused, ${result['articles_posted']} article(s).');
@@ -1609,6 +1663,9 @@ class _FilesPageState extends State<FilesPage> {
         path: path,
       );
       if (mounted) Navigator.of(context, rootNavigator: true).pop();
+      _recordActivity(ActivityKind.uploaded, '${_name(file)} (new version)',
+          itemId: file.id,
+          size: result['size'] is int ? result['size'] as int : null);
       await _refresh();
       _toast('New version uploaded (${result['size']} bytes, '
           '${result['chunks_new']} new chunks, ${result['chunks_reused']} reused).');
@@ -1646,6 +1703,9 @@ class _FilesPageState extends State<FilesPage> {
         destination: destination,
       );
       if (mounted) Navigator.of(context, rootNavigator: true).pop();
+      _recordActivity(ActivityKind.downloaded, _name(file),
+          itemId: file.id,
+          size: result['size'] is int ? result['size'] as int : null);
       _toast('Saved to $destination (${result['size']} bytes, '
           '${result['shards_fetched']} shards).');
     } catch (e) {
@@ -1767,6 +1827,9 @@ class _FilesPageState extends State<FilesPage> {
     if (ok != true || !mounted) return;
     try {
       await _api.deleteFile(file.id);
+      _recordActivity(ActivityKind.deleted, _name(file),
+          itemId: file.id, size: file.size,
+          reason: 'Moved to the Trash; restorable while retention lasts.');
       await _refresh();
     } catch (e) {
       _showError(e);
@@ -2015,6 +2078,17 @@ class _FilesPageState extends State<FilesPage> {
               onTap: () {
                 Navigator.pop(context);
                 _showDevices();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.notifications_none),
+              title: const Text('Activity'),
+              subtitle: Text(_activity.notificationCount == 0
+                  ? 'Recent actions; nothing needs attention'
+                  : '${_activity.notificationCount} need attention'),
+              onTap: () {
+                Navigator.pop(context);
+                _openActivity();
               },
             ),
             ListTile(

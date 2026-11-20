@@ -30,9 +30,13 @@ class CopyFileButton extends StatelessWidget {
 
 /// A single explicit attempt. No retry affordance after an ambiguous outcome.
 class CopyFileDialog extends StatefulWidget {
-  const CopyFileDialog({super.key, required this.runCopy, this.isDir = false});
+  const CopyFileDialog({super.key, required this.runCopy, this.isDir = false,
+    this.onConfirmed});
   final bool isDir;
   final Future<Map<String, dynamic>> Function() runCopy;
+
+  /// Runs once the copy is confirmed, before the dialog reports success.
+  final VoidCallback? onConfirmed;
   @override
   State<CopyFileDialog> createState() => _CopyFileDialogState();
 }
@@ -46,6 +50,7 @@ class _CopyFileDialogState extends State<CopyFileDialog> {
     setState(() { _attempted = true; _running = true; });
     try {
       await widget.runCopy();
+      widget.onConfirmed?.call();
       if (mounted) setState(() => _success = true);
     } catch (_) {
       // Do not expose native/server diagnostics, URLs, names or credentials.
