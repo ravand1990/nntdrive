@@ -2,10 +2,13 @@ use super::*;
 
 fn unlocked() -> u64 {
     let handle = NEXT_HANDLE.fetch_add(1, Ordering::SeqCst);
-    handles()
-        .lock()
-        .unwrap()
-        .insert(handle, MasterKey::generate(Uuid::new_v4(), 0));
+    handles().lock().unwrap().insert(
+        handle,
+        Arc::new(MasterKeyRing::from(nntdrive_crypto::MasterKey::generate(
+            Uuid::new_v4(),
+            0,
+        ))),
+    );
     handle
 }
 

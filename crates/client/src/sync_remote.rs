@@ -5,7 +5,7 @@
 //! sees opaque node ids and sealed name blobs.
 
 use crate::{download_file_with_progress, upload_file_with_progress, ApiClient, ClientError};
-use nntdrive_crypto::{Envelope, MasterKey};
+use nntdrive_crypto::{Envelope, MasterKeyRing};
 use nntdrive_storage::manifest::FileManifest;
 use nntdrive_sync::{Remote, RemoteEntry, SyncError};
 use serde::{Deserialize, Serialize};
@@ -34,7 +34,7 @@ type ProgressObserver = std::sync::Arc<dyn Fn(&str, &str, u64, u64, bool) + Send
 
 pub struct HttpRemote {
     api: ApiClient,
-    master: MasterKey,
+    master: MasterKeyRing,
     root_id: Uuid,
     nodes: HashMap<String, Node>,
     cache_path: Option<PathBuf>,
@@ -51,10 +51,10 @@ impl HttpRemote {
         self.progress = std::sync::Arc::new(observer);
         self
     }
-    pub fn new(api: ApiClient, master: MasterKey, root_id: Uuid) -> Self {
+    pub fn new(api: ApiClient, master: impl Into<MasterKeyRing>, root_id: Uuid) -> Self {
         Self {
             api,
-            master,
+            master: master.into(),
             root_id,
             nodes: HashMap::new(),
             cache_path: None,
@@ -67,7 +67,7 @@ impl HttpRemote {
     /// remote entries have no hash and renames are detected as delete+recreate.
     pub fn with_cache(
         api: ApiClient,
-        master: MasterKey,
+        master: impl Into<MasterKeyRing>,
         root_id: Uuid,
         cache_path: impl Into<PathBuf>,
     ) -> Self {

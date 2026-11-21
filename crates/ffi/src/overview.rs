@@ -32,7 +32,7 @@ struct Reservation {
     published: bool,
 }
 impl Reservation {
-    fn begin(handle: u64, limit: usize) -> Result<(Self, MasterKey), String> {
+    fn begin(handle: u64, limit: usize) -> Result<(Self, Arc<MasterKeyRing>), String> {
         if !(1..=OVERVIEW_PAGE_LIMIT).contains(&limit) {
             return Err("invalid overview page size".into());
         }
@@ -135,7 +135,7 @@ pub unsafe extern "C" fn nntdrive_sync_overview_open(
         api.set_token(text("token")?);
         let mut remote = nntdrive_client::HttpRemote::with_cache(
             api,
-            master,
+            master.as_ref().clone(),
             root_id,
             format!("{journal}.remote-hashes.json"),
         );

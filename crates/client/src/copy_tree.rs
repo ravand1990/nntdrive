@@ -4,7 +4,7 @@ use crate::{
     ApiClient, ClientError, FileDto, Result,
 };
 use base64::Engine;
-use nntdrive_crypto::{Envelope, MasterKey};
+use nntdrive_crypto::{AccountKey, Envelope};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
@@ -30,7 +30,7 @@ fn comparison(name: &str) -> String {
         .nfc()
         .collect()
 }
-fn open_name(master: &MasterKey, id: Uuid, name: &str) -> Result<String> {
+fn open_name(master: &impl AccountKey, id: Uuid, name: &str) -> Result<String> {
     if name.len() > 10924 {
         return Err(invalid());
     }
@@ -78,7 +78,7 @@ impl ApiClient {
     /// depth 31, 8 MiB metadata and 16384 references. No retry after ambiguity.
     pub async fn copy_folder_checked(
         &self,
-        master: &MasterKey,
+        master: &impl AccountKey,
         source: &FileDto,
         parent: Option<Uuid>,
     ) -> Result<Uuid> {
@@ -94,7 +94,7 @@ impl ApiClient {
 
     async fn copy_folder_inner(
         &self,
-        master: &MasterKey,
+        master: &impl AccountKey,
         source: &FileDto,
         parent: Option<Uuid>,
     ) -> Result<Uuid> {

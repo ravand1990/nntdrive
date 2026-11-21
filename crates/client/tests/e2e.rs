@@ -138,7 +138,11 @@ fn base64(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
-async fn create_node(api: &ApiClient, master: &nntdrive_crypto::MasterKey, name: &str) -> Uuid {
+async fn create_node(
+    api: &ApiClient,
+    master: &impl nntdrive_crypto::AccountKey,
+    name: &str,
+) -> Uuid {
     let id = Uuid::new_v4();
     let sealed = master.seal_name(id, name).unwrap().to_bytes();
     api.create_file(id, None, sealed, false).await.unwrap();

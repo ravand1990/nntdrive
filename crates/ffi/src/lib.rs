@@ -7,7 +7,7 @@
 
 use nntdrive_client::{download_file, upload_file, ApiClient};
 use nntdrive_crypto::{
-    derive_auth_verifier, DeviceKeypair, Envelope, KeyFile, MasterKey, RecoveryKit,
+    derive_auth_verifier, AccountKey, DeviceKeypair, Envelope, KeyFile, MasterKeyRing, RecoveryKit,
 };
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -16,17 +16,17 @@ use std::os::raw::c_char;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use tokio::runtime::Runtime;
 use uuid::Uuid;
 
 mod overview;
 
-static HANDLES: OnceLock<Mutex<HashMap<u64, MasterKey>>> = OnceLock::new();
+static HANDLES: OnceLock<Mutex<HashMap<u64, Arc<MasterKeyRing>>>> = OnceLock::new();
 static NEXT_HANDLE: AtomicU64 = AtomicU64::new(1);
 static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 
-fn handles() -> &'static Mutex<HashMap<u64, MasterKey>> {
+fn handles() -> &'static Mutex<HashMap<u64, Arc<MasterKeyRing>>> {
     HANDLES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
@@ -40,7 +40,7 @@ fn runtime() -> &'static Runtime {
     })
 }
 
-fn key(handle: u64) -> Result<MasterKey, String> {
+fn key(handle: u64) -> Result<Arc<MasterKeyRing>, String> {
     handles()
         .lock()
         .map_err(|_| "key registry poisoned".to_string())?
@@ -166,16 +166,23 @@ pub unsafe extern "C" fn nntdrive_unlock(
         let password = arg(password)?;
         let keyfile: KeyFile =
             serde_json::from_str(&keyfile_json).map_err(|_| "invalid keyfile".to_string())?;
-        let master = keyfile.unlock(&password).map_err(|e| e.to_string())?;
+        // Keep every retained epoch: revisions sealed before an AMK rotation
+        // stay readable, while new content is always sealed with the current
+        // epoch. A keyfile without retained epochs yields a single-key ring.
+        let ring = keyfile.unlock_ring(&password).map_err(|e| e.to_string())?;
+        let account_id = ring.account_id();
+        let epoch = ring.epoch();
+        let epochs: Vec<u32> = ring.epochs().collect();
         let handle = NEXT_HANDLE.fetch_add(1, Ordering::Relaxed);
         handles()
             .lock()
             .map_err(|_| "key registry poisoned".to_string())?
-            .insert(handle, master.clone());
+            .insert(handle, Arc::new(ring));
         Ok(json!({
             "handle": handle,
-            "account_id": master.account_id(),
-            "epoch": master.epoch(),
+            "account_id": account_id,
+            "epoch": epoch,
+            "epochs": epochs,
         }))
     })
 }
@@ -430,7 +437,12 @@ pub unsafe extern "C" fn nntdrive_sync_run(
         let mut api = ApiClient::new(base_url).map_err(|e| e.to_string())?;
         api.set_token(token);
         let cache_path = std::path::PathBuf::from(format!("{journal_path}.remote-hashes.json"));
-        let mut remote = nntdrive_client::HttpRemote::with_cache(api, master, root_id, cache_path);
+        let mut remote = nntdrive_client::HttpRemote::with_cache(
+            api,
+            master.as_ref().clone(),
+            root_id,
+            cache_path,
+        );
         let journal = runtime()
             .block_on(nntdrive_sync::Journal::open(&journal_path))
             .map_err(|e| e.to_string())?;
@@ -474,7 +486,7 @@ pub unsafe extern "C" fn nntdrive_sync_inspect(handle: u64, request: *const c_ch
         api.set_token(text("token")?);
         let mut remote = nntdrive_client::HttpRemote::with_cache(
             api,
-            master,
+            master.as_ref().clone(),
             root_id,
             format!("{journal_path}.remote-hashes.json"),
         );
@@ -531,7 +543,12 @@ pub unsafe extern "C" fn nntdrive_sync_run_ex(
         let mut api = ApiClient::new(base_url).map_err(|e| e.to_string())?;
         api.set_token(token);
         let cache_path = std::path::PathBuf::from(format!("{journal_path}.remote-hashes.json"));
-        let mut remote = nntdrive_client::HttpRemote::with_cache(api, master, root_id, cache_path);
+        let mut remote = nntdrive_client::HttpRemote::with_cache(
+            api,
+            master.as_ref().clone(),
+            root_id,
+            cache_path,
+        );
         let journal = runtime()
             .block_on(nntdrive_sync::Journal::open(&journal_path))
             .map_err(|e| e.to_string())?;
@@ -576,7 +593,7 @@ pub unsafe extern "C" fn nntdrive_sync_request(
         }
         let mut api = ApiClient::new(text("baseUrl")?).map_err(|e| e.to_string())?;
         api.set_token(text("token")?);
-        let mut remote = nntdrive_client::HttpRemote::with_cache(api, master, root_id,
+        let mut remote = nntdrive_client::HttpRemote::with_cache(api, master.as_ref().clone(), root_id,
             format!("{journal_path}.remote-hashes.json")).with_progress(move |path, direction, bytes, total, complete| {
                 if let Some(cb) = callback {
                     let event = json!({"path":path,"direction":direction,"bytes":bytes,"total":total,"complete":complete});
@@ -699,8 +716,9 @@ pub unsafe extern "C" fn nntdrive_copy_file(handle: u64, request: *const c_char)
 pub extern "C" fn nntdrive_recovery_kit(handle: u64) -> *mut c_char {
     guard(|| {
         let master = key(handle)?;
-        let (kit, code) = RecoveryKit::create(&master, Some("NNTDrive recovery kit".into()))
-            .map_err(|e| e.to_string())?;
+        let (kit, code) =
+            RecoveryKit::create(master.current(), Some("NNTDrive recovery kit".into()))
+                .map_err(|e| e.to_string())?;
         Ok(json!({ "recovery_kit": kit, "recovery_code": code }))
     })
 }
@@ -798,6 +816,62 @@ mod tests {
     }
 
     #[test]
+    fn unlock_keeps_retained_epochs_readable_through_the_bridge() {
+        let password = "correct horse battery staple";
+        let account_id = Uuid::new_v4();
+        let (keyfile, master) = KeyFile::create(password, account_id).unwrap();
+        let node = Uuid::new_v4();
+        // A name sealed before another device rotates the account master key.
+        let old_name = master.seal_name(node, "before rotation.txt").unwrap();
+        let (rotated_keyfile, _rotated_master) = keyfile.rotate(&master, password).unwrap();
+        assert_eq!(rotated_keyfile.retained.len(), 1);
+
+        let keyfile_json = CString::new(serde_json::to_string(&rotated_keyfile).unwrap()).unwrap();
+        let password_c = CString::new(password).unwrap();
+        let unlocked = unsafe { nntdrive_unlock(keyfile_json.as_ptr(), password_c.as_ptr()) };
+        let text = unsafe { CStr::from_ptr(unlocked).to_str().unwrap().to_string() };
+        unsafe { nntdrive_string_free(unlocked) };
+        let unlocked: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(unlocked["ok"], true);
+        assert_eq!(unlocked["epoch"], 1);
+        assert_eq!(unlocked["epochs"], json!([1, 0]));
+        let handle = unlocked["handle"].as_u64().unwrap();
+
+        // The unlock keeps the previous epoch, so the old revision still opens.
+        let node_c = CString::new(node.to_string()).unwrap();
+        let old_b64 = CString::new(base64_bytes(&old_name.to_bytes())).unwrap();
+        let opened = unsafe { nntdrive_open_name(handle, node_c.as_ptr(), old_b64.as_ptr()) };
+        let opened_text = unsafe { CStr::from_ptr(opened).to_str().unwrap().to_string() };
+        unsafe { nntdrive_string_free(opened) };
+        let opened: Value = serde_json::from_str(&opened_text).unwrap();
+        assert_eq!(opened["name"], "before rotation.txt");
+
+        // New content is sealed with the current epoch: the bridge can read it
+        // back, while the pre-rotation key alone cannot authenticate it.
+        let name_c = CString::new("after rotation.txt").unwrap();
+        let sealed = unsafe { nntdrive_seal_name(handle, node_c.as_ptr(), name_c.as_ptr()) };
+        let sealed_text = unsafe { CStr::from_ptr(sealed).to_str().unwrap().to_string() };
+        unsafe { nntdrive_string_free(sealed) };
+        let sealed: Value = serde_json::from_str(&sealed_text).unwrap();
+        let new_b64 = CString::new(sealed["name_enc"].as_str().unwrap()).unwrap();
+        let envelope =
+            Envelope::from_bytes(&decode_b64(new_b64.to_str().unwrap()).unwrap()).unwrap();
+        assert!(master.open_name(node, &envelope).is_err());
+        let reopened = unsafe { nntdrive_open_name(handle, node_c.as_ptr(), new_b64.as_ptr()) };
+        let reopened_text = unsafe { CStr::from_ptr(reopened).to_str().unwrap().to_string() };
+        unsafe { nntdrive_string_free(reopened) };
+        let reopened: Value = serde_json::from_str(&reopened_text).unwrap();
+        assert_eq!(reopened["name"], "after rotation.txt");
+
+        nntdrive_lock(handle);
+        let locked = unsafe { nntdrive_open_name(handle, node_c.as_ptr(), new_b64.as_ptr()) };
+        let locked_text = unsafe { CStr::from_ptr(locked).to_str().unwrap().to_string() };
+        unsafe { nntdrive_string_free(locked) };
+        let locked: Value = serde_json::from_str(&locked_text).unwrap();
+        assert_eq!(locked["error"], "invalid or locked key handle");
+    }
+
+    #[test]
     fn cold_start_sync_requires_unlock_before_network_or_journal_access() {
         assert_sync_rejects_locked_handle(0);
     }
@@ -814,10 +888,13 @@ mod tests {
         }
         assert_eq!(invoke(0, "{}")["error"], "invalid or locked key handle");
         let handle = NEXT_HANDLE.fetch_add(1, Ordering::Relaxed);
-        handles()
-            .lock()
-            .unwrap()
-            .insert(handle, MasterKey::generate(Uuid::new_v4(), 0));
+        handles().lock().unwrap().insert(
+            handle,
+            Arc::new(MasterKeyRing::from(nntdrive_crypto::MasterKey::generate(
+                Uuid::new_v4(),
+                0,
+            ))),
+        );
         assert_eq!(invoke(handle, "not json")["error"], "invalid copy request");
         assert_eq!(
             invoke(handle, &"x".repeat(32769))["error"],

@@ -6,7 +6,7 @@
 //! backend proxy, verify hashes, reconstruct, decrypt and write atomically.
 
 use base64::Engine;
-use nntdrive_crypto::{CryptoError, Envelope, KeyFile, MasterKey};
+use nntdrive_crypto::{AccountKey, CryptoError, Envelope, KeyFile, MasterKey};
 use nntdrive_storage::chunker::{hash_hex, ChunkStream};
 use nntdrive_storage::erasure;
 use nntdrive_storage::manifest::{ChunkEntry, Compression, FileManifest};
@@ -424,7 +424,7 @@ pub async fn rotate_account_key(
 /// Encrypts and uploads a local file as a new immutable revision.
 pub async fn upload_file(
     api: &ApiClient,
-    master: &MasterKey,
+    master: &impl AccountKey,
     file_id: Uuid,
     revision_id: Uuid,
     parent_revision: Option<Uuid>,
@@ -447,7 +447,7 @@ pub async fn upload_file(
 #[allow(clippy::too_many_arguments)]
 pub async fn upload_file_with_progress(
     api: &ApiClient,
-    master: &MasterKey,
+    master: &impl AccountKey,
     file_id: Uuid,
     revision_id: Uuid,
     parent_revision: Option<Uuid>,
@@ -515,7 +515,7 @@ pub async fn upload_file_with_progress(
 /// Downloads, verifies and decrypts a revision, writing it atomically.
 pub async fn download_file(
     api: &ApiClient,
-    master: &MasterKey,
+    master: &impl AccountKey,
     file_id: Uuid,
     revision: Option<Uuid>,
     destination: &Path,
@@ -526,7 +526,7 @@ pub async fn download_file(
 /// Backfill all currently incomplete revisions, including hidden tombstones.
 /// Rerun after failures or concurrent legacy uploads; GC checks completeness
 /// again under the commit lock, so an incomplete pass can never enable GC.
-pub async fn backfill_account_references(api: &ApiClient, master: &MasterKey) -> Result<u64> {
+pub async fn backfill_account_references(api: &ApiClient, master: &impl AccountKey) -> Result<u64> {
     #[derive(serde::Deserialize)]
     struct Revision {
         file_id: Uuid,
@@ -567,7 +567,10 @@ pub async fn backfill_account_references(api: &ApiClient, master: &MasterKey) ->
 /// restart from the first incomplete revision; successful writes are immutable
 /// and idempotent, so interruption/ambiguous HTTP outcomes are safe to retry.
 /// Errors deliberately omit server bodies, URLs and manifest details.
-pub async fn backfill_reference_batch(api: &ApiClient, master: &MasterKey) -> serde_json::Value {
+pub async fn backfill_reference_batch(
+    api: &ApiClient,
+    master: &impl AccountKey,
+) -> serde_json::Value {
     #[derive(serde::Deserialize)]
     struct Revision {
         file_id: Uuid,
@@ -605,7 +608,7 @@ pub async fn backfill_reference_batch(api: &ApiClient, master: &MasterKey) -> se
 /// and structural/identity validation. No names, hashes or keys leave the client.
 pub async fn backfill_version_references(
     api: &ApiClient,
-    master: &MasterKey,
+    master: &impl AccountKey,
     file_id: Uuid,
     revision_id: Uuid,
 ) -> Result<()> {
@@ -624,7 +627,7 @@ pub async fn backfill_version_references(
 
 async fn load_verified_manifest(
     api: &ApiClient,
-    master: &MasterKey,
+    master: &impl AccountKey,
     file_id: Uuid,
     revision: Option<Uuid>,
 ) -> Result<FileManifest> {
@@ -665,7 +668,7 @@ impl Drop for PartialFile {
 /// follows whole-file verification and atomic materialization.
 pub async fn download_file_with_progress(
     api: &ApiClient,
-    master: &MasterKey,
+    master: &impl AccountKey,
     file_id: Uuid,
     revision: Option<Uuid>,
     destination: &Path,

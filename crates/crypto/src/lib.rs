@@ -567,15 +567,119 @@ impl MasterKey {
     }
 }
 
+/// Key material used to seal new content and open authenticated envelopes.
+///
+/// A single [`MasterKey`] seals and opens with its own epoch only. A
+/// [`MasterKeyRing`] seals with the current epoch and opens with the current
+/// epoch first, then the retained older epochs. Both are accepted where a
+/// caller may run before or after an AMK rotation.
+pub trait AccountKey {
+    fn account_id(&self) -> Uuid;
+    fn epoch(&self) -> u32;
+    fn seal_name(&self, node_id: Uuid, plaintext_name: &str) -> Result<Envelope>;
+    fn open_name(&self, node_id: Uuid, envelope: &Envelope) -> Result<String>;
+    fn seal_manifest(&self, file_id: Uuid, revision: Uuid, plaintext: &[u8]) -> Result<Envelope>;
+    fn open_manifest(&self, file_id: Uuid, revision: Uuid, envelope: &Envelope) -> Result<Vec<u8>>;
+    fn seal_chunk(
+        &self,
+        chunk_id: Uuid,
+        plaintext_hash: &[u8; 32],
+        plaintext_len: u64,
+        compression: u8,
+        plaintext: &[u8],
+    ) -> Result<Envelope>;
+    fn open_chunk(
+        &self,
+        chunk_id: Uuid,
+        plaintext_hash: &[u8; 32],
+        plaintext_len: u64,
+        compression: u8,
+        envelope: &Envelope,
+    ) -> Result<Vec<u8>>;
+}
+
+impl AccountKey for MasterKey {
+    fn account_id(&self) -> Uuid {
+        MasterKey::account_id(self)
+    }
+
+    fn epoch(&self) -> u32 {
+        MasterKey::epoch(self)
+    }
+
+    fn seal_name(&self, node_id: Uuid, plaintext_name: &str) -> Result<Envelope> {
+        MasterKey::seal_name(self, node_id, plaintext_name)
+    }
+
+    fn open_name(&self, node_id: Uuid, envelope: &Envelope) -> Result<String> {
+        MasterKey::open_name(self, node_id, envelope)
+    }
+
+    fn seal_manifest(&self, file_id: Uuid, revision: Uuid, plaintext: &[u8]) -> Result<Envelope> {
+        MasterKey::seal_manifest(self, file_id, revision, plaintext)
+    }
+
+    fn open_manifest(&self, file_id: Uuid, revision: Uuid, envelope: &Envelope) -> Result<Vec<u8>> {
+        MasterKey::open_manifest(self, file_id, revision, envelope)
+    }
+
+    fn seal_chunk(
+        &self,
+        chunk_id: Uuid,
+        plaintext_hash: &[u8; 32],
+        plaintext_len: u64,
+        compression: u8,
+        plaintext: &[u8],
+    ) -> Result<Envelope> {
+        MasterKey::seal_chunk(
+            self,
+            chunk_id,
+            plaintext_hash,
+            plaintext_len,
+            compression,
+            plaintext,
+        )
+    }
+
+    fn open_chunk(
+        &self,
+        chunk_id: Uuid,
+        plaintext_hash: &[u8; 32],
+        plaintext_len: u64,
+        compression: u8,
+        envelope: &Envelope,
+    ) -> Result<Vec<u8>> {
+        MasterKey::open_chunk(
+            self,
+            chunk_id,
+            plaintext_hash,
+            plaintext_len,
+            compression,
+            envelope,
+        )
+    }
+}
+
 /// An unlocked keyfile: the current AMK plus every retained epoch.
 ///
 /// New content is always sealed with the current epoch. Reads fall back to the
 /// retained epochs so revisions written before a rotation keep working. The
 /// fallback authenticates every candidate, so a wrong-epoch envelope simply
 /// fails rather than producing plaintext.
+#[derive(Clone)]
 pub struct MasterKeyRing {
     current: MasterKey,
     previous: Vec<MasterKey>,
+}
+
+impl From<MasterKey> for MasterKeyRing {
+    /// A ring with no retained epochs, for callers that only hold one key.
+    fn from(current: MasterKey) -> Self {
+        Self {
+            current,
+            previous: Vec::new(),
+        }
+    }
 }
 
 impl std::fmt::Debug for MasterKeyRing {
@@ -597,6 +701,10 @@ impl std::fmt::Debug for MasterKeyRing {
 impl MasterKeyRing {
     pub fn current(&self) -> &MasterKey {
         &self.current
+    }
+
+    pub fn account_id(&self) -> Uuid {
+        self.current.account_id()
     }
 
     pub fn epoch(&self) -> u32 {
@@ -699,6 +807,128 @@ impl MasterKeyRing {
             }
         }
         Err(CryptoError::Authentication)
+    }
+}
+
+impl<T: AccountKey + ?Sized> AccountKey for std::sync::Arc<T> {
+    fn account_id(&self) -> Uuid {
+        (**self).account_id()
+    }
+
+    fn epoch(&self) -> u32 {
+        (**self).epoch()
+    }
+
+    fn seal_name(&self, node_id: Uuid, plaintext_name: &str) -> Result<Envelope> {
+        (**self).seal_name(node_id, plaintext_name)
+    }
+
+    fn open_name(&self, node_id: Uuid, envelope: &Envelope) -> Result<String> {
+        (**self).open_name(node_id, envelope)
+    }
+
+    fn seal_manifest(&self, file_id: Uuid, revision: Uuid, plaintext: &[u8]) -> Result<Envelope> {
+        (**self).seal_manifest(file_id, revision, plaintext)
+    }
+
+    fn open_manifest(&self, file_id: Uuid, revision: Uuid, envelope: &Envelope) -> Result<Vec<u8>> {
+        (**self).open_manifest(file_id, revision, envelope)
+    }
+
+    fn seal_chunk(
+        &self,
+        chunk_id: Uuid,
+        plaintext_hash: &[u8; 32],
+        plaintext_len: u64,
+        compression: u8,
+        plaintext: &[u8],
+    ) -> Result<Envelope> {
+        (**self).seal_chunk(
+            chunk_id,
+            plaintext_hash,
+            plaintext_len,
+            compression,
+            plaintext,
+        )
+    }
+
+    fn open_chunk(
+        &self,
+        chunk_id: Uuid,
+        plaintext_hash: &[u8; 32],
+        plaintext_len: u64,
+        compression: u8,
+        envelope: &Envelope,
+    ) -> Result<Vec<u8>> {
+        (**self).open_chunk(
+            chunk_id,
+            plaintext_hash,
+            plaintext_len,
+            compression,
+            envelope,
+        )
+    }
+}
+
+impl AccountKey for MasterKeyRing {
+    fn account_id(&self) -> Uuid {
+        MasterKeyRing::account_id(self)
+    }
+
+    fn epoch(&self) -> u32 {
+        MasterKeyRing::epoch(self)
+    }
+
+    fn seal_name(&self, node_id: Uuid, plaintext_name: &str) -> Result<Envelope> {
+        MasterKeyRing::seal_name(self, node_id, plaintext_name)
+    }
+
+    fn open_name(&self, node_id: Uuid, envelope: &Envelope) -> Result<String> {
+        MasterKeyRing::open_name(self, node_id, envelope)
+    }
+
+    fn seal_manifest(&self, file_id: Uuid, revision: Uuid, plaintext: &[u8]) -> Result<Envelope> {
+        MasterKeyRing::seal_manifest(self, file_id, revision, plaintext)
+    }
+
+    fn open_manifest(&self, file_id: Uuid, revision: Uuid, envelope: &Envelope) -> Result<Vec<u8>> {
+        MasterKeyRing::open_manifest(self, file_id, revision, envelope)
+    }
+
+    fn seal_chunk(
+        &self,
+        chunk_id: Uuid,
+        plaintext_hash: &[u8; 32],
+        plaintext_len: u64,
+        compression: u8,
+        plaintext: &[u8],
+    ) -> Result<Envelope> {
+        MasterKeyRing::seal_chunk(
+            self,
+            chunk_id,
+            plaintext_hash,
+            plaintext_len,
+            compression,
+            plaintext,
+        )
+    }
+
+    fn open_chunk(
+        &self,
+        chunk_id: Uuid,
+        plaintext_hash: &[u8; 32],
+        plaintext_len: u64,
+        compression: u8,
+        envelope: &Envelope,
+    ) -> Result<Vec<u8>> {
+        MasterKeyRing::open_chunk(
+            self,
+            chunk_id,
+            plaintext_hash,
+            plaintext_len,
+            compression,
+            envelope,
+        )
     }
 }
 
