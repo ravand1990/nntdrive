@@ -230,6 +230,24 @@ class DeviceInfo {
       );
 }
 
+/// What the server said after a device revocation.
+///
+/// A revoked device keeps reading content sealed under the current account-key
+/// epoch, so the server reports `key_rotation_required`. Rotation needs the
+/// account password and, when the account stores a recovery kit, its current
+/// recovery code, so the app asks the user instead of rotating silently.
+class DeviceRevokeResult {
+  DeviceRevokeResult({required this.keyRotationRequired, this.message});
+
+  final bool keyRotationRequired;
+  final String? message;
+
+  factory DeviceRevokeResult.fromJson(Map<String, dynamic> j) => DeviceRevokeResult(
+        keyRotationRequired: j['key_rotation_required'] == true,
+        message: j['message'] as String?,
+      );
+}
+
 /// A fixed account root: the account-wide Global space or one device space.
 ///
 /// The backend stores only the node ID and the sealed name; this model carries
@@ -687,7 +705,9 @@ class ApiClient {
         .toList();
   }
 
-  Future<void> revokeDevice(String id) => _send('DELETE', '/devices/$id');
+  /// Revokes a device and reports whether the account key now needs rotating.
+  Future<DeviceRevokeResult> revokeDevice(String id) async =>
+      DeviceRevokeResult.fromJson(await _send('DELETE', '/devices/$id'));
 
   Future<List<SyncEvent>> eventsSince(int seq) async {
     final j = await _send('GET', '/events?since=$seq');

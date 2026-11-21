@@ -17,6 +17,7 @@ import 'account_roots.dart';
 import 'device_onboarding.dart';
 import 'device_name.dart';
 import 'keyfile_refresh.dart';
+import 'key_rotation.dart';
 import 'app_layout.dart';
 import 'app_theme.dart';
 import 'activity_log.dart';
@@ -448,6 +449,48 @@ class _NntDriveAppState extends State<NntDriveApp> {
     setState(() { _deviceReady = false; _renamingDevice = true; });
   }
 
+  /// Rotates the account key from the unlocked session and stores the new
+  /// keyfile. The bridge keeps the live handle on the rotated ring, so the
+  /// session keeps working; the password and recovery code stay in the dialog.
+  Future<bool> _rotateAccountKey() async {
+    final session = _session;
+    final keyfile = _keyfile;
+    final context = _navigatorKey.currentContext;
+    if (_ending || session == null || keyfile == null || context == null) return false;
+    final outcome = await showDialog<KeyRotationOutcome>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => RotateAccountKeyDialog(
+        rotate: (password, recoveryCode) => KeyRotationOutcome.attempt(
+          (password, recoveryCode) => NativeBridge.instance.rotateAccountKeyAsync(
+            session.handle,
+            {
+              'baseUrl': session.server,
+              'token': session.token,
+              'keyfile': keyfile,
+              'password': password,
+              if (recoveryCode != null) 'recoveryCode': recoveryCode,
+            },
+          ),
+          password,
+          recoveryCode,
+        ),
+      ),
+    );
+    final rotated = outcome?.keyfileJson;
+    if (rotated == null) return false;
+    try {
+      await _keyfileVault.save(rotated);
+    } catch (_) {
+      // The rotation is already published, so the next unlock fetches the newer
+      // keyfile from the server even if this local write failed. The session
+      // keeps the rotated key in memory either way.
+    }
+    if (!mounted) return true;
+    setState(() => _keyfile = rotated);
+    return true;
+  }
+
   Future<void> _endSession({required bool signOut}) =>
       _endFuture ??= _finishSession(signOut: signOut).catchError((Object error, StackTrace stack) {
         _endFuture = null;
@@ -530,6 +573,7 @@ class _NntDriveAppState extends State<NntDriveApp> {
         onTheme: _setTheme,
         onSignOut: _signOut,
         onRenameDevice: _renameDevice,
+        onRotateAccountKey: _rotateAccountKey,
         loginAutostartEnabled:
             widget.prefs.getBool(loginAutostartPreferenceKey) ?? false,
         loginAutostartError: _loginAutostartError,
@@ -1128,6 +1172,7 @@ class FilesPage extends StatefulWidget {
     this.api,
     this.activity,
     this.onRenameDevice,
+    this.onRotateAccountKey,
     this.loginAutostartEnabled = false,
     this.loginAutostartError,
     this.onSetLoginAutostart,
@@ -1147,6 +1192,10 @@ class FilesPage extends StatefulWidget {
   /// constructing one from the session.
   final ApiClient? api;
   final VoidCallback? onRenameDevice;
+
+  /// Rotates the account key after a revoke that requires it. Owned by the app
+  /// because the rotated keyfile replaces the stored one; tests may omit it.
+  final Future<bool> Function()? onRotateAccountKey;
 
   /// Desktop login-item state, owned by the app so startup can re-register it.
   final bool loginAutostartEnabled;
@@ -2274,8 +2323,10 @@ class _FilesPageState extends State<FilesPage> {
                             ? null
                             : TextButton(
                                 onPressed: () async {
-                                  await _api.revokeDevice(d.id);
-                                  if (context.mounted) Navigator.pop(context);
+                                  final revoked = await _api.revokeDevice(d.id);
+                                  if (!context.mounted) return;
+                                  Navigator.pop(context);
+                                  await _afterDeviceRevoked(revoked);
                                 },
                                 child: const Text('Revoke'),
                               ),
@@ -2284,6 +2335,14 @@ class _FilesPageState extends State<FilesPage> {
             ),
           ),
           actions: [
+            if (widget.onRotateAccountKey != null)
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  unawaited(_rotateKeyNow());
+                },
+                child: const Text('Rotate account key'),
+              ),
             TextButton(onPressed: () => Navigator.pop(context), child: const Text('Close')),
           ],
         ),
@@ -2291,6 +2350,45 @@ class _FilesPageState extends State<FilesPage> {
     } catch (e) {
       _showError(e);
     }
+  }
+
+  /// Asks the user to rotate the account key after a revoke that needs it.
+  ///
+  /// The server reports `key_rotation_required` because the revoked device can
+  /// still read everything sealed under the current epoch. Rotation is never
+  /// automatic: it needs the password and, with a stored kit, the recovery
+  /// code. Staying on the old key is reported honestly instead of pretended.
+  Future<void> _afterDeviceRevoked(DeviceRevokeResult result) async {
+    final rotate = widget.onRotateAccountKey;
+    if (!result.keyRotationRequired || rotate == null) return;
+    if (!mounted) return;
+    final rotated = await offerRotationAfterRevoke(
+      result,
+      confirm: () => confirmKeyRotation(context),
+      rotate: rotate,
+    );
+    if (!mounted) return;
+    _reportRotation(rotated);
+  }
+
+  /// Rotates the key on demand, e.g. when the prompt was declined earlier.
+  Future<void> _rotateKeyNow() async {
+    final rotate = widget.onRotateAccountKey;
+    if (rotate == null) return;
+    final rotated = await rotate();
+    if (!mounted) return;
+    _reportRotation(rotated);
+  }
+
+  void _reportRotation(bool rotated) {
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(
+        content: Text(rotated
+            ? 'Account key rotated. The revoked device cannot read new content.'
+            : 'The account key was not rotated, so a revoked device can still read '
+                'content stored before now. Rotate it from Devices when you are ready.'),
+      ),
+    );
   }
 
   @override

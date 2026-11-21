@@ -1367,8 +1367,11 @@ many files were already changed instead of claiming nothing happened.
    and the backend stores/publishes the rotated keyfile behind an epoch guard;
    a client SDK call performs the whole rotation. The native handle now keeps
    every retained epoch and the app adopts a newer published keyfile at unlock,
-   so pre-rotation revisions stay readable. Still to do: an in-app rotation
-   control, and recreating the recovery kit afterwards.
+   so pre-rotation revisions stay readable. Revoking a device now prompts for
+   the rotation in the app: the password re-wraps the keyfile, an account with a
+   stored kit also needs its recovery code, the publish carries the replacement
+   kit, and the live session adopts the rotated ring. Still to do: the installed
+   two-device acceptance run (needs two approved devices).
 4. **Windows packaging**: code signing, installer/updater, and a clean-VM test
    without SDKs. The FFI DLL must ship next to the executable. Hosted Windows
    native tests/builds are now blocking; installer/restart validation remains open.

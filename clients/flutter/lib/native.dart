@@ -78,6 +78,11 @@ Future<Map<String, dynamic>> _runBackfill(int handle, String request) =>
 Future<Map<String, dynamic>> _runCopy(int handle, String request) =>
     Isolate.run(() => NativeBridge.instance._copyFile(handle, request));
 
+// Rotation runs two KDF passes plus HTTP, so it stays off the UI isolate like
+// every other blocking bridge call. Only an owned JSON string crosses back.
+Future<Map<String, dynamic>> _runRotate(int handle, String request) =>
+    Isolate.run(() => NativeBridge.instance._rotateAccountKey(handle, request));
+
 Future<bool> _runLocalFileMatches(String request) =>
     Isolate.run(() => NativeBridge.instance._localFileMatches(request));
 
@@ -303,6 +308,25 @@ class NativeBridge {
   Map<String, dynamic> _copyFile(int handle, String request) {
     final f = _lib.lookupFunction<_BackfillNative, _BackfillDart>(
         'nntdrive_copy_file');
+    final input = _cstr(request);
+    try {
+      return _decode(f(handle, input));
+    } finally {
+      malloc.free(input);
+    }
+  }
+
+  /// Rotates the account key from the unlocked handle and publishes it.
+  ///
+  /// The rotated keyfile stays password-wrapped; only it, the new epoch and —
+  /// when a recovery kit was replaced — the new kit and one-time code come back.
+  Future<Map<String, dynamic>> rotateAccountKeyAsync(
+          int handle, Map<String, dynamic> request) =>
+      _operations.run(handle, () => _runRotate(handle, jsonEncode(request)));
+
+  Map<String, dynamic> _rotateAccountKey(int handle, String request) {
+    final f = _lib.lookupFunction<_BackfillNative, _BackfillDart>(
+        'nntdrive_rotate_account_key');
     final input = _cstr(request);
     try {
       return _decode(f(handle, input));

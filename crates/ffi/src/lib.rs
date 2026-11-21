@@ -726,6 +726,160 @@ pub extern "C" fn nntdrive_recovery_kit(handle: u64) -> *mut c_char {
     })
 }
 
+/// Rotates the account master key from an unlocked session and publishes it.
+///
+/// The request carries `baseUrl`, `token`, the password-wrapped `keyfile` this
+/// device holds, the unlock `password` and optionally the account's
+/// `recoveryCode` (plus a `note` for the replacement kit). The password must
+/// open the supplied keyfile, and that keyfile must be the one the live handle
+/// was unlocked with: rotation derives a new key-encrypting key from it, so a
+/// stale or foreign keyfile would publish a keyfile this account cannot open.
+///
+/// An account that stores a recovery kit cannot be rotated without its current
+/// recovery code, because the old kit cannot read post-rotation content. The
+/// first attempt therefore returns `{"status":"recovery_code_required"}` with
+/// the kit epoch; the caller asks the user for the code and retries. A
+/// successful rotation returns the new keyfile, the new epoch, and — when a kit
+/// was replaced — the new kit together with its one-time recovery code.
+///
+/// The live handle adopts the rotated ring, so the session keeps sealing with
+/// the new epoch while every retained epoch stays readable.
+///
+/// # Safety
+/// `request` is NUL-terminated UTF-8 JSON. Free the result exactly once with
+/// `nntdrive_string_free`. Blocking (two KDF runs plus HTTP): invoke from a
+/// worker isolate. Errors never carry key material or server diagnostics.
+#[no_mangle]
+pub unsafe extern "C" fn nntdrive_rotate_account_key(
+    handle: u64,
+    request: *const c_char,
+) -> *mut c_char {
+    guard(|| {
+        let ring = key(handle)?;
+        #[derive(serde::Deserialize)]
+        struct Request {
+            #[serde(rename = "baseUrl")]
+            base_url: String,
+            token: String,
+            keyfile: String,
+            password: String,
+            #[serde(rename = "recoveryCode", default)]
+            recovery_code: Option<String>,
+            #[serde(default)]
+            note: Option<String>,
+        }
+        let raw = arg(request)?;
+        if raw.len() > 65536 {
+            return Err("invalid rotation request".into());
+        }
+        let config: Request = serde_json::from_str(&raw).map_err(|_| "invalid rotation request")?;
+        let keyfile: KeyFile =
+            serde_json::from_str(&config.keyfile).map_err(|_| "invalid keyfile")?;
+        if keyfile.account_id != ring.account_id() {
+            return Err("keyfile belongs to a different account".into());
+        }
+        if keyfile.epoch != ring.epoch() {
+            return Err(
+                "the stored keyfile does not match this session; unlock again before rotating"
+                    .into(),
+            );
+        }
+        // Prove the password opens this keyfile before anything is published: a
+        // wrong password would otherwise seal the new epoch under a key the
+        // account can never derive again.
+        let master = keyfile.unlock(&config.password).map_err(|_| {
+            "the password does not open this keyfile; nothing was rotated".to_string()
+        })?;
+        if master.epoch() != ring.epoch() {
+            return Err("the stored keyfile does not match this session".into());
+        }
+        let mut api = ApiClient::new(config.base_url).map_err(|_| "invalid backend URL")?;
+        api.set_token(config.token);
+        let code = config
+            .recovery_code
+            .as_deref()
+            .map(str::trim)
+            .filter(|code| !code.is_empty());
+        let note = config.note.clone();
+        let outcome = runtime().block_on(async {
+            match code {
+                Some(code) => {
+                    let kit = api
+                        .recovery_kit()
+                        .await
+                        .map_err(|e| e.to_string())?
+                        .ok_or_else(|| "this account stores no recovery kit".to_string())?;
+                    let rotated = nntdrive_client::rotate_account_key_with_recovery_kit(
+                        &api,
+                        &keyfile,
+                        &master,
+                        &config.password,
+                        &kit,
+                        code,
+                        note.clone(),
+                    )
+                    .await
+                    .map_err(|e| e.to_string())?;
+                    Ok(json!({
+                        "status": "rotated",
+                        "keyfile": rotated.keyfile,
+                        "epoch": rotated.keyfile.epoch,
+                        "recovery_kit": rotated.recovery_kit,
+                        "recovery_code": rotated.recovery_code,
+                    }))
+                }
+                None => match nntdrive_client::rotate_account_key(
+                    &api,
+                    &keyfile,
+                    &master,
+                    &config.password,
+                )
+                .await
+                {
+                    Ok((rotated, _master)) => Ok(json!({
+                        "status": "rotated",
+                        "keyfile": rotated,
+                        "epoch": rotated.epoch,
+                    })),
+                    Err(nntdrive_client::ClientError::RecoveryKitRequired { kit_epoch }) => {
+                        Ok(json!({
+                            "status": "recovery_code_required",
+                            "kit_epoch": kit_epoch,
+                        }))
+                    }
+                    Err(_) => Err(
+                        "the account key was not rotated; another device may have rotated it, or the request did not reach the server"
+                            .to_string(),
+                    ),
+                },
+            }
+        })?;
+        // Adopt the rotated ring so this unlocked session seals with the new
+        // epoch and still reads every retained one. If the handle disappeared
+        // meanwhile (lock raced the rotation) the caller keeps the keyfile and
+        // is told to unlock again.
+        let mut adopted = false;
+        if let Some(keyfile_json) = outcome.get("keyfile") {
+            let rotated: KeyFile = serde_json::from_value(keyfile_json.clone())
+                .map_err(|_| "the rotated keyfile is unreadable".to_string())?;
+            let ring = rotated
+                .unlock_ring(&config.password)
+                .map_err(|_| "the rotated keyfile could not be opened".to_string())?;
+            if let Ok(mut map) = handles().lock() {
+                if let Some(slot) = map.get_mut(&handle) {
+                    *slot = Arc::new(ring);
+                    adopted = true;
+                }
+            }
+        }
+        let mut result = outcome;
+        if let Value::Object(ref mut map) = result {
+            map.insert("adopted".into(), Value::Bool(adopted));
+        }
+        Ok(result)
+    })
+}
+
 fn base64_key(bytes: &[u8]) -> String {
     base64_bytes(bytes)
 }
@@ -872,6 +1026,339 @@ mod tests {
         unsafe { nntdrive_string_free(locked) };
         let locked: Value = serde_json::from_str(&locked_text).unwrap();
         assert_eq!(locked["error"], "invalid or locked key handle");
+    }
+
+    /// Minimal blocking JSON API for rotation tests: one canned response per
+    /// (method, path) and a log of what the bridge actually sent. Requests are
+    /// answered on a background thread so the bridge runs exactly as it does in
+    /// the app (real reqwest call, no mocked SDK).
+    struct TestApi {
+        base_url: String,
+        requests: Arc<Mutex<Vec<(String, String, String)>>>,
+        stop: Arc<std::sync::atomic::AtomicBool>,
+        thread: Option<std::thread::JoinHandle<()>>,
+    }
+
+    impl TestApi {
+        fn start(routes: Vec<(&'static str, &'static str, Value)>) -> Self {
+            use std::io::{Read, Write};
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let base_url = format!("http://{}", listener.local_addr().unwrap());
+            let requests = Arc::new(Mutex::new(Vec::new()));
+            let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let log = requests.clone();
+            let halt = stop.clone();
+            let routes: Vec<(String, String, String)> = routes
+                .into_iter()
+                .map(|(method, path, body)| (method.into(), path.into(), body.to_string()))
+                .collect();
+            let thread = std::thread::spawn(move || loop {
+                if halt.load(Ordering::SeqCst) {
+                    break;
+                }
+                let (mut stream, _) = match listener.accept() {
+                    Ok(pair) => pair,
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(5));
+                        continue;
+                    }
+                    Err(_) => break,
+                };
+                stream
+                    .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                    .unwrap();
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 4096];
+                let mut parsed = None;
+                loop {
+                    let read = match stream.read(&mut chunk) {
+                        Ok(0) => break,
+                        Ok(n) => n,
+                        Err(_) => break,
+                    };
+                    buf.extend_from_slice(&chunk[..read]);
+                    if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let head = String::from_utf8_lossy(&buf[..pos]).to_string();
+                        let length = head
+                            .lines()
+                            .find_map(|line| {
+                                let lower = line.to_ascii_lowercase();
+                                lower
+                                    .strip_prefix("content-length:")
+                                    .map(|value| value.trim().parse::<usize>().unwrap_or(0))
+                            })
+                            .unwrap_or(0);
+                        while buf.len() < pos + 4 + length {
+                            match stream.read(&mut chunk) {
+                                Ok(0) | Err(_) => break,
+                                Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                            }
+                        }
+                        let body = String::from_utf8_lossy(&buf[pos + 4..]).to_string();
+                        let mut parts = head.lines().next().unwrap_or("").split_whitespace();
+                        parsed = Some((
+                            parts.next().unwrap_or("").to_string(),
+                            parts.next().unwrap_or("").to_string(),
+                            body,
+                        ));
+                        break;
+                    }
+                }
+                let Some((method, path, body)) = parsed else {
+                    continue;
+                };
+                log.lock()
+                    .unwrap()
+                    .push((method.clone(), path.clone(), body));
+                let reply = routes
+                    .iter()
+                    .find(|(m, p, _)| *m == method && *p == path)
+                    .map(|(_, _, body)| (200, body.clone()))
+                    .unwrap_or((404, "{\"message\":\"not found\"}".to_string()));
+                let response = format!(
+                    "HTTP/1.1 {} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    reply.0,
+                    reply.1.len(),
+                    reply.1
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            });
+            Self {
+                base_url,
+                requests,
+                stop,
+                thread: Some(thread),
+            }
+        }
+
+        fn sent(&self) -> Vec<(String, String, String)> {
+            self.requests.lock().unwrap().clone()
+        }
+    }
+
+    impl Drop for TestApi {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::SeqCst);
+            if let Some(thread) = self.thread.take() {
+                let _ = thread.join();
+            }
+        }
+    }
+
+    fn call(ptr: *mut c_char) -> Value {
+        let text = unsafe { CStr::from_ptr(ptr).to_str().unwrap().to_string() };
+        unsafe { nntdrive_string_free(ptr) };
+        serde_json::from_str(&text).unwrap()
+    }
+
+    fn unlock_handle(keyfile: &KeyFile, password: &str) -> u64 {
+        let keyfile = CString::new(serde_json::to_string(keyfile).unwrap()).unwrap();
+        let password = CString::new(password).unwrap();
+        let unlocked = call(unsafe { nntdrive_unlock(keyfile.as_ptr(), password.as_ptr()) });
+        assert_eq!(unlocked["ok"], true, "{unlocked}");
+        unlocked["handle"].as_u64().unwrap()
+    }
+
+    fn rotate_request(
+        handle: u64,
+        base_url: &str,
+        keyfile: &KeyFile,
+        password: &str,
+        code: Option<&str>,
+    ) -> Value {
+        let mut request = json!({
+            "baseUrl": base_url,
+            "token": "test-token-not-a-real-credential",
+            "keyfile": serde_json::to_string(keyfile).unwrap(),
+            "password": password,
+        });
+        if let Some(code) = code {
+            request["recoveryCode"] = json!(code);
+        }
+        let request = CString::new(request.to_string()).unwrap();
+        call(unsafe { nntdrive_rotate_account_key(handle, request.as_ptr()) })
+    }
+
+    #[test]
+    fn rotation_requires_the_recovery_code_and_keeps_the_live_session_readable() {
+        let password = "correct horse battery staple";
+        let (keyfile, master) = KeyFile::create(password, Uuid::new_v4()).unwrap();
+        let (kit, code) = RecoveryKit::create(&master, Some("test kit".into())).unwrap();
+        let node = Uuid::new_v4();
+        let old_name = master.seal_name(node, "before rotation.txt").unwrap();
+        let api = TestApi::start(vec![
+            (
+                "GET",
+                "/api/v1/account/keyfile",
+                json!({ "keyfile": keyfile, "recovery_kit": kit }),
+            ),
+            ("POST", "/api/v1/account/keyfile", json!({ "epoch": 1 })),
+        ]);
+        let handle = unlock_handle(&keyfile, password);
+
+        // An account that stores a kit cannot be rotated silently: the old kit
+        // would stop reading new content, so the bridge asks for the code first
+        // and publishes nothing.
+        let first = rotate_request(handle, &api.base_url, &keyfile, password, None);
+        assert_eq!(first["ok"], true, "{first}");
+        assert_eq!(first["status"], "recovery_code_required");
+        assert_eq!(first["kit_epoch"], 0);
+        assert_eq!(first["adopted"], false);
+        assert!(
+            !api.sent().iter().any(|(method, _, _)| method == "POST"),
+            "a rotation without the recovery code published a keyfile"
+        );
+
+        // A wrong code must not publish either.
+        let wrong = rotate_request(handle, &api.base_url, &keyfile, password, Some("wrong-kit"));
+        assert_eq!(wrong["ok"], false, "{wrong}");
+        assert!(
+            !api.sent().iter().any(|(method, _, _)| method == "POST"),
+            "a rotation with a wrong recovery code published a keyfile"
+        );
+
+        let rotated = rotate_request(handle, &api.base_url, &keyfile, password, Some(&code));
+        assert_eq!(rotated["ok"], true, "{rotated}");
+        assert_eq!(rotated["status"], "rotated");
+        assert_eq!(rotated["epoch"], 1);
+        assert_eq!(rotated["adopted"], true);
+        let new_code = rotated["recovery_code"].as_str().unwrap();
+        assert_ne!(new_code, code, "the rotation reused the old recovery code");
+        let published = rotated["keyfile"].clone();
+        assert_eq!(published["epoch"], 1);
+        assert_eq!(published["retained"].as_array().unwrap().len(), 1);
+        let posts: Vec<_> = api
+            .sent()
+            .into_iter()
+            .filter(|(method, _, _)| method == "POST")
+            .collect();
+        assert_eq!(posts.len(), 1, "expected exactly one publish");
+        let body: Value = serde_json::from_str(&posts[0].2).unwrap();
+        assert_eq!(body["expected_epoch"], 0);
+        assert_eq!(body["keyfile"]["epoch"], 1);
+        assert_eq!(
+            body["recovery_kit"]["epoch"], 1,
+            "the publish did not replace the stored recovery kit"
+        );
+
+        // The live handle adopted the rotated ring: the pre-rotation name still
+        // opens, while a name sealed now cannot be read by the old key alone.
+        let node_c = CString::new(node.to_string()).unwrap();
+        let old_b64 = CString::new(base64_bytes(&old_name.to_bytes())).unwrap();
+        let opened = call(unsafe { nntdrive_open_name(handle, node_c.as_ptr(), old_b64.as_ptr()) });
+        assert_eq!(opened["name"], "before rotation.txt");
+        let name_c = CString::new("after rotation.txt").unwrap();
+        let sealed = call(unsafe { nntdrive_seal_name(handle, node_c.as_ptr(), name_c.as_ptr()) });
+        let envelope =
+            Envelope::from_bytes(&decode_b64(sealed["name_enc"].as_str().unwrap()).unwrap())
+                .unwrap();
+        assert!(
+            master.open_name(node, &envelope).is_err(),
+            "the session sealed new content with the pre-rotation key"
+        );
+        let new_b64 = CString::new(sealed["name_enc"].as_str().unwrap()).unwrap();
+        let reopened =
+            call(unsafe { nntdrive_open_name(handle, node_c.as_ptr(), new_b64.as_ptr()) });
+        assert_eq!(reopened["name"], "after rotation.txt");
+        nntdrive_lock(handle);
+    }
+
+    #[test]
+    fn rotation_without_a_stored_kit_publishes_only_the_keyfile() {
+        let password = "correct horse battery staple";
+        let (keyfile, _master) = KeyFile::create(password, Uuid::new_v4()).unwrap();
+        let api = TestApi::start(vec![
+            (
+                "GET",
+                "/api/v1/account/keyfile",
+                json!({ "keyfile": keyfile, "recovery_kit": null }),
+            ),
+            ("POST", "/api/v1/account/keyfile", json!({ "epoch": 1 })),
+        ]);
+        let handle = unlock_handle(&keyfile, password);
+        let rotated = rotate_request(handle, &api.base_url, &keyfile, password, None);
+        assert_eq!(rotated["ok"], true, "{rotated}");
+        assert_eq!(rotated["status"], "rotated");
+        assert_eq!(rotated["epoch"], 1);
+        assert_eq!(rotated["adopted"], true);
+        assert!(rotated.get("recovery_code").is_none());
+        let posts: Vec<_> = api
+            .sent()
+            .into_iter()
+            .filter(|(method, _, _)| method == "POST")
+            .collect();
+        let body: Value = serde_json::from_str(&posts[0].2).unwrap();
+        assert!(body.get("recovery_kit").is_none());
+        nntdrive_lock(handle);
+    }
+
+    #[test]
+    fn rotation_refuses_a_wrong_password_before_publishing_anything() {
+        let password = "correct horse battery staple";
+        let (keyfile, _master) = KeyFile::create(password, Uuid::new_v4()).unwrap();
+        let api = TestApi::start(vec![
+            (
+                "GET",
+                "/api/v1/account/keyfile",
+                json!({ "keyfile": keyfile, "recovery_kit": null }),
+            ),
+            ("POST", "/api/v1/account/keyfile", json!({ "epoch": 1 })),
+        ]);
+        let handle = unlock_handle(&keyfile, password);
+        let refused = rotate_request(handle, &api.base_url, &keyfile, "wrong password", None);
+        assert_eq!(refused["ok"], false, "{refused}");
+        assert_eq!(
+            refused["error"],
+            "the password does not open this keyfile; nothing was rotated"
+        );
+        assert!(
+            api.sent().is_empty(),
+            "a wrong password still contacted the server"
+        );
+        let ring = key(handle).unwrap();
+        assert_eq!(ring.epoch(), 0);
+        nntdrive_lock(handle);
+    }
+
+    #[test]
+    fn rotation_refuses_stale_and_foreign_keyfiles() {
+        let password = "correct horse battery staple";
+        let account = Uuid::new_v4();
+        let (keyfile, master) = KeyFile::create(password, account).unwrap();
+        let api = TestApi::start(vec![
+            (
+                "GET",
+                "/api/v1/account/keyfile",
+                json!({ "keyfile": keyfile, "recovery_kit": null }),
+            ),
+            ("POST", "/api/v1/account/keyfile", json!({ "epoch": 1 })),
+        ]);
+        let handle = unlock_handle(&keyfile, password);
+        let (other_keyfile, _) = KeyFile::create(password, Uuid::new_v4()).unwrap();
+        let foreign = rotate_request(handle, &api.base_url, &other_keyfile, password, None);
+        assert_eq!(foreign["ok"], false, "{foreign}");
+        assert_eq!(foreign["error"], "keyfile belongs to a different account");
+
+        // Move the live session to epoch 1, then offer the old epoch-0 keyfile.
+        let (rotated_keyfile, _) = keyfile.rotate(&master, password).unwrap();
+        let keyfile_json = CString::new(serde_json::to_string(&rotated_keyfile).unwrap()).unwrap();
+        let password_c = CString::new(password).unwrap();
+        let unlocked = call(unsafe { nntdrive_unlock(keyfile_json.as_ptr(), password_c.as_ptr()) });
+        let rotated_handle = unlocked["handle"].as_u64().unwrap();
+        let stale = rotate_request(rotated_handle, &api.base_url, &keyfile, password, None);
+        assert_eq!(stale["ok"], false, "{stale}");
+        assert_eq!(
+            stale["error"],
+            "the stored keyfile does not match this session; unlock again before rotating"
+        );
+        assert!(
+            !api.sent().iter().any(|(method, _, _)| method == "POST"),
+            "a refused rotation published a keyfile"
+        );
+        nntdrive_lock(handle);
+        nntdrive_lock(rotated_handle);
     }
 
     #[test]
