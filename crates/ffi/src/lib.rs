@@ -89,6 +89,16 @@ fn guard(f: impl FnOnce() -> Result<Value, String>) -> *mut c_char {
     }
 }
 
+/// One live scan batch. Relative local paths only: nothing here is sent to the
+/// backend, and the client keeps at most a small prefix of it.
+fn scan_event(paths: &[nntdrive_sync::ScannedPath]) -> String {
+    let items: Vec<Value> = paths
+        .iter()
+        .map(|scanned| json!({"path":scanned.path,"is_dir":scanned.is_dir}))
+        .collect();
+    json!({"phase":"scan","items":items}).to_string()
+}
+
 /// Frees a string returned by any `nntdrive_*` function.
 ///
 /// # Safety
@@ -605,6 +615,16 @@ pub unsafe extern "C" fn nntdrive_sync_request(
                 .map_err(|e| e.to_string())?;
         let engine = nntdrive_sync::SyncEngine::new(text("deviceName")?)
             .with_exclusions(excluded)
+            .with_scan_observer(std::sync::Arc::new(move |paths| {
+                if let Some(cb) = callback {
+                    // Bounded batches of local paths the scan examined, for a
+                    // live "scanning" view before any plan exists. Relative
+                    // local paths only; nothing is sent to the backend.
+                    cb(CString::new(scan_event(paths))
+                        .expect("JSON contains no NUL")
+                        .into_raw());
+                }
+            }))
             .with_plan_observer(std::sync::Arc::new(move |items, total| {
                 if let Some(cb) = callback {
                     // Bounded batches only: the engine never sends more than
@@ -1513,5 +1533,35 @@ mod tests {
         assert_eq!(inspect(revision)["ok"], false);
         assert!(key(handle).is_err());
         assert_sync_rejects_locked_handle(handle);
+    }
+
+    #[test]
+    fn scan_event_names_relative_paths_and_directory_flags_only() {
+        let paths = vec![
+            nntdrive_sync::ScannedPath {
+                path: "notes".into(),
+                is_dir: true,
+            },
+            nntdrive_sync::ScannedPath {
+                path: "notes/todo.txt".into(),
+                is_dir: false,
+            },
+        ];
+        let value: Value = serde_json::from_str(&scan_event(&paths)).unwrap();
+        assert_eq!(value["phase"], "scan");
+        assert_eq!(
+            value["items"],
+            json!([
+                {"path": "notes", "is_dir": true},
+                {"path": "notes/todo.txt", "is_dir": false},
+            ])
+        );
+        let empty: Value = serde_json::from_str(&scan_event(&[])).unwrap();
+        assert_eq!(empty["phase"], "scan");
+        assert_eq!(
+            empty["items"],
+            json!([]),
+            "an empty batch stays a valid event"
+        );
     }
 }

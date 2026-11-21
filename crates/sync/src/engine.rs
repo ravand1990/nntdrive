@@ -91,12 +91,24 @@ pub type PlanObserver = std::sync::Arc<dyn Fn(&[InspectItem], usize) + Send + Sy
 const PLAN_BATCH: usize = 256;
 const PLAN_LIMIT: usize = 4096;
 
+/// Client-local notification of local paths as the scan examines them.
+///
+/// Batches arrive in walk order before reconciliation, so a client can list
+/// what the device is looking at instead of one opaque "sync is running" row.
+/// The engine forwards at most [`SCAN_NOTIFY_LIMIT`] paths per run; the scan
+/// itself still covers the whole tree.
+pub type ScanObserver = scanner::ScanObserver;
+
+/// Bound on how many scanned paths are forwarded to a [`ScanObserver`] per run.
+const SCAN_NOTIFY_LIMIT: usize = 4096;
+
 pub struct SyncEngine {
     pub device_name: String,
     pub scan_options: ScanOptions,
     /// Relative paths excluded from syncing (selective sync).
     pub excluded_paths: Vec<String>,
     plan_observer: Option<PlanObserver>,
+    scan_observer: Option<ScanObserver>,
 }
 
 /// One planned difference between this device and the account. `kind` is a
@@ -291,6 +303,7 @@ impl SyncEngine {
             scan_options: ScanOptions::default(),
             excluded_paths: Vec::new(),
             plan_observer: None,
+            scan_observer: None,
         }
     }
 
@@ -304,6 +317,14 @@ impl SyncEngine {
     /// changes what the run does.
     pub fn with_plan_observer(mut self, observer: PlanObserver) -> Self {
         self.plan_observer = Some(observer);
+        self
+    }
+
+    /// Report the bounded batches of local paths the scan examines. Callers use
+    /// this for a live "scanning" view before any plan exists; it never changes
+    /// what the scan or the run does.
+    pub fn with_scan_observer(mut self, observer: ScanObserver) -> Self {
+        self.scan_observer = Some(observer);
         self
     }
 
@@ -419,10 +440,29 @@ impl SyncEngine {
         let scan_root = root.clone();
         let mut opts = self.scan_options.clone();
         opts.excluded_paths = self.excluded_paths.clone();
-        let mut scan =
-            tokio::task::spawn_blocking(move || scanner::scan(&scan_root, &opts, &previous))
-                .await
-                .map_err(|e| SyncError::Remote(format!("scan task failed: {e}")))??;
+        // The scan can examine far more paths than a client view needs, so the
+        // observer is capped per run while the scan itself stays complete.
+        let scan_observer = self.scan_observer.clone().map(|observer| {
+            let reported = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+            let limited: ScanObserver = std::sync::Arc::new(move |paths| {
+                let before = reported.fetch_add(paths.len(), std::sync::atomic::Ordering::Relaxed);
+                if before >= SCAN_NOTIFY_LIMIT {
+                    return;
+                }
+                let room = SCAN_NOTIFY_LIMIT - before;
+                if paths.len() <= room {
+                    observer(paths);
+                } else {
+                    observer(&paths[..room]);
+                }
+            });
+            limited
+        });
+        let mut scan = tokio::task::spawn_blocking(move || {
+            scanner::scan_with_observer(&scan_root, &opts, &previous, scan_observer.as_ref())
+        })
+        .await
+        .map_err(|e| SyncError::Remote(format!("scan task failed: {e}")))??;
 
         let remote_entries = remote.snapshot().await?;
         let mut remote_entries: Vec<_> = remote_entries
@@ -2474,5 +2514,121 @@ mod tests {
         assert_eq!(calls.len(), 1);
         assert!(calls[0].0.is_empty());
         assert_eq!(calls[0].1, 0);
+    }
+
+    type ScanCalls = Arc<std::sync::Mutex<Vec<Vec<scanner::ScannedPath>>>>;
+
+    #[tokio::test]
+    async fn scan_observer_reports_local_paths_before_the_plan() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Journal::in_memory().await.unwrap();
+        std::fs::create_dir(dir.path().join("nested")).unwrap();
+        std::fs::write(dir.path().join("a.txt"), b"a").unwrap();
+        std::fs::write(dir.path().join("nested/b.txt"), b"b").unwrap();
+
+        let order: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+        let scan_log = order.clone();
+        let plan_log = order.clone();
+        let engine = SyncEngine::new("device")
+            .with_scan_observer(Arc::new(move |paths: &[scanner::ScannedPath]| {
+                let mut log = scan_log.lock().unwrap();
+                for path in paths {
+                    log.push(format!("scan:{}:{}", path.path, path.is_dir));
+                }
+            }))
+            .with_plan_observer(Arc::new(move |items, _| {
+                let mut log = plan_log.lock().unwrap();
+                for item in items {
+                    log.push(format!("plan:{}", item.path));
+                }
+            }));
+        let mut remote = FakeRemote::default();
+        run(&engine, &mut remote, dir.path(), &journal).await;
+
+        let log = order.lock().unwrap().clone();
+        let first_plan = log
+            .iter()
+            .position(|entry| entry.starts_with("plan:"))
+            .expect("the run reports its plan");
+        let scanned = &log[..first_plan];
+        assert!(
+            scanned.iter().all(|entry| entry.starts_with("scan:")),
+            "every scan batch precedes the plan: {scanned:?}"
+        );
+        for expected in [
+            "scan:a.txt:false",
+            "scan:nested:true",
+            "scan:nested/b.txt:false",
+        ] {
+            assert!(scanned.iter().any(|entry| entry == expected), "{expected}");
+        }
+        let queued: Vec<String> = log[first_plan..].to_vec();
+        for expected in ["plan:a.txt", "plan:nested/b.txt"] {
+            assert!(queued.iter().any(|entry| entry == expected), "{expected}");
+        }
+        assert_eq!(remote.0.lock().await.uploads, 2);
+    }
+
+    #[tokio::test]
+    async fn scan_observer_caps_reported_paths_without_stopping_the_scan() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Journal::in_memory().await.unwrap();
+        let total = SCAN_NOTIFY_LIMIT + 100;
+        for index in 0..total {
+            std::fs::write(dir.path().join(format!("{index}.txt")), b"x").unwrap();
+        }
+        let mut remote = FakeRemote::default();
+        // Stop after the scan: the cap is a notification bound, so the failing
+        // snapshot keeps the test focused and fast.
+        remote.0.lock().await.fail_snapshot = true;
+        let calls: ScanCalls = Arc::default();
+        let sink = calls.clone();
+        let engine = SyncEngine::new("device").with_scan_observer(Arc::new(move |paths| {
+            sink.lock().unwrap().push(paths.to_vec());
+        }));
+        let error = engine
+            .run_once(&mut remote, dir.path(), &journal, "t")
+            .await
+            .expect_err("the snapshot failure ends the run");
+        assert!(matches!(error, SyncError::Remote(_)));
+
+        let batches = calls.lock().unwrap().clone();
+        assert!(batches
+            .iter()
+            .all(|batch| batch.len() <= scanner::SCAN_PROGRESS_BATCH));
+        let reported: Vec<String> = batches
+            .iter()
+            .flat_map(|batch| batch.iter().map(|entry| entry.path.clone()))
+            .collect();
+        assert_eq!(reported.len(), SCAN_NOTIFY_LIMIT);
+        let unique: std::collections::HashSet<&String> = reported.iter().collect();
+        assert_eq!(unique.len(), SCAN_NOTIFY_LIMIT, "no repeated paths");
+    }
+
+    #[tokio::test]
+    async fn scan_observer_never_reports_excluded_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Journal::in_memory().await.unwrap();
+        std::fs::create_dir(dir.path().join("private")).unwrap();
+        std::fs::write(dir.path().join("private/secret.txt"), b"s").unwrap();
+        std::fs::write(dir.path().join("shared.txt"), b"x").unwrap();
+        let mut remote = FakeRemote::default();
+        let calls: ScanCalls = Arc::default();
+        let sink = calls.clone();
+        let engine = SyncEngine::new("device")
+            .with_exclusions(vec!["private".into()])
+            .with_scan_observer(Arc::new(move |paths| {
+                sink.lock().unwrap().push(paths.to_vec());
+            }));
+        run(&engine, &mut remote, dir.path(), &journal).await;
+
+        let reported: Vec<String> = calls
+            .lock()
+            .unwrap()
+            .iter()
+            .flat_map(|batch| batch.iter().map(|entry| entry.path.clone()))
+            .collect();
+        assert_eq!(reported, vec!["shared.txt".to_string()]);
+        assert_eq!(remote.0.lock().await.uploads, 1);
     }
 }

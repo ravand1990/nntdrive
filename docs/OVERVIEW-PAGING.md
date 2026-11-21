@@ -110,11 +110,16 @@ path (Conflicts keep the Conflict status), with the current phase in the reason
 ("Uploading this file.", "Waiting to download this file.", ...). A capped plan
 sets the existing truncation flag and states how many queued items are shown.
 
-The scan and remote-snapshot phases that precede reconciliation have no
-per-path events, so a folder still shows the single "Sync is running." root row
-with a notice until its plan arrives. The plan is client-local and never leaves
-the device; installed responsiveness and TalkBack acceptance remain unverified
-under #65.
+The scan that precedes reconciliation also reports progress: `SyncEngine` walks
+the tree through a bounded `ScanObserver` (batches of at most 64 examined paths,
+at most 4096 paths forwarded per run, each with `path` and `is_dir`), and
+`nntdrive_sync_request` emits `{"phase":"scan","items":[...]}`. The client keeps
+the first 256 entries, still counts every reported path, and lists them as
+Pending rows with the reason "Scanning this folder."; queued plan rows replace
+them as soon as the plan arrives. The remote-snapshot step after the scan has no
+per-path events, so a folder there still shows the single "Sync is running." root
+row with a notice. Scan batches are client-local and never leave the device;
+installed responsiveness and TalkBack acceptance remain unverified under #65.
 
 ## Verification
 

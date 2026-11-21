@@ -332,7 +332,8 @@ class OverviewFolderInput {
       this.storageAccessRequired, this.excluded, this.lastReport,
       {this.running = false, this.progressPath, this.progressDirection,
       this.progressComplete, this.errorReasons,
-      this.activePlan = const [], this.planTotal, this.activeTransfers = const []});
+      this.activePlan = const [], this.planTotal, this.activeTransfers = const [],
+      this.scanEntries = const [], this.scanTotal = 0});
 
   final String id;
   final String name;
@@ -355,6 +356,12 @@ class OverviewFolderInput {
 
   /// Relative paths with a transfer in progress right now.
   final List<String> activeTransfers;
+
+  /// Bounded local paths the running scan already examined (`path`, `is_dir`).
+  final List<Map<String, dynamic>> scanEntries;
+
+  /// Number of scanned paths the engine reported, including unretained ones.
+  final int scanTotal;
 }
 
 /// Copies only the scalar plan fields the mapper consumes. Paths are already
@@ -372,13 +379,29 @@ List<Map<String, dynamic>> _freezeActivePlan(List<Map<String, dynamic>> plan) =>
           },
     ]);
 
-// The native callback emits path/direction/bytes/total/complete, not scan phases.
-// Only consumed scalar fields are read; never enumerate callback diagnostics.
+// Copies only the scalar scanned-path fields the mapper consumes: relative
+// local paths and their directory flag, never absolute paths or diagnostics.
+List<Map<String, dynamic>> _freezeScanEntries(
+        List<Map<String, dynamic>> entries) =>
+    List<Map<String, dynamic>>.unmodifiable([
+      for (final entry in entries)
+        if (entry['path'] is String && (entry['path'] as String).isNotEmpty)
+          <String, dynamic>{
+            'path': entry['path'],
+            'is_dir': entry['is_dir'] == true,
+          },
+    ]);
+
+// The native callback emits scan batches (phase "scan"), plan batches (phase
+// "plan") and path/direction/bytes/total/complete transfer events. Only consumed
+// scalar fields are read; never enumerate callback diagnostics.
 OverviewFolderInput _withActiveProgress(
     OverviewFolderInput folder, Map<String, dynamic>? progress,
     {List<Map<String, dynamic>> activePlan = const [],
     int? planTotal,
-    List<String> activeTransfers = const []}) {
+    List<String> activeTransfers = const [],
+    List<Map<String, dynamic>> scanEntries = const [],
+    int scanTotal = 0}) {
   final path = progress?['path'];
   final direction = progress?['direction'];
   final complete = progress?['complete'];
@@ -388,7 +411,8 @@ OverviewFolderInput _withActiveProgress(
       progressDirection: direction is String ? direction : null,
       progressComplete: complete is bool ? complete : null,
       activePlan: activePlan, planTotal: planTotal,
-      activeTransfers: activeTransfers);
+      activeTransfers: activeTransfers, scanEntries: scanEntries,
+      scanTotal: scanTotal);
 }
 
 /// Live recheck of a folder that started syncing after the initial freeze.
@@ -397,7 +421,9 @@ OverviewFolderInput _liveActiveProgress(
     _withActiveProgress(folder, source.progress,
         activePlan: _freezeActivePlan(source.activePlan),
         planTotal: source.activePlanTotal,
-        activeTransfers: List<String>.unmodifiable(source.activeTransferPaths));
+        activeTransfers: List<String>.unmodifiable(source.activeTransferPaths),
+        scanEntries: _freezeScanEntries(source.activeScanEntries),
+        scanTotal: source.activeScanTotal);
 
 // Freeze only fields consumed by mapping. Recursively copying whole error
 // records would traverse unused diagnostic payloads on the UI isolate and
@@ -433,7 +459,9 @@ OverviewFolderInput _freezeOverviewFolder(SyncFolderConfig folder) {
       ? _withActiveProgress(input, folder.progress,
           activePlan: _freezeActivePlan(folder.activePlan),
           planTotal: folder.activePlanTotal,
-          activeTransfers: List<String>.unmodifiable(folder.activeTransferPaths))
+          activeTransfers: List<String>.unmodifiable(folder.activeTransferPaths),
+          scanEntries: _freezeScanEntries(folder.activeScanEntries),
+          scanTotal: folder.activeScanTotal)
       : input;
 }
 
@@ -509,6 +537,38 @@ OverviewFolderMapping _mapUnsyncedFolder(
           'The rest appear when sync finishes and the list refreshes.',
         ));
       }
+      return _mappedFolder(folder, entries, notices, truncated);
+    }
+    if (folder.scanEntries.isNotEmpty) {
+      // Scan phase: name the local paths already examined instead of one opaque
+      // root row. Nothing is reconciled yet, so every row stays Pending.
+      final scanned = List<Map<String, dynamic>>.of(folder.scanEntries)
+        ..sort((a, b) => (a['path'] as String).compareTo(b['path'] as String));
+      for (final item in scanned) {
+        if (entries.length >= maxEntries) {
+          truncated = true;
+          break;
+        }
+        entries.add(UnsyncedEntry(
+          status: UnsyncedStatus.pending,
+          folderId: folder.id,
+          folderName: folder.name,
+          path: item['path'] as String,
+          isDirectory: item['is_dir'] == true,
+          retryable: false,
+          reason: 'Scanning this folder.',
+        ));
+      }
+      final reported =
+          folder.scanTotal > folder.scanEntries.length ? folder.scanTotal : folder.scanEntries.length;
+      if (reported > entries.length) truncated = true;
+      notices.add(UnsyncedNotice(
+          folder.name,
+          truncated
+              ? 'Showing ${entries.length} of $reported local paths examined. '
+                  'Queued items appear as soon as the plan is ready.'
+              : 'Scanning this folder. Queued items appear as soon as the plan '
+                  'is ready.'));
       return _mappedFolder(folder, entries, notices, truncated);
     }
     final direction = folder.progressDirection;

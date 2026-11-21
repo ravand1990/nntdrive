@@ -102,9 +102,13 @@ A running folder now lists its queued work instead of one summary row: before
 the first action the engine reports its complete reconciliation plan in bounded
 batches (256 items per event, at most 4096 items, each with the complete total),
 and the client lists one non-retryable Pending row per queued path with its
-phase as the reason. The preceding scan/snapshot phases still show the single
-"Sync is running." root row, and installed performance/permissions/TalkBack
-acceptance remain unverified under #65.
+phase as the reason. The scan before it reports examined local paths and
+directory flags in bounded batches (64 per event, at most 4096 per run); the
+client keeps the first 256, counts the rest, and lists them as Pending
+"Scanning this folder." rows until the plan replaces them. The remote-snapshot
+step has no per-path events and still shows the single "Sync is running." root
+row, and installed performance/permissions/TalkBack acceptance remain
+unverified under #65.
 
 This is bounded **result loading**, not incremental filesystem scanning or a
 measured/installed speedup. Native comparison, required report freezing/indexing,
