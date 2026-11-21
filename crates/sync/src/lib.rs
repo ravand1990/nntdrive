@@ -14,12 +14,15 @@ pub mod reconcile;
 pub mod scanner;
 
 pub use engine::{
-    FilesystemBlock, InspectItem, PlanObserver, Remote, SyncEngine, SyncError, SyncInspection,
-    SyncReport, INSPECT_ITEM_LIMIT,
+    FilesystemBlock, InspectItem, PlanObserver, Remote, ScanObserver, SyncEngine, SyncError,
+    SyncInspection, SyncReport, INSPECT_ITEM_LIMIT,
 };
 pub use journal::{Journal, JournalError, JournalSnapshot};
 pub use reconcile::{
     conflict_copy_name, detect_local, detect_remote, reconcile, Action, BaselineEntry, LocalChange,
     RemoteChange, RemoteEntry,
 };
-pub use scanner::{scan, ScanOptions, ScanResult, ScannedEntry};
+pub use scanner::{
+    scan, scan_with_observer, ScanOptions, ScanResult, ScannedEntry, ScannedPath,
+    SCAN_PROGRESS_BATCH,
+};

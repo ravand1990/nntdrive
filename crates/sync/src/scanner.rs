@@ -82,11 +82,80 @@ pub fn is_ignored_name(name: &str, opts: &ScanOptions) -> bool {
         .any(|s| lower.ends_with(&s.to_ascii_lowercase()))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScannedPath {
+    pub path: String,
+    pub is_dir: bool,
+}
+
+/// Client-local notification of paths as a scan walks them.
+///
+/// Each call carries one bounded batch of the relative paths the scan has just
+/// examined, in walk order. The callback must not block and receives only
+/// relative paths the client already owns; the batch shape keeps a large tree
+/// from producing one callback per entry.
+pub type ScanObserver = std::sync::Arc<dyn Fn(&[ScannedPath]) + Send + Sync>;
+
+/// Maximum number of paths in one [`ScanObserver`] batch.
+pub const SCAN_PROGRESS_BATCH: usize = 64;
+
+/// Accumulates scanned paths into bounded observer batches.
+struct ScanProgress<'a> {
+    observer: Option<&'a ScanObserver>,
+    batch: Vec<ScannedPath>,
+}
+
+impl<'a> ScanProgress<'a> {
+    fn new(observer: Option<&'a ScanObserver>) -> Self {
+        Self {
+            observer,
+            batch: Vec::new(),
+        }
+    }
+
+    fn note(&mut self, path: &str, is_dir: bool) {
+        if self.observer.is_none() {
+            return;
+        }
+        self.batch.push(ScannedPath {
+            path: path.to_string(),
+            is_dir,
+        });
+        if self.batch.len() >= SCAN_PROGRESS_BATCH {
+            self.flush();
+        }
+    }
+
+    fn flush(&mut self) {
+        let Some(observer) = self.observer else {
+            return;
+        };
+        if self.batch.is_empty() {
+            return;
+        }
+        let batch = std::mem::take(&mut self.batch);
+        observer(&batch);
+    }
+}
+
 /// Scans `root`. Blocking; call from `spawn_blocking` in async contexts.
 pub fn scan(
     root: &Path,
     opts: &ScanOptions,
     previous: &HashMap<String, ScannedEntry>,
+) -> std::io::Result<ScanResult> {
+    scan_with_observer(root, opts, previous, None)
+}
+
+/// Scans `root` and reports examined paths through `observer` in bounded
+/// batches. A failed scan may have reported earlier paths; callers treat the
+/// error as the authoritative outcome and must not present partial batches as a
+/// complete scan.
+pub fn scan_with_observer(
+    root: &Path,
+    opts: &ScanOptions,
+    previous: &HashMap<String, ScannedEntry>,
+    observer: Option<&ScanObserver>,
 ) -> std::io::Result<ScanResult> {
     let mut result = ScanResult::default();
     if !fs::metadata(root)?.is_dir() {
@@ -96,7 +165,17 @@ pub fn scan(
         ));
     }
     let mut seen_case: HashMap<String, String> = HashMap::new();
-    walk(root, root, opts, previous, &mut result, &mut seen_case)?;
+    let mut progress = ScanProgress::new(observer);
+    walk(
+        root,
+        root,
+        opts,
+        previous,
+        &mut result,
+        &mut seen_case,
+        &mut progress,
+    )?;
+    progress.flush();
     result.entries.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(result)
 }
@@ -108,6 +187,7 @@ fn walk(
     previous: &HashMap<String, ScannedEntry>,
     out: &mut ScanResult,
     seen_case: &mut HashMap<String, String>,
+    progress: &mut ScanProgress<'_>,
 ) -> std::io::Result<()> {
     // An incomplete scan is not a local deletion. Abort the entire round on
     // I/O failures; `skipped` is reserved for deliberate policy decisions.
@@ -145,6 +225,7 @@ fn walk(
             }
         }
         if meta.is_dir() {
+            progress.note(&rel, true);
             out.entries.push(ScannedEntry {
                 path: rel.clone(),
                 is_dir: true,
@@ -153,7 +234,7 @@ fn walk(
                 content_hash: None,
                 read_only: meta.permissions().readonly(),
             });
-            walk(root, &path, opts, previous, out, seen_case)?;
+            walk(root, &path, opts, previous, out, seen_case, progress)?;
         } else if meta.is_file() {
             let size = meta.len();
             let mtime_ms = meta
@@ -175,6 +256,7 @@ fn walk(
                 }
                 _ => Some(hash_file(&path)?),
             };
+            progress.note(&rel, false);
             out.entries.push(ScannedEntry {
                 path: rel,
                 is_dir: false,
@@ -264,6 +346,93 @@ pub fn validate_relative_path(path: &str) -> Result<PathBuf, &'static str> {
 mod tests {
     use super::*;
 
+    type Batches = std::sync::Arc<std::sync::Mutex<Vec<Vec<ScannedPath>>>>;
+
+    fn collect(root: &Path, opts: &ScanOptions) -> (ScanResult, Batches) {
+        let batches: Batches = std::sync::Arc::default();
+        let sink = batches.clone();
+        let observer: ScanObserver = std::sync::Arc::new(move |paths| {
+            sink.lock().unwrap().push(paths.to_vec());
+        });
+        let scanned = scan_with_observer(root, opts, &HashMap::new(), Some(&observer)).unwrap();
+        (scanned, batches)
+    }
+
+    #[test]
+    fn observer_reports_every_examined_path_in_bounded_batches() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("nested")).unwrap();
+        for index in 0..(SCAN_PROGRESS_BATCH + 5) {
+            fs::write(dir.path().join(format!("{index}.txt")), b"x").unwrap();
+        }
+        fs::write(dir.path().join("nested/inside.txt"), b"y").unwrap();
+
+        let (scanned, batches) = collect(dir.path(), &ScanOptions::default());
+        let batches = batches.lock().unwrap().clone();
+        assert!(batches
+            .iter()
+            .all(|batch| batch.len() <= SCAN_PROGRESS_BATCH));
+
+        let mut reported: Vec<String> = batches
+            .iter()
+            .flat_map(|batch| batch.iter().map(|entry| entry.path.clone()))
+            .collect();
+        let mut expected: Vec<String> = scanned
+            .entries
+            .iter()
+            .map(|entry| entry.path.clone())
+            .collect();
+        reported.sort();
+        expected.sort();
+        assert_eq!(reported, expected);
+        assert!(
+            reported.len() > SCAN_PROGRESS_BATCH,
+            "the tree spans more than one batch: {}",
+            reported.len()
+        );
+
+        let dirs: Vec<(String, bool)> = batches
+            .iter()
+            .flat_map(|batch| batch.iter())
+            .filter(|entry| entry.is_dir)
+            .map(|entry| (entry.path.clone(), entry.is_dir))
+            .collect();
+        assert_eq!(dirs, vec![("nested".to_string(), true)]);
+    }
+
+    #[test]
+    fn observer_never_reports_ignored_or_excluded_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("kept.txt"), b"x").unwrap();
+        fs::write(dir.path().join("skip.tmp"), b"x").unwrap();
+        fs::write(dir.path().join(".hidden"), b"x").unwrap();
+        fs::create_dir(dir.path().join("private")).unwrap();
+        fs::write(dir.path().join("private/inside.txt"), b"x").unwrap();
+
+        let opts = ScanOptions {
+            excluded_paths: vec!["private".into()],
+            ..ScanOptions::default()
+        };
+        let (scanned, batches) = collect(dir.path(), &opts);
+        let reported: Vec<String> = batches
+            .lock()
+            .unwrap()
+            .iter()
+            .flat_map(|batch| batch.iter().map(|entry| entry.path.clone()))
+            .collect();
+        assert_eq!(reported, vec!["kept.txt".to_string()]);
+        assert!(scanned.skipped.is_empty());
+    }
+
+    #[test]
+    fn scan_without_observer_still_scans() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("plain.txt"), b"x").unwrap();
+        let scanned =
+            scan_with_observer(dir.path(), &ScanOptions::default(), &HashMap::new(), None).unwrap();
+        assert_eq!(scanned.entries.len(), 1);
+    }
+
     // Exercise read_dir failure without chmod: this remains deterministic even
     // for root and models a directory replaced between metadata and traversal.
     #[test]
@@ -273,6 +442,7 @@ mod tests {
         fs::write(&file, b"not a directory").unwrap();
         for root in [file.as_path(), dir.path()] {
             let mut result = ScanResult::default();
+            let mut progress = ScanProgress::new(None);
             let error = walk(
                 root,
                 &file,
@@ -280,6 +450,7 @@ mod tests {
                 &HashMap::new(),
                 &mut result,
                 &mut HashMap::new(),
+                &mut progress,
             )
             .expect_err("an incomplete directory listing must abort the scan");
             assert_eq!(error.kind(), std::io::ErrorKind::NotADirectory);

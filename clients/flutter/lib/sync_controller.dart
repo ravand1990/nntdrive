@@ -120,6 +120,15 @@ class SyncFolderConfig {
   /// Relative paths with a transfer in progress right now. Cleared per run.
   Set<String> activeTransferPaths = {};
 
+  /// Bounded, device-local view of the local paths the running scan has already
+  /// examined: one entry per path with `path` and `is_dir`. Only relative
+  /// paths, never absolute ones; cleared at the start and end of every run.
+  List<Map<String, dynamic>> activeScanEntries = [];
+
+  /// Number of scanned paths the engine reported for this run, including paths
+  /// beyond the retained bound. Zero until the scan reports its first batch.
+  int activeScanTotal = 0;
+
   /// File transfers the native sync reported as completed during the latest
   /// run, bounded and device-local. Only relative paths the client already
   /// owns; cleared when the next run starts, never persisted or sent.
@@ -885,6 +894,10 @@ class SyncController extends ChangeNotifier {
   /// producer from growing client memory.
   static const int activePlanLimit = 1024;
 
+  /// Upper bound on scanned paths retained for the live overview. The engine
+  /// caps what it reports; the count still reflects every reported path.
+  static const int activeScanLimit = 256;
+
   /// Upper bound on completed transfers retained per run. The activity feed
   /// names at most a small prefix of these and summarises the remainder, so a
   /// misbehaving producer cannot grow client memory or the local log.
@@ -894,6 +907,8 @@ class SyncController extends ChangeNotifier {
     folder.activePlan = [];
     folder.activePlanTotal = null;
     folder.activeTransferPaths = {};
+    folder.activeScanEntries = [];
+    folder.activeScanTotal = 0;
   }
 
   /// Keeps one bounded record per completed file transfer of this run.
@@ -920,11 +935,34 @@ class SyncController extends ChangeNotifier {
         .add(SyncTransfer(path: path, direction: direction, size: size));
   }
 
-  /// Consumes one native progress event. Plan batches carry the complete set of
-  /// queued paths; transfer events only mark which of them is moving now.
+  /// Consumes one native progress event. Scan batches name the local paths the
+  /// walk already examined, plan batches carry the complete set of queued paths,
+  /// and transfer events only mark which of them is moving now.
   void _onSyncProgress(SyncFolderConfig folder, Map<String, dynamic> event) {
+    final phase = event['phase'];
+    if (phase == 'scan') {
+      // A scan batch is not a transfer: keep `progress` for the transfer row it
+      // belongs to and store the bounded scan view separately.
+      final items = event['items'];
+      if (items is List) {
+        for (final item in items) {
+          if (item is! Map) continue;
+          final path = item['path'];
+          if (path is! String || path.isEmpty) continue;
+          folder.activeScanTotal += 1;
+          if (folder.activeScanEntries.length >= activeScanLimit) continue;
+          folder.activeScanEntries.add(<String, dynamic>{
+            'path': path,
+            'is_dir': item['is_dir'] == true,
+          });
+        }
+      }
+      // One notification per bounded batch, like plan batches.
+      notifyListeners();
+      return;
+    }
     folder.progress = event;
-    if (event['phase'] == 'plan') {
+    if (phase == 'plan') {
       final total = event['total'];
       if (total is int && total >= 0) folder.activePlanTotal = total;
       final items = event['items'];
