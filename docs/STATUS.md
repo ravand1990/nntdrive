@@ -175,7 +175,10 @@ are produced. An unreadable descendant blocks its whole tree, not an invented
 per-file count. Network/journal comparison failures, a first-ever folder without
 a completed sync, and pending folder moves remain notices, not filesystem
 blocks or in-sync claims. Successful empty comparisons state that nothing is
-waiting to sync. Retryable item rows offer a folder sync; blocked storage offers
+waiting to sync. Every row is announced as one screen-reader item — name,
+status, reason and folder in that order — while its retry button stays a
+separate control, so status and reason are never heard apart from the file they
+describe. Retryable item rows offer a folder sync; blocked storage offers
 an access grant where supported, and a conflict row offers
 **Resolve conflict**, which reuses the Sync review choice (keep mine, keep
 theirs or keep both) and applies it through the existing sync engine after
