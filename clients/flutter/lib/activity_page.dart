@@ -10,13 +10,27 @@ import 'activity_log.dart';
 /// Everything shown here is decrypted locally; the page never sends anything to
 /// the server and never writes names to logs.
 class ActivityPage extends StatefulWidget {
-  const ActivityPage({super.key, required this.log});
+  const ActivityPage({super.key, required this.log, this.onShowUnsynced});
 
   final ActivityLog log;
+
+  /// Opens the Not synced screen for the folder a failed or conflict row names.
+  ///
+  /// Only rows that belong to a configured sync folder carry an opaque root id,
+  /// so the action is offered for those alone. When this is absent the feed
+  /// stays a read-only local history and no navigation is promised.
+  final Future<void> Function(ActivityEntry entry)? onShowUnsynced;
 
   @override
   State<ActivityPage> createState() => _ActivityPageState();
 }
+
+/// Whether the feed can offer the Not synced screen for [entry].
+///
+/// Only failures and conflicts are listed there, and only a row that records a
+/// sync folder's opaque root id can be traced back to that folder.
+bool canShowUnsynced(ActivityEntry entry) =>
+    entry.isNotification && (entry.folderRootId?.isNotEmpty ?? false);
 
 class _ActivityPageState extends State<ActivityPage> {
   ActivityKind? _kind;
@@ -39,6 +53,12 @@ class _ActivityPageState extends State<ActivityPage> {
 
   void _changed() {
     if (mounted) setState(() {});
+  }
+
+  Future<void> _showUnsynced(ActivityEntry entry) async {
+    final open = widget.onShowUnsynced;
+    if (open == null) return;
+    await open(entry);
   }
 
   Future<void> _export() async {
@@ -92,6 +112,7 @@ class _ActivityPageState extends State<ActivityPage> {
     final query = _search.text.trim();
     final entries = log.filtered(kind: _kind, folder: folder, query: query);
     final notifications = log.notifications;
+    final canOpenUnsynced = widget.onShowUnsynced != null;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Activity'),
@@ -122,6 +143,7 @@ class _ActivityPageState extends State<ActivityPage> {
                 notifications: notifications,
                 onDismiss: log.dismiss,
                 onDismissAll: log.dismissAll,
+                onShowUnsynced: canOpenUnsynced ? _showUnsynced : null,
               ),
             if (log.entries.isNotEmpty)
               _ActivitySearchField(
@@ -151,14 +173,20 @@ class _ActivityPageState extends State<ActivityPage> {
                   : ListView.builder(
                       padding: const EdgeInsets.only(bottom: 16),
                       itemCount: entries.length,
-                      itemBuilder: (context, index) => ActivityRow(
-                        entry: entries[index],
-                        onDismiss:
-                            entries[index].isNotification &&
-                                !log.dismissedIds.contains(entries[index].id)
-                            ? () => log.dismiss(entries[index].id)
-                            : null,
-                      ),
+                      itemBuilder: (context, index) {
+                        final entry = entries[index];
+                        return ActivityRow(
+                          entry: entry,
+                          onDismiss: entry.isNotification &&
+                                  !log.dismissedIds.contains(entry.id)
+                              ? () => log.dismiss(entry.id)
+                              : null,
+                          onShowUnsynced: canOpenUnsynced &&
+                                  canShowUnsynced(entry)
+                              ? () => _showUnsynced(entry)
+                              : null,
+                        );
+                      },
                     ),
             ),
             if (log.entries.isNotEmpty)
@@ -200,10 +228,18 @@ IconData activityIcon(ActivityKind kind) {
 
 /// One feed row: icon plus text, never colour alone.
 class ActivityRow extends StatelessWidget {
-  const ActivityRow({super.key, required this.entry, this.onDismiss});
+  const ActivityRow({
+    super.key,
+    required this.entry,
+    this.onDismiss,
+    this.onShowUnsynced,
+  });
 
   final ActivityEntry entry;
   final VoidCallback? onDismiss;
+
+  /// Present only for a failed or conflict row of a configured sync folder.
+  final VoidCallback? onShowUnsynced;
 
   @override
   Widget build(BuildContext context) {
@@ -226,30 +262,43 @@ class ActivityRow extends StatelessWidget {
     return Semantics(
       container: true,
       label: semantics.toString(),
-      child: ExcludeSemantics(
-        child: ListTile(
-          leading: Icon(
-            activityIcon(entry.kind),
-            color: flagged ? theme.colorScheme.error : null,
-          ),
-          title: Text(entry.describe()),
-          subtitle: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(subtitle.toString()),
-              if (entry.reason != null)
-                Text(
-                  entry.reason!,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.error,
-                  ),
+      // The row text reads as one sentence; the actions keep their own nodes so
+      // a screen reader can reach them instead of losing them inside the label.
+      child: Row(
+        children: [
+          Expanded(
+            child: ExcludeSemantics(
+              child: ListTile(
+                leading: Icon(
+                  activityIcon(entry.kind),
+                  color: flagged ? theme.colorScheme.error : null,
                 ),
-            ],
+                title: Text(entry.describe()),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(subtitle.toString()),
+                    if (entry.reason != null)
+                      Text(
+                        entry.reason!,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.error,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
           ),
-          trailing: onDismiss == null
-              ? null
-              : TextButton(onPressed: onDismiss, child: const Text('Dismiss')),
-        ),
+          if (onShowUnsynced != null)
+            IconButton(
+              onPressed: onShowUnsynced,
+              tooltip: 'Show in Not synced',
+              icon: const Icon(Icons.sync_problem_outlined),
+            ),
+          if (onDismiss != null)
+            TextButton(onPressed: onDismiss, child: const Text('Dismiss')),
+        ],
       ),
     );
   }
@@ -260,11 +309,13 @@ class _NotificationSection extends StatelessWidget {
     required this.notifications,
     required this.onDismiss,
     required this.onDismissAll,
+    this.onShowUnsynced,
   });
 
   final List<ActivityEntry> notifications;
   final ValueChanged<String> onDismiss;
   final VoidCallback onDismissAll;
+  final ValueChanged<ActivityEntry>? onShowUnsynced;
 
   @override
   Widget build(BuildContext context) {
@@ -303,9 +354,20 @@ class _NotificationSection extends StatelessWidget {
               ),
               title: Text(entry.describe()),
               subtitle: Text(entry.reason ?? entry.folder),
-              trailing: TextButton(
-                onPressed: () => onDismiss(entry.id),
-                child: const Text('Dismiss'),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (onShowUnsynced != null && canShowUnsynced(entry))
+                    IconButton(
+                      onPressed: () => onShowUnsynced!(entry),
+                      tooltip: 'Show in Not synced',
+                      icon: const Icon(Icons.sync_problem_outlined),
+                    ),
+                  TextButton(
+                    onPressed: () => onDismiss(entry.id),
+                    child: const Text('Dismiss'),
+                  ),
+                ],
               ),
             ),
         ],

@@ -30,6 +30,7 @@ void main() {
   Future<ActivityLog> pumpPage(
     WidgetTester tester, {
     void Function(ActivityLog log)? seed,
+    Future<void> Function(ActivityEntry entry)? onShowUnsynced,
   }) async {
     // A tall surface keeps every lazily built row in the ListView, so the
     // assertions below do not depend on the shorter default test viewport.
@@ -62,7 +63,9 @@ void main() {
       reason: 'Choose a copy',
     );
     seed?.call(log);
-    await tester.pumpWidget(MaterialApp(home: ActivityPage(log: log)));
+    await tester.pumpWidget(MaterialApp(
+      home: ActivityPage(log: log, onShowUnsynced: onShowUnsynced),
+    ));
     await tester.pumpAndSettle();
     return log;
   }
@@ -208,6 +211,64 @@ void main() {
       ),
       findsOneWidget,
     );
+  });
+
+  testWidgets('a failed folder row opens the Not synced screen', (
+    tester,
+  ) async {
+    final opened = <ActivityEntry>[];
+    await pumpPage(
+      tester,
+      onShowUnsynced: (entry) async => opened.add(entry),
+      seed: (log) => log.record(
+        kind: ActivityKind.conflict,
+        folder: 'Documents',
+        folderRootId: 'root-1',
+        subject: '1 item',
+        reason: 'Two copies exist',
+      ),
+    );
+
+    // The seeded row is listed in the notification centre and in the feed.
+    expect(find.byTooltip('Show in Not synced'), findsNWidgets(2));
+    await tester.tap(find.byTooltip('Show in Not synced').last);
+    await tester.pumpAndSettle();
+    expect(opened, hasLength(1));
+    expect(opened.single.folderRootId, 'root-1');
+    expect(opened.single.kind, ActivityKind.conflict);
+  });
+
+  testWidgets('dismissing a notification keeps the Not synced action', (
+    tester,
+  ) async {
+    final opened = <ActivityEntry>[];
+    final log = await pumpPage(
+      tester,
+      onShowUnsynced: (entry) async => opened.add(entry),
+      seed: (log) => log.record(
+        kind: ActivityKind.failed,
+        folder: 'Documents',
+        folderRootId: 'root-1',
+        subject: 'sync',
+        reason: 'Server unreachable',
+      ),
+    );
+    await tester.tap(find.text('Dismiss all'));
+    await tester.pumpAndSettle();
+    expect(log.notificationCount, 0);
+    // The row is still readable and still leads to its folder.
+    expect(find.byTooltip('Show in Not synced'), findsOneWidget);
+    await tester.tap(find.byTooltip('Show in Not synced'));
+    await tester.pumpAndSettle();
+    expect(opened.single.folderRootId, 'root-1');
+  });
+
+  testWidgets('rows without a sync folder offer no Not synced action', (
+    tester,
+  ) async {
+    // The default rows carry no opaque root id, so there is no folder to open.
+    await pumpPage(tester, onShowUnsynced: (entry) async {});
+    expect(find.byTooltip('Show in Not synced'), findsNothing);
   });
 
   testWidgets('the settings dialog shortens the retention window', (

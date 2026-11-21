@@ -16,18 +16,25 @@ explicit choice. A search field narrows the feed by local name, folder, kind or
 failure reason; matching ignores case, every typed word must match, and the
 query is combined with the kind and folder filters without ever being stored or
 sent. The settings dialog applies a shorter window immediately, cancelling
-changes nothing, and the choice survives a restart.
+changes nothing, and the choice survives a restart. A failed or conflict row
+carries a **Show in Not synced** action, in the notification centre and in the
+feed, that opens the **Not synced** screen for that sync folder only; dismissing
+the notification leaves the action on the underlying row, and a folder removed
+in the meantime is reported instead of opening an empty list.
 
-Verified in the pinned isolated wrapper: clean Flutter analysis and **648
-passing tests / 4 platform skips**, including 26 activity tests (rows,
-filtering, search, dismissal, retention and retention settings, per-account
-storage, redacted export and two real `SyncController` runs). Removing either
-run hook, the redaction branch, the dismissal, the query check, the reason in
-the search text, the prune or the restore of the chosen window, or the dialog's
-apply call fails the matching test; all sabotage was restored before the
-successful run. Not verified: per-file transfer rows (the engine reports
-counts, not per-item results), #79 deep links, and any installed build (the
-retention dialog was only exercised in widget tests).
+Verified in the pinned isolated wrapper: clean Flutter analysis and **690
+passing tests / 4 platform skips**, including 30 activity and deep-link tests
+(rows, filtering, search, dismissal, retention and retention settings,
+per-account storage, redacted export, per-file transfer rows, and the folder
+scoped link into the **Not synced** screen). Removing either run hook, the
+redaction branch, the dismissal, the query check, the reason in the search
+text, the prune or the restore of the chosen window, the dialog's apply call,
+the folder check on the deep-link action or the root-id scoping of the
+overview list fails the matching test; all sabotage was restored before the
+successful run. Not verified: any installed build (the retention dialog, the
+notification actions and the deep link were only exercised in widget tests
+against a fake overview producer, so TalkBack wording and a real multi-folder
+sync were not observed).
 
 ## Markdown update notes (#154)
 

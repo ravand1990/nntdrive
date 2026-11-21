@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
@@ -14,12 +15,31 @@ import 'sync_overview_page.dart';
 import 'sync_widgets.dart';
 
 class SyncPage extends StatefulWidget {
-  const SyncPage({super.key, required this.controller});
+  const SyncPage({super.key, required this.controller, this.openOverviewFor});
   final SyncController controller;
+
+  /// Opaque remote root id of a folder to open in the Not synced screen right
+  /// away. The local activity feed passes the folder its row names, so a failed
+  /// or conflict entry leads straight to that folder's unsynced items.
+  final String? openOverviewFor;
 
   @override
   State<SyncPage> createState() => _SyncPageState();
 }
+
+/// Enabled sync folders the Not synced screen should show.
+///
+/// With no [rootId] this is every enabled folder, as the Sync folders button
+/// opens it. With a root id only that folder matches, so a deep link never
+/// widens the list to unrelated folders.
+List<SyncFolderConfig> overviewFolders(
+  Iterable<SyncFolderConfig> folders,
+  String? rootId,
+) =>
+    folders
+        .where((folder) =>
+            folder.enabled && (rootId == null || folder.remoteRootId == rootId))
+        .toList();
 
 class _SyncPageState extends State<SyncPage> {
   bool _adding = false;
@@ -37,6 +57,13 @@ class _SyncPageState extends State<SyncPage> {
   void initState() {
     super.initState();
     c.addListener(_changed);
+    final rootId = widget.openOverviewFor;
+    if (rootId != null) {
+      // The page has to be built once before it can push a route on top.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_openOverview(folderRootId: rootId));
+      });
+    }
   }
 
   @override
@@ -200,8 +227,12 @@ class _SyncPageState extends State<SyncPage> {
   }
 
   /// Opens the device-local list of everything that is not fully in sync.
-  Future<void> _openOverview() async {
-    final folders = c.folders.where((folder) => folder.enabled).toList();
+  Future<void> _openOverview({String? folderRootId}) async {
+    final folders = overviewFolders(c.folders, folderRootId);
+    if (folders.isEmpty) {
+      _toast('That folder is no longer a sync folder on this device.');
+      return;
+    }
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => SyncOverviewPage(
         load: (cancellation) => buildIncrementalUnsyncedOverview(
