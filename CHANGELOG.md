@@ -8,6 +8,7 @@ release workflow refuses to publish if the entry is missing.
 
 ### Features
 
+- The activity feed now names files instead of only counting them: every completed upload and download becomes its own local row with the file name, folder and size, while a run that moves many files keeps a bounded number of named rows and summarises the rest. Names, sizes and folders stay on the device; nothing new is sent to the backend, and a run whose transfer events were not observed still records its honest total (#87).
 - Root key rotation after a device revocation: `KeyFile::rotate` creates a new AMK epoch and keeps every previous epoch wrapped inside the keyfile, `MasterKeyRing` reads names, manifests and chunks sealed under any retained epoch while new content always uses the current one, and `KeyFile::rewrap` re-wraps the whole ring on a password change. The backend stores and publishes a rotated keyfile through `GET`/`POST /api/v1/account/keyfile`, guarded by an expected epoch so two rotations cannot fork the account key. The client SDK exposes `fetch_keyfile` and `rotate_account_key`; a failed publish leaves the stored keyfile untouched, and an already applied publish is idempotent (#8).
 
 ## [0.33.0] - 2026-11-20

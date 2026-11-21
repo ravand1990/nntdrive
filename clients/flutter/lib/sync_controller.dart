@@ -57,6 +57,27 @@ Future<Map<String, dynamic>> _runNativeInspect(
         int handle, Map<String, dynamic> request) =>
     NativeBridge.instance.syncInspectAsync(handle, request);
 
+/// One file transfer the native sync reported as completed during a run.
+///
+/// Device-local and transient: [path] is the relative path the client already
+/// owns, [direction] is `upload` or `download`, and [size] is the logical
+/// plaintext size when the producer reported one. Nothing here is persisted,
+/// logged or sent to the backend.
+@immutable
+class SyncTransfer {
+  const SyncTransfer({
+    required this.path,
+    required this.direction,
+    this.size,
+  });
+
+  final String path;
+  final String direction;
+  final int? size;
+
+  bool get isUpload => direction == 'upload';
+}
+
 class SyncFolderConfig {
   SyncFolderConfig({
     required this.id,
@@ -98,6 +119,11 @@ class SyncFolderConfig {
 
   /// Relative paths with a transfer in progress right now. Cleared per run.
   Set<String> activeTransferPaths = {};
+
+  /// File transfers the native sync reported as completed during the latest
+  /// run, bounded and device-local. Only relative paths the client already
+  /// owns; cleared when the next run starts, never persisted or sent.
+  final List<SyncTransfer> completedTransfers = [];
 
   /// True once the engine's plan notification has arrived for this run.
   bool get activePlanKnown => activePlanTotal != null;
@@ -859,10 +885,39 @@ class SyncController extends ChangeNotifier {
   /// producer from growing client memory.
   static const int activePlanLimit = 1024;
 
+  /// Upper bound on completed transfers retained per run. The activity feed
+  /// names at most a small prefix of these and summarises the remainder, so a
+  /// misbehaving producer cannot grow client memory or the local log.
+  static const int completedTransferLimit = 256;
+
   void _resetActivePlan(SyncFolderConfig folder) {
     folder.activePlan = [];
     folder.activePlanTotal = null;
     folder.activeTransferPaths = {};
+  }
+
+  /// Keeps one bounded record per completed file transfer of this run.
+  ///
+  /// Only an event with `complete: true` counts: those are emitted once per
+  /// file after the manifest commit (upload) or after the verified atomic write
+  /// (download). Repeats of the same path and direction are ignored.
+  void _recordCompletedTransfer(
+    SyncFolderConfig folder,
+    String path,
+    String direction,
+    Map<String, dynamic> event,
+  ) {
+    if (folder.completedTransfers.length >= completedTransferLimit) return;
+    for (final known in folder.completedTransfers) {
+      if (known.direction == direction && known.path == path) return;
+    }
+    final total = event['total'];
+    final bytes = event['bytes'];
+    final size = total is int && total > 0
+        ? total
+        : (bytes is int && bytes > 0 ? bytes : null);
+    folder.completedTransfers
+        .add(SyncTransfer(path: path, direction: direction, size: size));
   }
 
   /// Consumes one native progress event. Plan batches carry the complete set of
@@ -897,6 +952,7 @@ class SyncController extends ChangeNotifier {
           (direction == 'upload' || direction == 'download')) {
         if (event['complete'] == true) {
           folder.activeTransferPaths.remove(path);
+          _recordCompletedTransfer(folder, path, direction, event);
         } else {
           folder.activeTransferPaths.add(path);
         }
@@ -917,6 +973,7 @@ class SyncController extends ChangeNotifier {
     folder.running = true;
     folder.progress = null;
     _resetActivePlan(folder);
+    folder.completedTransfers.clear();
     notifyListeners();
     if (!silent) {
       lastStatus = 'Syncing ${folder.name}…';
