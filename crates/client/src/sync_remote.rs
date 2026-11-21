@@ -8,6 +8,7 @@ use crate::{download_file_with_progress, upload_file_with_progress, ApiClient, C
 use nntdrive_crypto::{Envelope, MasterKeyRing};
 use nntdrive_storage::manifest::FileManifest;
 use nntdrive_sync::{Remote, RemoteEntry, SyncError};
+use nntdrive_sync::{ScannedPath, SnapshotObserver, SNAPSHOT_PROGRESS_BATCH};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -142,7 +143,10 @@ impl HttpRemote {
         Ok(())
     }
 
-    async fn snapshot_tree(&mut self) -> Result<Vec<RemoteEntry>, SyncError> {
+    async fn snapshot_tree(
+        &mut self,
+        observer: Option<&SnapshotObserver>,
+    ) -> Result<Vec<RemoteEntry>, SyncError> {
         self.load_hash_cache().await;
         self.nodes.clear();
         self.nodes.insert(
@@ -157,6 +161,8 @@ impl HttpRemote {
         let mut stack = vec![(String::new(), self.root_id, 0usize)];
         let mut new_cache: HashMap<String, CachedHash> = HashMap::new();
         let mut hash_budget = 2000usize;
+        // Bounded, device-local batches of the remote paths this snapshot lists.
+        let mut batch: Vec<ScannedPath> = Vec::new();
         while let Some((parent_path, parent_id, depth)) = stack.pop() {
             if depth > 128 {
                 return Err(Self::remote_error("remote tree is too deep"));
@@ -195,6 +201,18 @@ impl HttpRemote {
                         is_dir: file.is_dir,
                     },
                 );
+                // Report the path before the hash work below: this is the point
+                // where a client can show what the comparison has reached.
+                if let Some(observer) = observer {
+                    batch.push(ScannedPath {
+                        path: path.clone(),
+                        is_dir: file.is_dir,
+                    });
+                    if batch.len() >= SNAPSHOT_PROGRESS_BATCH {
+                        observer(&batch);
+                        batch.clear();
+                    }
+                }
                 let mut content_hash = None;
                 if !file.is_dir {
                     if let Some(rev) = file.current_version {
@@ -239,6 +257,11 @@ impl HttpRemote {
                 if file.is_dir {
                     stack.push((path, file.id, depth + 1));
                 }
+            }
+        }
+        if let Some(observer) = observer {
+            if !batch.is_empty() {
+                observer(&batch);
             }
         }
         self.hashes = new_cache.clone();
@@ -299,7 +322,14 @@ impl Remote for HttpRemote {
             .collect()
     }
     async fn snapshot(&mut self) -> Result<Vec<RemoteEntry>, SyncError> {
-        self.snapshot_tree().await
+        self.snapshot_tree(None).await
+    }
+
+    async fn snapshot_observed(
+        &mut self,
+        observer: Option<SnapshotObserver>,
+    ) -> Result<Vec<RemoteEntry>, SyncError> {
+        self.snapshot_tree(observer.as_ref()).await
     }
 
     async fn upload(

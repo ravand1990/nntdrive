@@ -116,10 +116,20 @@ at most 4096 paths forwarded per run, each with `path` and `is_dir`), and
 `nntdrive_sync_request` emits `{"phase":"scan","items":[...]}`. The client keeps
 the first 256 entries, still counts every reported path, and lists them as
 Pending rows with the reason "Scanning this folder."; queued plan rows replace
-them as soon as the plan arrives. The remote-snapshot step after the scan has no
-per-path events, so a folder there still shows the single "Sync is running." root
-row with a notice. Scan batches are client-local and never leave the device;
-installed responsiveness and TalkBack acceptance remain unverified under #65.
+them as soon as the plan arrives.
+
+The remote-snapshot step that follows reports progress the same way. The
+`Remote` trait's default `snapshot_observed` simply returns `snapshot()`, and
+transports that can list incrementally (the HTTP remote does) override it to
+report the decrypted paths they have compared through a bounded
+`SnapshotObserver`: batches of at most 64 paths (`SNAPSHOT_PROGRESS_BATCH`), at
+most 4096 forwarded per run, never a selective-sync exclusion. The FFI emits
+`{"phase":"compare","items":[...]}`, the client drops the scan rows on the first
+compare batch, keeps the first 256 compared paths and counts the rest, and lists
+them as Pending rows with the reason "Comparing with the remote copy.". An empty
+remote folder keeps one root row so the folder stays visible while it compares.
+Scan and compare batches are client-local and never leave the device; installed
+responsiveness and TalkBack acceptance remain unverified under #65.
 
 ## Verification
 

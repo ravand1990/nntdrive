@@ -29,6 +29,15 @@ pub type Result<T> = std::result::Result<T, SyncError>;
 #[allow(async_fn_in_trait)]
 pub trait Remote {
     async fn snapshot(&mut self) -> Result<Vec<RemoteEntry>>;
+    /// Snapshot that may report the remote paths it lists through `observer`,
+    /// in bounded batches. Transports that cannot report progress keep the
+    /// plain [`Remote::snapshot`] behavior.
+    async fn snapshot_observed(
+        &mut self,
+        _observer: Option<SnapshotObserver>,
+    ) -> Result<Vec<RemoteEntry>> {
+        self.snapshot().await
+    }
     /// Stable identities from the most recent snapshot. Transports without
     /// directory IDs retain the conservative path-based behavior.
     fn directory_ids(&self) -> HashMap<String, Uuid> {
@@ -102,6 +111,39 @@ pub type ScanObserver = scanner::ScanObserver;
 /// Bound on how many scanned paths are forwarded to a [`ScanObserver`] per run.
 const SCAN_NOTIFY_LIMIT: usize = 4096;
 
+/// Client-local notification of remote paths as a snapshot lists them.
+///
+/// A snapshot lists the remote tree over many requests, so batches arrive while
+/// the run is still comparing instead of after it finishes. Paths are the
+/// relative, locally decrypted names the client already owns; nothing is sent
+/// to the backend. The batch type is [`scanner::ScannedPath`] because it is
+/// exactly a relative path plus a directory flag.
+pub type SnapshotObserver = scanner::ScanObserver;
+
+/// Bound on how many remote paths are forwarded to a [`SnapshotObserver`] per
+/// run. The snapshot itself still covers the whole remote tree.
+const SNAPSHOT_NOTIFY_LIMIT: usize = 4096;
+
+/// Maximum number of remote paths in one [`SnapshotObserver`] batch.
+pub const SNAPSHOT_PROGRESS_BATCH: usize = 64;
+
+/// Forwards at most `limit` paths to `observer` across all of a run's batches.
+fn capped_observer(observer: ScanObserver, limit: usize) -> ScanObserver {
+    let reported = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    std::sync::Arc::new(move |paths: &[scanner::ScannedPath]| {
+        let before = reported.fetch_add(paths.len(), std::sync::atomic::Ordering::Relaxed);
+        if before >= limit {
+            return;
+        }
+        let room = limit - before;
+        if paths.len() <= room {
+            observer(paths);
+        } else {
+            observer(&paths[..room]);
+        }
+    })
+}
+
 pub struct SyncEngine {
     pub device_name: String,
     pub scan_options: ScanOptions,
@@ -109,6 +151,7 @@ pub struct SyncEngine {
     pub excluded_paths: Vec<String>,
     plan_observer: Option<PlanObserver>,
     scan_observer: Option<ScanObserver>,
+    snapshot_observer: Option<SnapshotObserver>,
 }
 
 /// One planned difference between this device and the account. `kind` is a
@@ -304,6 +347,7 @@ impl SyncEngine {
             excluded_paths: Vec::new(),
             plan_observer: None,
             scan_observer: None,
+            snapshot_observer: None,
         }
     }
 
@@ -326,6 +370,34 @@ impl SyncEngine {
     pub fn with_scan_observer(mut self, observer: ScanObserver) -> Self {
         self.scan_observer = Some(observer);
         self
+    }
+
+    /// Report the bounded batches of remote paths a snapshot lists while it is
+    /// still running. Callers use this for a live "comparing" view after the
+    /// scan and before the plan; it never changes what the snapshot or the run
+    /// does, and excluded paths are never reported.
+    pub fn with_snapshot_observer(mut self, observer: SnapshotObserver) -> Self {
+        self.snapshot_observer = Some(observer);
+        self
+    }
+
+    /// Wrap the caller's snapshot observer with selective-sync filtering and
+    /// the per-run notification bound.
+    fn limited_snapshot_observer(&self) -> Option<SnapshotObserver> {
+        let observer = self.snapshot_observer.clone()?;
+        let mut opts = self.scan_options.clone();
+        opts.excluded_paths = self.excluded_paths.clone();
+        let filtered: ScanObserver = std::sync::Arc::new(move |paths| {
+            let kept: Vec<scanner::ScannedPath> = paths
+                .iter()
+                .filter(|path| !opts.is_excluded(&path.path))
+                .cloned()
+                .collect();
+            if !kept.is_empty() {
+                observer(&kept);
+            }
+        });
+        Some(capped_observer(filtered, SNAPSHOT_NOTIFY_LIMIT))
     }
 
     fn is_excluded(&self, path: &str) -> bool {
@@ -442,29 +514,20 @@ impl SyncEngine {
         opts.excluded_paths = self.excluded_paths.clone();
         // The scan can examine far more paths than a client view needs, so the
         // observer is capped per run while the scan itself stays complete.
-        let scan_observer = self.scan_observer.clone().map(|observer| {
-            let reported = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-            let limited: ScanObserver = std::sync::Arc::new(move |paths| {
-                let before = reported.fetch_add(paths.len(), std::sync::atomic::Ordering::Relaxed);
-                if before >= SCAN_NOTIFY_LIMIT {
-                    return;
-                }
-                let room = SCAN_NOTIFY_LIMIT - before;
-                if paths.len() <= room {
-                    observer(paths);
-                } else {
-                    observer(&paths[..room]);
-                }
-            });
-            limited
-        });
+        let scan_observer = self
+            .scan_observer
+            .clone()
+            .map(|observer| capped_observer(observer, SCAN_NOTIFY_LIMIT));
         let mut scan = tokio::task::spawn_blocking(move || {
             scanner::scan_with_observer(&scan_root, &opts, &previous, scan_observer.as_ref())
         })
         .await
         .map_err(|e| SyncError::Remote(format!("scan task failed: {e}")))??;
 
-        let remote_entries = remote.snapshot().await?;
+        // Listing the remote tree is the slow part of a large account, so the
+        // snapshot reports the paths it has compared while it is still listing.
+        let snapshot_observer = self.limited_snapshot_observer();
+        let remote_entries = remote.snapshot_observed(snapshot_observer).await?;
         let mut remote_entries: Vec<_> = remote_entries
             .into_iter()
             .filter(|e| !self.is_excluded(&e.path))
@@ -1372,6 +1435,32 @@ mod tests {
                     deleted: false,
                 })
                 .collect())
+        }
+
+        async fn snapshot_observed(
+            &mut self,
+            observer: Option<SnapshotObserver>,
+        ) -> Result<Vec<RemoteEntry>> {
+            // Model a transport that lists the remote tree over many requests:
+            // the paths leave before the complete snapshot is available.
+            if let Some(observer) = observer {
+                let mut paths: Vec<scanner::ScannedPath> = {
+                    let state = self.0.lock().await;
+                    state
+                        .files
+                        .keys()
+                        .map(|path| scanner::ScannedPath {
+                            path: path.clone(),
+                            is_dir: false,
+                        })
+                        .collect()
+                };
+                paths.sort_by(|a, b| a.path.cmp(&b.path));
+                if !paths.is_empty() {
+                    observer(&paths);
+                }
+            }
+            self.snapshot().await
         }
 
         async fn upload(
@@ -2630,5 +2719,119 @@ mod tests {
             .collect();
         assert_eq!(reported, vec!["shared.txt".to_string()]);
         assert_eq!(remote.0.lock().await.uploads, 1);
+    }
+
+    #[tokio::test]
+    async fn snapshot_observer_reports_remote_paths_between_scan_and_plan() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Journal::in_memory().await.unwrap();
+        std::fs::write(dir.path().join("local.txt"), b"local").unwrap();
+        let mut remote = FakeRemote::default();
+        remote
+            .0
+            .lock()
+            .await
+            .files
+            .insert("remote.txt".into(), (b"remote".to_vec(), Uuid::new_v4()));
+
+        let log: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+        let scan_log = log.clone();
+        let snapshot_log = log.clone();
+        let plan_log = log.clone();
+        let engine = SyncEngine::new("device")
+            .with_scan_observer(Arc::new(move |paths: &[scanner::ScannedPath]| {
+                let mut log = scan_log.lock().unwrap();
+                for path in paths {
+                    log.push(format!("scan:{}", path.path));
+                }
+            }))
+            .with_snapshot_observer(Arc::new(move |paths: &[scanner::ScannedPath]| {
+                let mut log = snapshot_log.lock().unwrap();
+                for path in paths {
+                    log.push(format!("snapshot:{}", path.path));
+                }
+            }))
+            .with_plan_observer(Arc::new(move |items, _| {
+                let mut log = plan_log.lock().unwrap();
+                for item in items {
+                    log.push(format!("plan:{}", item.path));
+                }
+            }));
+        run(&engine, &mut remote, dir.path(), &journal).await;
+
+        let log = log.lock().unwrap().clone();
+        let first_snapshot = log
+            .iter()
+            .position(|entry| entry.starts_with("snapshot:"))
+            .expect("the snapshot reports the remote paths it compared");
+        let first_plan = log
+            .iter()
+            .position(|entry| entry.starts_with("plan:"))
+            .expect("the run reports its plan");
+        assert!(
+            first_snapshot < first_plan,
+            "compared remote paths precede the plan: {log:?}"
+        );
+        assert!(
+            log[..first_snapshot]
+                .iter()
+                .all(|entry| entry.starts_with("scan:")),
+            "the scan reports first: {log:?}"
+        );
+        assert!(log.contains(&"snapshot:remote.txt".to_string()), "{log:?}");
+    }
+
+    #[tokio::test]
+    async fn snapshot_observer_never_reports_excluded_remote_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Journal::in_memory().await.unwrap();
+        let mut remote = FakeRemote::default();
+        {
+            let mut state = remote.0.lock().await;
+            state
+                .files
+                .insert("private/secret.txt".into(), (b"s".to_vec(), Uuid::new_v4()));
+            state
+                .files
+                .insert("shared.txt".into(), (b"x".to_vec(), Uuid::new_v4()));
+        }
+        let calls: ScanCalls = Arc::default();
+        let sink = calls.clone();
+        let engine = SyncEngine::new("device")
+            .with_exclusions(vec!["private".into()])
+            .with_snapshot_observer(Arc::new(move |paths| {
+                sink.lock().unwrap().push(paths.to_vec());
+            }));
+        run(&engine, &mut remote, dir.path(), &journal).await;
+
+        let reported: Vec<String> = calls
+            .lock()
+            .unwrap()
+            .iter()
+            .flat_map(|batch| batch.iter().map(|entry| entry.path.clone()))
+            .collect();
+        assert_eq!(reported, vec!["shared.txt".to_string()]);
+    }
+
+    #[test]
+    fn capped_observer_stops_at_its_limit_without_truncating_the_source() {
+        let seen: Arc<std::sync::Mutex<Vec<usize>>> = Arc::default();
+        let sink = seen.clone();
+        let observer: ScanObserver = Arc::new(move |paths: &[scanner::ScannedPath]| {
+            sink.lock().unwrap().push(paths.len());
+        });
+        let capped = capped_observer(observer, 5);
+        let batch = |count: usize| -> Vec<scanner::ScannedPath> {
+            (0..count)
+                .map(|index| scanner::ScannedPath {
+                    path: format!("p{index}"),
+                    is_dir: false,
+                })
+                .collect()
+        };
+        capped(&batch(3));
+        capped(&batch(3));
+        capped(&batch(4));
+        assert_eq!(seen.lock().unwrap().clone(), vec![3, 2]);
     }
 }
