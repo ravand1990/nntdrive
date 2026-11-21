@@ -10,6 +10,27 @@ import 'sync_widgets.dart' show ConflictChoiceDialog;
 typedef ResolveConflictCallback = Future<void> Function(
     String folderId, String copyPath, String choice);
 
+/// One spoken line per row: the name, status, reason and folder, in that order.
+///
+/// A screen reader announces the whole row as one item instead of unrelated
+/// fragments in visual order, so the status and reason are never heard apart
+/// from the file they describe. Only values the page already shows are used.
+String overviewRowLabel(UnsyncedEntry entry) {
+  final name = entry.displayName.isEmpty ? entry.folderName : entry.displayName;
+  final parts = <String>[name, entry.status.label, entry.reason];
+  if (entry.displayFolderPath.isNotEmpty) {
+    parts.add('Folder ${entry.folderName} · ${entry.displayFolderPath}');
+  } else if (entry.folderName != name) {
+    parts.add('Folder ${entry.folderName}');
+  }
+  // Joining adds one separator period, so trailing punctuation is trimmed to
+  // keep a reason that already ends a sentence from being read twice.
+  return parts
+      .map((part) => part.trim().replaceFirst(RegExp(r'[.\s]+$'), ''))
+      .where((part) => part.isNotEmpty)
+      .join('. ');
+}
+
 /// Device-local overview: what is not fully synchronized and why.
 ///
 /// Every row shows a text status (never colour alone) and a plain-language
@@ -368,40 +389,72 @@ class _SyncOverviewPageState extends State<SyncOverviewPage> {
   Widget _row(BuildContext context, UnsyncedEntry entry) {
     final theme = Theme.of(context);
     final size = entry.size == null ? null : _formatSize(entry.size!);
-    return ListTile(
-      leading: Icon(_icon(entry.status), semanticLabel: entry.status.label),
-      title: Text(entry.displayName.isEmpty ? entry.folderName : entry.displayName),
-      subtitle: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('${entry.status.label} · ${entry.folderName}'
-              '${entry.displayFolderPath.isEmpty ? '' : ' · ${entry.displayFolderPath}'}'),
-          Text(entry.reason),
-        ],
-      ),
-      isThreeLine: true,
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (size != null)
-            Text(size, style: theme.textTheme.bodySmall),
-          if (entry.retryable)
-            _acting == _keyFor(entry)
-                ? const Padding(
-                    padding: EdgeInsets.all(12),
-                    child: SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(strokeWidth: 2)),
-                  )
-                : IconButton(
-                    tooltip: 'Sync ${entry.folderName} now',
-                    onPressed: _acting != null ? null : () => _syncFolder(entry),
-                    icon: const Icon(Icons.sync),
-                  ),
-        ],
-      ),
+    final acting = _acting == _keyFor(entry);
+    final name = entry.displayName.isEmpty ? entry.folderName : entry.displayName;
+    final where = '${entry.status.label} · ${entry.folderName}'
+        '${entry.displayFolderPath.isEmpty ? '' : ' · ${entry.displayFolderPath}'}';
+    // The row content is announced as one labelled item (name, status, reason,
+    // folder) instead of unrelated fragments in visual order; the retry button
+    // stays a separate focus target so an action never hides behind a label.
+    return InkWell(
       onTap: () => _showDetails(context, entry),
+      excludeFromSemantics: true,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Icon(_icon(entry.status)),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Semantics(
+                container: true,
+                button: true,
+                excludeSemantics: true,
+                label: overviewRowLabel(entry),
+                onTap: () => _showDetails(context, entry),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodyLarge),
+                    Text(where, style: theme.textTheme.bodyMedium),
+                    Text(entry.reason, style: theme.textTheme.bodySmall),
+                  ],
+                ),
+              ),
+            ),
+            if (size != null) ...[
+              const SizedBox(width: 12),
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Text(size, style: theme.textTheme.bodySmall),
+              ),
+            ],
+            if (entry.retryable) ...[
+              const SizedBox(width: 4),
+              acting
+                  ? const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(strokeWidth: 2)),
+                    )
+                  : IconButton(
+                      tooltip: 'Sync ${entry.folderName} now',
+                      onPressed: _acting != null ? null : () => _syncFolder(entry),
+                      icon: const Icon(Icons.sync),
+                    ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 

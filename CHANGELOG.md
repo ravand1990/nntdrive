@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Bug fixes
+
+- In the **Not synced** list every row is now announced as one screen-reader item — name, status, reason and folder in that order — instead of three fragments in layout order, so the status and reason are no longer heard apart from the file they describe. The retry button stays a separate control, status is still shown as text plus icon rather than colour alone, and nothing new leaves the device (#79).
+
 ### Features
 
 - Unlocking now keeps every retained account-key epoch in the native handle: names, manifests and chunks sealed before another device rotated the account key stay readable, while new content still seals with the current epoch. The desktop and Android client also fetch the published keyfile at unlock and adopt it only when it is newer for the same account, falling back to the local copy when the fetch fails or the published copy cannot be opened; the in-app rotation control and the installed two-device check are still to come (#184).

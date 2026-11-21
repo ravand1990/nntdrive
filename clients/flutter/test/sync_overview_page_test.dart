@@ -371,4 +371,43 @@ void main() {
     expect(find.text('Folder could not be compared.'), findsOneWidget);
     expect(find.textContaining('Storage access is needed.'), findsOneWidget);
   });
+
+  testWidgets('a row is announced as name, status, reason and folder',
+      (tester) async {
+    final semantics = tester.ensureSemantics();
+    await tester.pumpWidget(host(SyncOverviewPage(
+      load: (_) async => overviewOf([
+        entry(UnsyncedStatus.failed, 'reports/c.txt',
+            reason: 'The server failed.')
+      ]),
+      onSyncFolder: (_) async {},
+    )));
+    await tester.pumpAndSettle();
+
+    const spoken =
+        'c.txt. Failed. The server failed. Folder Documents · reports';
+    // One item carries the whole row, in reading order, not three fragments.
+    expect(tester.getSemantics(find.text('c.txt')),
+        isSemantics(isButton: true, hasTapAction: true, label: spoken));
+    expect(tester.getSemantics(find.text('The server failed.')).label, spoken);
+    expect(find.byIcon(Icons.error_outline), findsOneWidget);
+    // The retry action stays its own focus target outside that label.
+    expect(tester.getSemantics(find.byIcon(Icons.sync)).tooltip,
+        'Sync Documents now');
+    // A handle must be released inside the test body, before its final checks.
+    semantics.dispose();
+  });
+
+  testWidgets('a folder-level row names the folder once', (tester) async {
+    await tester.pumpWidget(host(SyncOverviewPage(
+      load: (_) async => overviewOf([
+        entry(UnsyncedStatus.blocked, '', reason: 'Storage access is needed.')
+      ]),
+      onSyncFolder: (_) async {},
+    )));
+    await tester.pumpAndSettle();
+    expect(overviewRowLabel(entry(UnsyncedStatus.blocked, '',
+            reason: 'Storage access is needed.')),
+        'Documents. Blocked. Storage access is needed');
+  });
 }
