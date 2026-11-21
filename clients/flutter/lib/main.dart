@@ -1347,13 +1347,27 @@ class _FilesPageState extends State<FilesPage> {
 
   Future<void> _openActivity() async {
     await Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (_) => ActivityPage(log: _activity),
+      builder: (_) => ActivityPage(
+        log: _activity,
+        onShowUnsynced: _showUnsynced,
+      ),
     ));
   }
 
-  Future<void> _openSync() async {
+  /// Opens the Not synced screen for the folder an activity row names.
+  ///
+  /// The feed is closed first so Back returns to the files, not to the feed.
+  Future<void> _showUnsynced(ActivityEntry entry) async {
+    final rootId = entry.folderRootId;
+    if (rootId == null || !mounted) return;
+    Navigator.of(context).pop();
+    await _openSync(openOverviewFor: rootId);
+  }
+
+  Future<void> _openSync({String? openOverviewFor}) async {
     await Navigator.of(context).push(MaterialPageRoute<void>(
-      builder: (_) => SyncPage(controller: _sync),
+      builder: (_) =>
+          SyncPage(controller: _sync, openOverviewFor: openOverviewFor),
     ));
     if (mounted) _refresh();
   }
