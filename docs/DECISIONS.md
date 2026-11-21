@@ -101,3 +101,20 @@ keyfile is rotated or its password changes, which keeps one KDF per keyfile and
 prevents pre-rotation revisions from staying behind an old password. The backend
 stores only the client-encrypted keyfile and an expected-epoch guard; it still
 has no way to derive any AMK.
+
+## ADR-014: A rotation replaces the recovery kit, it never re-wraps it
+
+A recovery kit wraps the AMK under a code the server never sees, so a rotation
+cannot update the stored kit: that would need the user's offline code. Leaving
+the old kit in place would be worse than losing it, because a later recovery
+would restore an epoch that cannot read post-rotation content and fail with an
+opaque decrypt error. The chosen behaviour is therefore: rotating an account
+that stores a kit requires the current recovery code, mints a fresh kit for the
+new epoch that keeps every earlier epoch, and publishes keyfile and kit in one
+request so the stored pair never disagrees. Without the code the rotation is
+refused (the client refuses locally and the backend refuses a publish that
+leaves a stored kit behind). Because a kit now carries the retained epochs the
+keyfile carries, recovering from a post-rotation kit keeps pre-rotation
+revisions readable; older kits without that field keep working unchanged, and a
+kit minted for a superseded epoch is reported as stale with an actionable
+message rather than an authentication failure.

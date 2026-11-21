@@ -3,7 +3,7 @@
 
 use nntdrive_backend::state::{AppState, ServerConfig};
 use nntdrive_client::{download_file, upload_file, ApiClient};
-use nntdrive_crypto::{derive_auth_verifier, DeviceKeypair, KeyFile};
+use nntdrive_crypto::{derive_auth_verifier, DeviceKeypair, KeyFile, RecoveryKit};
 use nntdrive_nntp::{MockConfig, MockNntpServer, NntpPool};
 use nntdrive_storage::{FileManifest, TestDb};
 use serde_json::json;
@@ -29,16 +29,28 @@ struct Stack {
     account_id: Uuid,
     master: nntdrive_crypto::MasterKey,
     keyfile: KeyFile,
+    /// The kit registered with the account, if this fixture registered one.
+    recovery_kit: Option<(RecoveryKit, String)>,
     device_id: Uuid,
     _cache: tempfile::TempDir,
     _handle: tokio::task::JoinHandle<()>,
 }
 
 async fn stack() -> Option<Stack> {
-    stack_with_pool_limit(None).await
+    stack_inner(None, false).await
 }
 
 async fn stack_with_pool_limit(max_connections: Option<u32>) -> Option<Stack> {
+    stack_inner(max_connections, false).await
+}
+
+/// A stack whose account registered a recovery kit, so rotation has to replace
+/// the stored kit instead of leaving a stale one behind.
+async fn stack_with_recovery_kit() -> Option<Stack> {
+    stack_inner(None, true).await
+}
+
+async fn stack_inner(max_connections: Option<u32>, with_recovery_kit: bool) -> Option<Stack> {
     let db = TestDb::create().await?;
     let backend_pool = if let Some(max) = max_connections {
         let schema = db.schema.clone();
@@ -90,23 +102,32 @@ async fn stack_with_pool_limit(max_connections: Option<u32>) -> Option<Stack> {
     let account_id = Uuid::new_v4();
     let password = "correct horse battery staple";
     let (keyfile, master) = KeyFile::create(password, account_id).unwrap();
+    let recovery_kit = if with_recovery_kit {
+        Some(RecoveryKit::create(&master, Some("e2e kit".into())).unwrap())
+    } else {
+        None
+    };
     let device = DeviceKeypair::generate();
     let verifier = derive_auth_verifier(password, account_id);
     let http = reqwest::Client::new();
+    let mut payload = json!({
+        "account_id": account_id,
+        "email": "e2e@example.com",
+        "verifier": verifier,
+        "keyfile": &keyfile,
+        "device": {
+            "id": Uuid::new_v4(),
+            "name": "e2e",
+            "platform": "test",
+            "public_key": base64(&device.public().0),
+        }
+    });
+    if let Some((kit, _)) = &recovery_kit {
+        payload["recovery_kit"] = json!(kit);
+    }
     let res = http
         .post(format!("http://{addr}/api/v1/auth/register"))
-        .json(&json!({
-            "account_id": account_id,
-            "email": "e2e@example.com",
-            "verifier": verifier,
-            "keyfile": &keyfile,
-            "device": {
-                "id": Uuid::new_v4(),
-                "name": "e2e",
-                "platform": "test",
-                "public_key": base64(&device.public().0),
-            }
-        }))
+        .json(&payload)
         .send()
         .await
         .unwrap();
@@ -127,6 +148,7 @@ async fn stack_with_pool_limit(max_connections: Option<u32>) -> Option<Stack> {
         account_id,
         master,
         keyfile,
+        recovery_kit,
         device_id,
         _cache: cache,
         _handle: handle,

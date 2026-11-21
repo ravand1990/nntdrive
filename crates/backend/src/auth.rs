@@ -580,18 +580,22 @@ pub async fn revoke_device(
 }
 
 /// Returns the account keyfile for an authenticated device. It is encrypted
-/// with the account password, so the server still cannot read it.
+/// with the account password, so the server still cannot read it. The stored
+/// recovery kit is returned alongside it (encrypted with the offline recovery
+/// code) so a client can tell whether a kit needs replacing after a rotation.
 pub async fn get_keyfile(
     State(state): State<AppState>,
     auth: Auth,
 ) -> ApiResult<impl IntoResponse> {
-    let keyfile: Option<Value> = sqlx::query_scalar("SELECT keyfile FROM accounts WHERE id = $1")
-        .bind(auth.account_id)
-        .fetch_optional(&state.pool)
-        .await?
-        .flatten();
-    match keyfile {
-        Some(keyfile) if keyfile.is_object() => Ok(Json(json!({ "keyfile": keyfile }))),
+    let row: Option<(Option<Value>, Option<Value>)> =
+        sqlx::query_as("SELECT keyfile, recovery_kit FROM accounts WHERE id = $1")
+            .bind(auth.account_id)
+            .fetch_optional(&state.pool)
+            .await?;
+    match row {
+        Some((Some(keyfile), recovery_kit)) if keyfile.is_object() => Ok(Json(
+            json!({ "keyfile": keyfile, "recovery_kit": recovery_kit }),
+        )),
         _ => Err(ApiError::NotFound),
     }
 }
@@ -600,6 +604,10 @@ pub async fn get_keyfile(
 pub struct PublishKeyfilePayload {
     pub keyfile: Value,
     pub expected_epoch: u32,
+    /// Recovery kit minted for the new epoch. Required when the account already
+    /// stores a kit: the old one cannot read post-rotation content.
+    #[serde(default)]
+    pub recovery_kit: Option<Value>,
 }
 
 /// Publishes a rotated keyfile. Rotation happens client-side, so the server
@@ -607,6 +615,10 @@ pub struct PublishKeyfilePayload {
 /// `expected_epoch` must still be the stored epoch and the new keyfile must
 /// carry exactly the next one. Repeating an already applied publish returns
 /// success, because a client cannot tell a lost response from a lost request.
+///
+/// A kit supplied with the keyfile is validated for the same account and the
+/// new epoch and stored in the same transaction, so the stored kit never
+/// disagrees with the stored keyfile.
 pub async fn publish_keyfile(
     State(state): State<AppState>,
     auth: Auth,
@@ -637,29 +649,74 @@ pub async fn publish_keyfile(
     }
     let key_epoch = i32::try_from(epoch)
         .map_err(|_| ApiError::BadRequest("keyfile epoch is out of range".into()))?;
+    if let Some(kit) = &body.recovery_kit {
+        if !kit.is_object() {
+            return Err(ApiError::BadRequest(
+                "recovery_kit must be an object".into(),
+            ));
+        }
+        let kit_account: Uuid = kit
+            .get("account_id")
+            .and_then(Value::as_str)
+            .and_then(|raw| raw.parse().ok())
+            .ok_or_else(|| ApiError::BadRequest("recovery kit account_id is required".into()))?;
+        if kit_account != auth.account_id {
+            return Err(ApiError::Forbidden);
+        }
+        let kit_epoch = kit
+            .get("epoch")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| ApiError::BadRequest("recovery kit epoch is required".into()))?;
+        if kit_epoch != epoch {
+            return Err(ApiError::BadRequest(
+                "recovery kit epoch must match the new keyfile epoch".into(),
+            ));
+        }
+    }
 
     let mut tx = state.pool.begin().await?;
-    let stored: Option<Value> =
-        sqlx::query_scalar("SELECT keyfile FROM accounts WHERE id = $1 FOR UPDATE")
+    let stored: Option<(Option<Value>, Option<Value>)> =
+        sqlx::query_as("SELECT keyfile, recovery_kit FROM accounts WHERE id = $1 FOR UPDATE")
             .bind(auth.account_id)
             .fetch_optional(&mut *tx)
-            .await?
-            .flatten();
-    let stored = stored.ok_or(ApiError::NotFound)?;
-    if stored == body.keyfile {
-        tx.rollback().await?;
+            .await?;
+    let (stored_keyfile, stored_kit) = stored.ok_or(ApiError::NotFound)?;
+    let stored_keyfile = stored_keyfile.ok_or(ApiError::NotFound)?;
+    if stored_keyfile == body.keyfile {
+        // A repeated publish must not leave the kit behind the keyfile.
+        if let Some(kit) = &body.recovery_kit {
+            if stored_kit.as_ref() != Some(kit) {
+                sqlx::query("UPDATE accounts SET recovery_kit = $2 WHERE id = $1")
+                    .bind(auth.account_id)
+                    .bind(kit)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+        }
+        tx.commit().await?;
         return Ok(Json(json!({ "epoch": epoch, "already_applied": true })));
     }
-    let stored_epoch = stored.get("epoch").and_then(Value::as_u64).unwrap_or(0);
+    let stored_epoch = stored_keyfile
+        .get("epoch")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
     if stored_epoch != u64::from(body.expected_epoch) {
         tx.rollback().await?;
         return Err(ApiError::Conflict(
             "keyfile epoch changed; reload the account key".into(),
         ));
     }
-    sqlx::query("UPDATE accounts SET keyfile = $2 WHERE id = $1")
+    if stored_kit.is_some() && body.recovery_kit.is_none() {
+        tx.rollback().await?;
+        return Err(ApiError::Conflict(
+            "account stores a recovery kit; publish the kit for the new epoch with the keyfile"
+                .into(),
+        ));
+    }
+    sqlx::query("UPDATE accounts SET keyfile = $2, recovery_kit = $3 WHERE id = $1")
         .bind(auth.account_id)
         .bind(&body.keyfile)
+        .bind(&body.recovery_kit)
         .execute(&mut *tx)
         .await?;
     if let Some(device_id) = auth.device_id {

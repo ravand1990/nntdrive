@@ -38,11 +38,19 @@ success, legacy fallback or automatic retry for either protocol.
 | GET | `/me` | account, quota, usage, devices |
 | GET | `/devices` | device list |
 | DELETE | `/devices/{id}` | revoke device + tokens; response says key rotation is required |
+| GET | `/account/keyfile` | `{keyfile, recovery_kit}`; both are client-encrypted |
+| POST | `/account/keyfile` | `{keyfile, expected_epoch, recovery_kit?}` → `{epoch, already_applied?}` |
 
 `verifier` is the 64-hex Argon2id value from
 `nntdrive_crypto::derive_auth_verifier(password, account_id)`. Passwords are
 never sent. The first registered account becomes administrator if no account
 exists; afterwards registration is disabled unless `NNTDRIVE_ALLOW_REGISTRATION=1`.
+
+`/account/keyfile` stores only client-encrypted material. A publish must carry
+exactly the next epoch after `expected_epoch`; when the account already stores a
+recovery kit the same request must carry the kit minted for the new epoch,
+otherwise it is refused with 409 so the stored kit can never fall behind the
+keyfile. Repeating an applied publish is idempotent.
 
 Legacy `device.name` input is accepted but discarded, not stored or echoed.
 `/me` and `/devices` return `Device` in compatibility name fields. Migration 0008
