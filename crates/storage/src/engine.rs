@@ -158,7 +158,7 @@ impl PreparedChunk {
 /// Compresses and encrypts one chunk **on the client**. The backend never sees
 /// the inputs to this function.
 pub fn prepare_chunk(
-    master: &MasterKey,
+    master: &impl nntdrive_crypto::AccountKey,
     chunk: &Chunk,
     compression_level: i32,
 ) -> Result<PreparedChunk> {

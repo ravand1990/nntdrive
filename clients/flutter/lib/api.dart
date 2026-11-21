@@ -431,6 +431,19 @@ class ApiClient {
     return j['token'] as String;
   }
 
+  /// The account keyfile the server holds. It stays password-wrapped, so the
+  /// server still cannot read it; the client unlocks it locally.
+  Future<Map<String, dynamic>?> keyfile() async {
+    try {
+      final j = await _send('GET', '/account/keyfile');
+      final keyfile = j['keyfile'];
+      return keyfile is Map<String, dynamic> ? keyfile : null;
+    } on ApiException catch (e) {
+      if (e.status == 404) return null;
+      rethrow;
+    }
+  }
+
   Future<String> lookupAccountId(String email) async {
     final j = await _send('GET', '/auth/lookup?email=${Uri.encodeQueryComponent(email)}');
     return j['account_id'] as String;

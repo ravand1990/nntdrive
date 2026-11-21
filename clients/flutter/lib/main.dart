@@ -16,6 +16,7 @@ import 'api.dart';
 import 'account_roots.dart';
 import 'device_onboarding.dart';
 import 'device_name.dart';
+import 'keyfile_refresh.dart';
 import 'app_layout.dart';
 import 'app_theme.dart';
 import 'activity_log.dart';
@@ -338,13 +339,33 @@ class _NntDriveAppState extends State<NntDriveApp> {
     required String email,
     required String password,
   }) async {
-    final unlocked = await NativeBridge.instance.unlockAsync(keyfileJson, password);
+    // Another device may have rotated the account master key since this device
+    // saved its keyfile. Prefer the newer published copy (which still carries
+    // the previous epochs) so pre-rotation revisions stay readable; an offline
+    // or refused fetch keeps the local copy. Both stay password-wrapped.
+    final effectiveKeyfile = await newestKeyfileJson(
+      api: _authenticatedApi(server, token),
+      storedJson: keyfileJson,
+      accountId: accountId,
+    );
+    var unlockKeyfile = effectiveKeyfile;
+    late Map<String, dynamic> unlocked;
+    try {
+      unlocked = await NativeBridge.instance.unlockAsync(unlockKeyfile, password);
+    } catch (_) {
+      // A published keyfile this device cannot open (corrupt copy, rollback or
+      // a different password) must not lock the local one out. A wrong password
+      // fails again here and surfaces as before.
+      if (effectiveKeyfile == keyfileJson) rethrow;
+      unlockKeyfile = keyfileJson;
+      unlocked = await NativeBridge.instance.unlockAsync(unlockKeyfile, password);
+    }
     var adopted = false;
     try {
       if (!mounted || _ending) return;
       await widget.prefs.setString('server', server);
       await widget.prefs.setString('token', token);
-      await _keyfileVault.save(keyfileJson);
+      await _keyfileVault.save(unlockKeyfile);
       await widget.prefs.setString('accountId', accountId);
       await widget.prefs.setString('email', email);
       if (!mounted || _ending) return;
@@ -368,7 +389,7 @@ class _NntDriveAppState extends State<NntDriveApp> {
       setState(() {
         _server = server;
         _token = token;
-        _keyfile = keyfileJson;
+        _keyfile = unlockKeyfile;
         _accountId = accountId;
         _email = email;
         _session = Session(

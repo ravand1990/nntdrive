@@ -1,7 +1,7 @@
 //! Authenticated preparation and guarded publication for bounded file Copy.
 //! Separate create/commit requests are never used as a Copy fallback.
 use crate::{ClientError, Result};
-use nntdrive_crypto::{Envelope, MasterKey};
+use nntdrive_crypto::{AccountKey, Envelope};
 use nntdrive_storage::manifest::FileManifest;
 use uuid::Uuid;
 
@@ -23,7 +23,7 @@ pub struct PreparedFileCopy {
 /// derived per-file key, but that key is not used by v1 storage. This is NOT a
 /// cross-account copy or an independently revocable encryption domain.
 pub fn prepare_file_copy(
-    master: &MasterKey,
+    master: &impl AccountKey,
     source_id: Uuid,
     source_revision: Uuid,
     source_name: &[u8],
@@ -100,7 +100,7 @@ impl crate::ApiClient {
     /// Same-folder copies collide intentionally; rename-copy UI is not provided.
     pub async fn copy_file_checked(
         &self,
-        master: &MasterKey,
+        master: &impl AccountKey,
         source: &crate::FileDto,
         parent: Option<Uuid>,
     ) -> Result<(Uuid, Uuid)> {
@@ -199,7 +199,7 @@ mod tests {
 
     #[test]
     fn copy_rebinds_authenticated_metadata_and_preserves_source() {
-        let master = MasterKey::generate(Uuid::new_v4(), 0);
+        let master = nntdrive_crypto::MasterKey::generate(Uuid::new_v4(), 0);
         let id = Uuid::new_v4();
         let revision = Uuid::new_v4();
         let mut source =
@@ -274,7 +274,7 @@ mod tests {
                 .unwrap(),
             source.to_bytes()
         );
-        let other = MasterKey::generate(Uuid::new_v4(), 0);
+        let other = nntdrive_crypto::MasterKey::generate(Uuid::new_v4(), 0);
         assert!(prepare_file_copy(&other, id, revision, &name, &sealed).is_err());
         assert!(prepare_file_copy(&master, Uuid::new_v4(), revision, &name, &sealed).is_err());
         let mut tampered = sealed.clone();

@@ -1362,8 +1362,10 @@ many files were already changed instead of claiming nothing happened.
 3. **Device revocation + AMK epoch rotation**: the crypto crate rotates the AMK,
    keeps previous epochs wrapped in the keyfile so old revisions stay readable,
    and the backend stores/publishes the rotated keyfile behind an epoch guard;
-   a client SDK call performs the whole rotation. Still to do: an in-app
-   rotation control with FFI wiring, and recreating the recovery kit afterwards.
+   a client SDK call performs the whole rotation. The native handle now keeps
+   every retained epoch and the app adopts a newer published keyfile at unlock,
+   so pre-rotation revisions stay readable. Still to do: an in-app rotation
+   control, and recreating the recovery kit afterwards.
 4. **Windows packaging**: code signing, installer/updater, and a clean-VM test
    without SDKs. The FFI DLL must ship next to the executable. Hosted Windows
    native tests/builds are now blocking; installer/restart validation remains open.
@@ -1414,10 +1416,12 @@ many files were already changed instead of claiming nothing happened.
   account-menu batches; isolated browser acceptance remains unperformed; see
   API compatibility notes before enabling. This deletes only local metadata.
 - AMK rotation exists in the crypto crate and client SDK (`rotate_account_key`)
-  and is published through `POST /account/keyfile`; there is no in-app control,
-  so revocation still needs a client that calls it, and the installed two-device
-  check is unperformed. A recovery kit created before a rotation restores only
-  its own epoch until it is recreated.
+  and is published through `POST /account/keyfile`. The native bridge unlocks a
+  full key ring and the app fetches the newest published keyfile at unlock, so
+  old and new revisions open on a remaining device; there is no in-app rotation
+  control yet, so revocation still needs a client that calls it, and the
+  installed two-device check is unperformed. A recovery kit created before a
+  rotation restores only its own epoch until it is recreated.
 - The release image is `linux/amd64` only. Native arm runners or a successful
   QEMU build are needed for `linux/arm64`; no multi-arch manifest is published yet.
 - Client CI builds Linux/Android/Windows; Windows native unit tests and release

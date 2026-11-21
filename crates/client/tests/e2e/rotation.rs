@@ -3,7 +3,7 @@
 //! revoked device loses access to both the keyfile and new content.
 
 use super::*;
-use nntdrive_client::ClientError;
+use nntdrive_client::{download_file, upload_file, ClientError};
 
 const PASSWORD: &str = "correct horse battery staple";
 
@@ -140,4 +140,77 @@ async fn rotation_publish_rejects_stale_and_foreign_writers() {
         ClientError::Api { status, .. } => assert_eq!(status, 403),
         other => panic!("unexpected error: {other}"),
     }
+}
+
+/// The real SDK upload/download path the app calls through FFI: a revision
+/// uploaded before a rotation and one uploaded after it must both download with
+/// the ring a second device gets from the published keyfile.
+#[tokio::test]
+async fn rotation_keeps_sdk_uploads_and_downloads_readable_across_epochs() {
+    let Some(s) = stack().await else { return };
+    let mut api = ApiClient::new(s.base_url.clone()).unwrap();
+    api.set_token(s.token.clone());
+    let dir = tempfile::tempdir().unwrap();
+
+    // Revision uploaded while epoch 0 is current.
+    let before_id = create_node(&api, &s.master, "before.bin").await;
+    let before_path = dir.path().join("before.bin");
+    let before_bytes = vec![7u8; 12_345];
+    tokio::fs::write(&before_path, &before_bytes).await.unwrap();
+    upload_file(
+        &api,
+        &s.master,
+        before_id,
+        Uuid::new_v4(),
+        None,
+        &before_path,
+    )
+    .await
+    .unwrap();
+
+    // Rotate and publish, then reopen the keyfile the way another device does.
+    let (rotated_keyfile, _) =
+        nntdrive_client::rotate_account_key(&api, &s.keyfile, &s.master, PASSWORD)
+            .await
+            .unwrap();
+    assert!(rotated_keyfile.retained.len() == 1);
+    let published = api.account_keyfile().await.unwrap();
+    let ring = serde_json::from_value::<KeyFile>(published)
+        .unwrap()
+        .unlock_ring(PASSWORD)
+        .unwrap();
+    assert_eq!(ring.epochs().collect::<Vec<_>>(), vec![1, 0]);
+
+    // Revision uploaded after the rotation seals with the current epoch.
+    let after_id = create_node(&api, &ring, "after.bin").await;
+    let after_path = dir.path().join("after.bin");
+    let after_bytes = vec![9u8; 4_096];
+    tokio::fs::write(&after_path, &after_bytes).await.unwrap();
+    upload_file(&api, &ring, after_id, Uuid::new_v4(), None, &after_path)
+        .await
+        .unwrap();
+
+    // Both revisions download through the ring (old manifest and chunk epoch
+    // included), which is what the native handle now holds.
+    let before_out = dir.path().join("before.out");
+    download_file(&api, &ring, before_id, None, &before_out)
+        .await
+        .unwrap();
+    assert_eq!(tokio::fs::read(&before_out).await.unwrap(), before_bytes);
+    let after_out = dir.path().join("after.out");
+    download_file(&api, &ring, after_id, None, &after_out)
+        .await
+        .unwrap();
+    assert_eq!(tokio::fs::read(&after_out).await.unwrap(), after_bytes);
+
+    // The pre-rotation key alone cannot authenticate the newer revision.
+    let denied = download_file(
+        &api,
+        &s.master,
+        after_id,
+        None,
+        &dir.path().join("denied.out"),
+    )
+    .await;
+    assert!(denied.is_err());
 }
