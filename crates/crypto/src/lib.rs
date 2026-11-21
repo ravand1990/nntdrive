@@ -173,6 +173,16 @@ impl KdfParams {
     }
 }
 
+/// One previous AMK epoch, still wrapped under the same password-derived key as
+/// the current epoch. It is retained so revisions written before a rotation
+/// stay readable; see [`KeyFile::rotate`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RetainedEpoch {
+    pub epoch: u32,
+    pub wrapped_master_key: Envelope,
+    pub retired_at: chrono::DateTime<chrono::Utc>,
+}
+
 /// A password-protected copy of the account master key. This is the only
 /// credential file the server stores; the password never leaves the client.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -183,6 +193,11 @@ pub struct KeyFile {
     pub kdf: KdfParams,
     pub wrapped_master_key: Envelope,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    /// Older AMK epochs, oldest first. Empty for a keyfile that was never
+    /// rotated and omitted from JSON in that case, so pre-rotation keyfiles
+    /// stay byte-identical and older clients still parse a rotated one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub retained: Vec<RetainedEpoch>,
 }
 
 impl KeyFile {
@@ -206,21 +221,42 @@ impl KeyFile {
                 kdf,
                 wrapped_master_key: wrapped,
                 created_at: chrono::Utc::now(),
+                retained: Vec::new(),
             },
             master,
         ))
     }
 
-    /// Re-wraps `master` under a new password/salt. Used for password changes
-    /// and for epoch rotation after device revocation.
-    pub fn rewrap(&self, master: &MasterKey, password: &str) -> Result<Self> {
+    /// Re-wraps the current and every retained epoch under a new password.
+    ///
+    /// The old password is required because retained epochs are only decryptable
+    /// through the keyfile's password-derived key; without re-wrapping them a
+    /// password change would leave pre-rotation revisions behind the old
+    /// password.
+    pub fn rewrap(
+        &self,
+        master: &MasterKey,
+        old_password: &str,
+        new_password: &str,
+    ) -> Result<Self> {
+        let old_kek = self.kdf.derive(old_password.as_bytes())?;
         let kdf = KdfParams::generate();
-        let kek = kdf.derive(password.as_bytes())?;
+        let kek = kdf.derive(new_password.as_bytes())?;
         let wrapped = envelope::seal(
             &kek,
             &amk_wrap_aad(self.account_id, master.epoch),
             master.expose_secret(),
         )?;
+        let mut retained = self.retained.clone();
+        for entry in &mut retained {
+            let plain = envelope::open(
+                &old_kek,
+                &amk_wrap_aad(self.account_id, entry.epoch),
+                &entry.wrapped_master_key,
+            )?;
+            entry.wrapped_master_key =
+                envelope::seal(&kek, &amk_wrap_aad(self.account_id, entry.epoch), &plain)?;
+        }
         Ok(Self {
             version: Self::VERSION,
             account_id: self.account_id,
@@ -228,7 +264,96 @@ impl KeyFile {
             kdf,
             wrapped_master_key: wrapped,
             created_at: chrono::Utc::now(),
+            retained,
         })
+    }
+
+    /// Rotates to a fresh AMK epoch and returns the new keyfile together with
+    /// the new master key. New content must be sealed with the returned key.
+    ///
+    /// The previous epoch stays wrapped inside the keyfile, so revisions that
+    /// were written before the rotation remain readable for every device that
+    /// receives this keyfile. A device that only kept the old keyfile cannot
+    /// read content sealed under the new epoch.
+    ///
+    /// Rotation only happens locally; the caller decides whether and how to
+    /// publish the new keyfile (for example via `POST /account/keyfile`). A
+    /// failed publication leaves the old keyfile valid and unchanged.
+    pub fn rotate(&self, master: &MasterKey, password: &str) -> Result<(Self, MasterKey)> {
+        if self.version != Self::VERSION {
+            return Err(CryptoError::UnsupportedVersion(self.version));
+        }
+        if master.account_id() != self.account_id || master.epoch() != self.epoch {
+            return Err(CryptoError::Malformed("master key does not match keyfile"));
+        }
+        let rotated = master.rotate();
+        let old_kek = self.kdf.derive(password.as_bytes())?;
+        let kdf = KdfParams::generate();
+        let kek = kdf.derive(password.as_bytes())?;
+        let wrapped = envelope::seal(
+            &kek,
+            &amk_wrap_aad(self.account_id, rotated.epoch),
+            rotated.expose_secret(),
+        )?;
+        // Every retained epoch must stay readable through the new password-derived
+        // key, so re-wrap the whole ring instead of only the current epoch.
+        let mut retained = self.retained.clone();
+        for entry in &mut retained {
+            let plain = envelope::open(
+                &old_kek,
+                &amk_wrap_aad(self.account_id, entry.epoch),
+                &entry.wrapped_master_key,
+            )?;
+            entry.wrapped_master_key =
+                envelope::seal(&kek, &amk_wrap_aad(self.account_id, entry.epoch), &plain)?;
+        }
+        retained.retain(|r| r.epoch != self.epoch);
+        retained.push(RetainedEpoch {
+            epoch: self.epoch,
+            wrapped_master_key: envelope::seal(
+                &kek,
+                &amk_wrap_aad(self.account_id, self.epoch),
+                master.expose_secret(),
+            )?,
+            retired_at: chrono::Utc::now(),
+        });
+        retained.sort_by_key(|r| r.epoch);
+        Ok((
+            Self {
+                version: Self::VERSION,
+                account_id: self.account_id,
+                epoch: rotated.epoch,
+                kdf,
+                wrapped_master_key: wrapped,
+                created_at: chrono::Utc::now(),
+                retained,
+            },
+            rotated,
+        ))
+    }
+
+    /// Unlocks the current epoch and every retained epoch at once.
+    pub fn unlock_ring(&self, password: &str) -> Result<MasterKeyRing> {
+        let current = self.unlock(password)?;
+        let kek = self.kdf.derive(password.as_bytes())?;
+        let mut previous = Vec::with_capacity(self.retained.len());
+        for entry in &self.retained {
+            let bytes = envelope::open(
+                &kek,
+                &amk_wrap_aad(self.account_id, entry.epoch),
+                &entry.wrapped_master_key,
+            )?;
+            if entry.epoch >= self.epoch {
+                return Err(CryptoError::Malformed("retained epoch is not older"));
+            }
+            previous.push(MasterKey::from_secret(
+                self.account_id,
+                entry.epoch,
+                SecretKey::from_slice(&bytes)?,
+            ));
+        }
+        previous.sort_by_key(|m| m.epoch);
+        Ok(MasterKeyRing { current, previous })
     }
 
     pub fn unlock(&self, password: &str) -> Result<MasterKey> {
@@ -439,6 +564,141 @@ impl MasterKey {
         aad.extend_from_slice(file_id.as_bytes());
         aad.extend_from_slice(revision.as_bytes());
         envelope::open(&key, &aad, envelope)
+    }
+}
+
+/// An unlocked keyfile: the current AMK plus every retained epoch.
+///
+/// New content is always sealed with the current epoch. Reads fall back to the
+/// retained epochs so revisions written before a rotation keep working. The
+/// fallback authenticates every candidate, so a wrong-epoch envelope simply
+/// fails rather than producing plaintext.
+pub struct MasterKeyRing {
+    current: MasterKey,
+    previous: Vec<MasterKey>,
+}
+
+impl std::fmt::Debug for MasterKeyRing {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MasterKeyRing")
+            .field("epoch", &self.current.epoch)
+            .field(
+                "retained_epochs",
+                &self
+                    .previous
+                    .iter()
+                    .map(MasterKey::epoch)
+                    .collect::<Vec<_>>(),
+            )
+            .finish()
+    }
+}
+
+impl MasterKeyRing {
+    pub fn current(&self) -> &MasterKey {
+        &self.current
+    }
+
+    pub fn epoch(&self) -> u32 {
+        self.current.epoch
+    }
+
+    pub fn epochs(&self) -> impl Iterator<Item = u32> + '_ {
+        std::iter::once(self.current.epoch).chain(self.previous.iter().rev().map(MasterKey::epoch))
+    }
+
+    pub fn master_for_epoch(&self, epoch: u32) -> Option<&MasterKey> {
+        if epoch == self.current.epoch {
+            return Some(&self.current);
+        }
+        self.previous.iter().find(|m| m.epoch == epoch)
+    }
+
+    /// Current epoch first, then retained epochs newest to oldest.
+    fn candidates(&self) -> impl Iterator<Item = &MasterKey> {
+        std::iter::once(&self.current).chain(self.previous.iter().rev())
+    }
+
+    pub fn seal_name(&self, node_id: Uuid, plaintext_name: &str) -> Result<Envelope> {
+        self.current.seal_name(node_id, plaintext_name)
+    }
+
+    pub fn open_name(&self, node_id: Uuid, envelope: &Envelope) -> Result<String> {
+        for master in self.candidates() {
+            match master.open_name(node_id, envelope) {
+                Ok(name) => return Ok(name),
+                Err(CryptoError::Authentication) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Err(CryptoError::Authentication)
+    }
+
+    pub fn seal_manifest(
+        &self,
+        file_id: Uuid,
+        revision: Uuid,
+        plaintext: &[u8],
+    ) -> Result<Envelope> {
+        self.current.seal_manifest(file_id, revision, plaintext)
+    }
+
+    pub fn open_manifest(
+        &self,
+        file_id: Uuid,
+        revision: Uuid,
+        envelope: &Envelope,
+    ) -> Result<Vec<u8>> {
+        for master in self.candidates() {
+            match master.open_manifest(file_id, revision, envelope) {
+                Ok(plain) => return Ok(plain),
+                Err(CryptoError::Authentication) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Err(CryptoError::Authentication)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn seal_chunk(
+        &self,
+        chunk_id: Uuid,
+        plaintext_hash: &[u8; 32],
+        plaintext_len: u64,
+        compression: u8,
+        plaintext: &[u8],
+    ) -> Result<Envelope> {
+        self.current.seal_chunk(
+            chunk_id,
+            plaintext_hash,
+            plaintext_len,
+            compression,
+            plaintext,
+        )
+    }
+
+    pub fn open_chunk(
+        &self,
+        chunk_id: Uuid,
+        plaintext_hash: &[u8; 32],
+        plaintext_len: u64,
+        compression: u8,
+        envelope: &Envelope,
+    ) -> Result<Vec<u8>> {
+        for master in self.candidates() {
+            match master.open_chunk(
+                chunk_id,
+                plaintext_hash,
+                plaintext_len,
+                compression,
+                envelope,
+            ) {
+                Ok(plain) => return Ok(plain),
+                Err(CryptoError::Authentication) => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Err(CryptoError::Authentication)
     }
 }
 
@@ -680,5 +940,181 @@ mod tests {
         assert!(removed_master
             .open_chunk(chunk_id, &hash, plaintext.len() as u64, 0, &envelope)
             .is_err());
+    }
+
+    #[test]
+    fn rotation_keeps_old_and_new_revisions_readable() {
+        let account = Uuid::new_v4();
+        let password = "correct horse battery staple";
+        let (keyfile, master) = KeyFile::create(password, account).unwrap();
+        let node = Uuid::new_v4();
+        let file = Uuid::new_v4();
+        let old_rev = Uuid::new_v4();
+        let old_name = master.seal_name(node, "old revision.txt").unwrap();
+        let old_manifest = master
+            .seal_manifest(file, old_rev, b"{\"chunks\":[]}")
+            .unwrap();
+        let old_chunk_id = Uuid::new_v4();
+        let old_plaintext = b"content written before the rotation";
+        let old_hash = *blake3::hash(old_plaintext).as_bytes();
+        let old_chunk = master
+            .seal_chunk(
+                old_chunk_id,
+                &old_hash,
+                old_plaintext.len() as u64,
+                0,
+                old_plaintext,
+            )
+            .unwrap();
+
+        let (rotated_keyfile, rotated) = keyfile.rotate(&master, password).unwrap();
+        assert_eq!(rotated.epoch(), 1);
+        assert_eq!(rotated_keyfile.epoch, 1);
+        assert_eq!(rotated_keyfile.retained.len(), 1);
+        assert_eq!(rotated_keyfile.retained[0].epoch, 0);
+
+        let ring = rotated_keyfile.unlock_ring(password).unwrap();
+        assert_eq!(ring.epoch(), 1);
+        assert_eq!(ring.epochs().collect::<Vec<_>>(), vec![1, 0]);
+        assert_eq!(ring.open_name(node, &old_name).unwrap(), "old revision.txt");
+        assert_eq!(
+            ring.open_manifest(file, old_rev, &old_manifest).unwrap(),
+            b"{\"chunks\":[]}".to_vec()
+        );
+        assert_eq!(
+            ring.open_chunk(
+                old_chunk_id,
+                &old_hash,
+                old_plaintext.len() as u64,
+                0,
+                &old_chunk
+            )
+            .unwrap(),
+            old_plaintext.to_vec()
+        );
+
+        let new_name = ring.seal_name(node, "new revision.txt").unwrap();
+        let new_chunk_id = Uuid::new_v4();
+        let new_plaintext = b"content written after the rotation";
+        let new_hash = *blake3::hash(new_plaintext).as_bytes();
+        let new_chunk = ring
+            .seal_chunk(
+                new_chunk_id,
+                &new_hash,
+                new_plaintext.len() as u64,
+                0,
+                new_plaintext,
+            )
+            .unwrap();
+        assert_eq!(ring.open_name(node, &new_name).unwrap(), "new revision.txt");
+        assert_eq!(
+            ring.open_chunk(
+                new_chunk_id,
+                &new_hash,
+                new_plaintext.len() as u64,
+                0,
+                &new_chunk
+            )
+            .unwrap(),
+            new_plaintext.to_vec()
+        );
+        // Old epoch keys must not authenticate new-epoch content.
+        assert!(master.open_name(node, &new_name).is_err());
+        assert!(master
+            .open_chunk(
+                new_chunk_id,
+                &new_hash,
+                new_plaintext.len() as u64,
+                0,
+                &new_chunk
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn revoked_device_with_only_the_old_keyfile_cannot_read_new_content() {
+        let account = Uuid::new_v4();
+        let password = "correct horse battery staple";
+        let (keyfile, master) = KeyFile::create(password, account).unwrap();
+        let (_, rotated) = keyfile.rotate(&master, password).unwrap();
+
+        let revoked_view = keyfile.unlock(password).unwrap();
+        assert_eq!(revoked_view.epoch(), 0);
+        let node = Uuid::new_v4();
+        let sealed = rotated.seal_name(node, "after revocation.txt").unwrap();
+        assert!(revoked_view.open_name(node, &sealed).is_err());
+
+        let chunk_id = Uuid::new_v4();
+        let plaintext = b"new content";
+        let hash = *blake3::hash(plaintext).as_bytes();
+        let chunk = rotated
+            .seal_chunk(chunk_id, &hash, plaintext.len() as u64, 0, plaintext)
+            .unwrap();
+        assert!(revoked_view
+            .open_chunk(chunk_id, &hash, plaintext.len() as u64, 0, &chunk)
+            .is_err());
+    }
+
+    #[test]
+    fn repeated_rotation_retains_every_epoch_and_survives_rewrap() {
+        let account = Uuid::new_v4();
+        let password = "pw";
+        let (keyfile, master) = KeyFile::create(password, account).unwrap();
+        let node = Uuid::new_v4();
+        let epoch0 = master.seal_name(node, "epoch zero").unwrap();
+        let (kf1, master1) = keyfile.rotate(&master, password).unwrap();
+        let epoch1 = master1.seal_name(node, "epoch one").unwrap();
+        let (kf2, master2) = kf1.rotate(&master1, password).unwrap();
+        let epoch2 = master2.seal_name(node, "epoch two").unwrap();
+
+        let rewrapped = kf2.rewrap(&master2, "pw", "new password").unwrap();
+        assert_eq!(rewrapped.retained.len(), 2);
+        assert_eq!(
+            rewrapped
+                .retained
+                .iter()
+                .map(|r| r.epoch)
+                .collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+        let ring = rewrapped.unlock_ring("new password").unwrap();
+        assert_eq!(ring.epochs().collect::<Vec<_>>(), vec![2, 1, 0]);
+        assert_eq!(ring.open_name(node, &epoch0).unwrap(), "epoch zero");
+        assert_eq!(ring.open_name(node, &epoch1).unwrap(), "epoch one");
+        assert_eq!(ring.open_name(node, &epoch2).unwrap(), "epoch two");
+        assert!(rewrapped.unlock(password).is_err());
+    }
+
+    #[test]
+    fn failed_rotation_attempt_leaves_the_old_keyfile_valid() {
+        let account = Uuid::new_v4();
+        let password = "pw";
+        let (keyfile, master) = KeyFile::create(password, account).unwrap();
+        // A keyfile from another account/epoch must not be rotated with this key.
+        let (other_keyfile, _other_master) = KeyFile::create(password, Uuid::new_v4()).unwrap();
+        assert!(other_keyfile.rotate(&master, password).is_err());
+        let (wrong_epoch, _) = keyfile.rotate(&master, password).unwrap();
+        assert!(wrong_epoch.rotate(&master, password).is_err());
+
+        // The locally rotated keyfile was never published; the stored one still
+        // unlocks the old epoch and its content.
+        let node = Uuid::new_v4();
+        let sealed = master.seal_name(node, "kept").unwrap();
+        let still_valid = keyfile.unlock(password).unwrap();
+        assert_eq!(still_valid.epoch(), 0);
+        assert_eq!(still_valid.open_name(node, &sealed).unwrap(), "kept");
+    }
+
+    #[test]
+    fn unrotated_keyfile_json_has_no_retained_field() {
+        let (keyfile, master) = KeyFile::create("pw", Uuid::new_v4()).unwrap();
+        let json = serde_json::to_value(&keyfile).unwrap();
+        assert!(json.get("retained").is_none());
+        // A rotated keyfile round-trips through JSON with its retained epochs.
+        let (rotated, _) = keyfile.rotate(&master, "pw").unwrap();
+        let encoded = serde_json::to_string(&rotated).unwrap();
+        let decoded: KeyFile = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded.retained.len(), 1);
+        assert_eq!(decoded.retained[0].epoch, 0);
     }
 }

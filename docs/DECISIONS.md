@@ -88,3 +88,16 @@ The upload commits a chunk only after `k + 1` shards (capped at all shards) are
 verified. If a provider claims success but articles are not retrievable, the
 upload fails instead of creating a version that cannot be downloaded. Orphaned
 articles are acceptable; a broken committed version is not.
+
+## ADR-013: Key rotation keeps previous AMK epochs inside the keyfile
+
+Rotation cannot make already-posted content unreadable to a device that held the
+old key, so its job is to keep new content out of reach. A rotation therefore
+creates a fresh AMK epoch, uses it for all new content, and retains the previous
+epoch wrapped under the same password-derived key inside the keyfile. Decryption
+tries the current epoch first and then retained epochs, each authenticated, so a
+wrong-epoch envelope simply fails. Retained epochs are re-wrapped whenever the
+keyfile is rotated or its password changes, which keeps one KDF per keyfile and
+prevents pre-rotation revisions from staying behind an old password. The backend
+stores only the client-encrypted keyfile and an expected-epoch guard; it still
+has no way to derive any AMK.

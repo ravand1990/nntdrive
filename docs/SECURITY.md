@@ -105,9 +105,15 @@ No algorithm is implemented by this project.
 - **New device**: existing device wraps the AMK to the new device's X25519 public
   key. Enrollment is authenticated by the account token; current release has no
   separate approval UI.
-- **Lose a device**: revoke its token/device in the API or admin UI, generate a
-  new AMK epoch, wrap it for remaining devices, and re-encrypt new content.
-  NNTDrive exposes the instruction but does not automate epoch rotation yet.
+- **Lose a device**: revoke its token/device in the API or admin UI, then rotate
+  the AMK epoch (`KeyFile::rotate` / `rotate_account_key`). The rotated keyfile
+  keeps earlier epochs wrapped, so old revisions stay readable, and remaining
+  devices fetch it from `GET /account/keyfile` after unlocking it with the
+  account password. New content uses the new epoch; a revoked device can no
+  longer fetch the keyfile. There is no in-app rotation control yet, and a
+  recovery kit created before a rotation still restores only its own epoch, so
+  create a fresh kit afterwards. See #8 and the follow-up issue for the
+  remaining client wiring.
 - **Password change**: re-wrap the AMK under a new password/salt; the old keyfile
   is invalidated client-side.
 - **Recovery**: restore the keyfile from the kit + code, or rebuild a keyfile
@@ -140,6 +146,8 @@ No algorithm is implemented by this project.
 - No PAKE (OPAQUE/SRP): the verifier is password-equivalent over TLS. A
   compromised TLS endpoint could replay it to the backend.
 - No server-side rollback protection for manifests.
-- Device removal does not automatically rotate the AMK epoch in this release.
+- Device removal does not automatically rotate the AMK epoch: rotation is a
+  client operation exposed by the SDK, with no in-app control yet. Content that
+  the removed device already downloaded stays readable to it.
 - Sharing/link endpoints are incomplete; do not advertise secure sharing yet.
 - No security audit has been performed. Treat this as alpha software.

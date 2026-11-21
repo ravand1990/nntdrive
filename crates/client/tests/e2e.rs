@@ -18,6 +18,8 @@ mod copy_pool_tests;
 mod copy_tree_tests;
 #[path = "e2e/interruption.rs"]
 mod interruption_tests;
+#[path = "e2e/rotation.rs"]
+mod rotation_tests;
 
 struct Stack {
     _db: TestDb,
@@ -26,6 +28,8 @@ struct Stack {
     token: String,
     account_id: Uuid,
     master: nntdrive_crypto::MasterKey,
+    keyfile: KeyFile,
+    device_id: Uuid,
     _cache: tempfile::TempDir,
     _handle: tokio::task::JoinHandle<()>,
 }
@@ -95,7 +99,7 @@ async fn stack_with_pool_limit(max_connections: Option<u32>) -> Option<Stack> {
             "account_id": account_id,
             "email": "e2e@example.com",
             "verifier": verifier,
-            "keyfile": keyfile,
+            "keyfile": &keyfile,
             "device": {
                 "id": Uuid::new_v4(),
                 "name": "e2e",
@@ -113,6 +117,7 @@ async fn stack_with_pool_limit(max_connections: Option<u32>) -> Option<Stack> {
     );
     let body: serde_json::Value = res.json().await.unwrap();
     let token = body["token"].as_str().unwrap().to_string();
+    let device_id: Uuid = body["device_id"].as_str().unwrap().parse().unwrap();
 
     Some(Stack {
         _db: db,
@@ -121,6 +126,8 @@ async fn stack_with_pool_limit(max_connections: Option<u32>) -> Option<Stack> {
         token,
         account_id,
         master,
+        keyfile,
+        device_id,
         _cache: cache,
         _handle: handle,
     })

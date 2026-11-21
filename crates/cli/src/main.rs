@@ -468,7 +468,7 @@ async fn main() -> Result<()> {
             let master = kit.unlock(&recovery_code)?;
             let keyfile = KeyFile::create(&password, master.account_id())?;
             // Reuse the restored master, not the newly generated one.
-            let kf = keyfile.0.rewrap(&master, &password)?;
+            let kf = keyfile.0.rewrap(&master, &password, &password)?;
             std::fs::write(&out, serde_json::to_vec_pretty(&kf)?)?;
             println!(
                 "restored keyfile: {} (epoch {})",
