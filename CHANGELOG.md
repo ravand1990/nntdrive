@@ -6,6 +6,8 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-11-21
+
 ### Bug fixes
 
 - In the **Not synced** list every row is now announced as one screen-reader item — name, status, reason and folder in that order — instead of three fragments in layout order, so the status and reason are no longer heard apart from the file they describe. The retry button stays a separate control, status is still shown as text plus icon rather than colour alone, and nothing new leaves the device (#79).
