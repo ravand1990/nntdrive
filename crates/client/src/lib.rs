@@ -6,7 +6,7 @@
 //! backend proxy, verify hashes, reconstruct, decrypt and write atomically.
 
 use base64::Engine;
-use nntdrive_crypto::{CryptoError, Envelope, MasterKey};
+use nntdrive_crypto::{CryptoError, Envelope, KeyFile, MasterKey};
 use nntdrive_storage::chunker::{hash_hex, ChunkStream};
 use nntdrive_storage::erasure;
 use nntdrive_storage::manifest::{ChunkEntry, Compression, FileManifest};
@@ -228,6 +228,36 @@ impl ApiClient {
         serde_json::from_value(versions).map_err(|e| ClientError::Protocol(e.to_string()))
     }
 
+    /// Fetches the account keyfile. It is password-wrapped, so a device still
+    /// needs the account password before it can use it.
+    pub async fn account_keyfile(&self) -> Result<serde_json::Value> {
+        let res = self
+            .auth(self.http.get(self.url("/account/keyfile")))
+            .send()
+            .await?;
+        let value: serde_json::Value = self.check(res).await?.json().await?;
+        value
+            .get("keyfile")
+            .cloned()
+            .ok_or_else(|| ClientError::Protocol("keyfile missing from response".into()))
+    }
+
+    /// Publishes a client-rotated keyfile. `expected_epoch` is the epoch the
+    /// caller believes is current; a stale writer is refused with 409.
+    pub async fn publish_keyfile(&self, keyfile: &KeyFile, expected_epoch: u32) -> Result<u32> {
+        let res = self
+            .auth(self.http.post(self.url("/account/keyfile")))
+            .json(&json!({ "keyfile": keyfile, "expected_epoch": expected_epoch }))
+            .send()
+            .await?;
+        let value: serde_json::Value = self.check(res).await?.json().await?;
+        value
+            .get("epoch")
+            .and_then(|epoch| epoch.as_u64())
+            .map(|epoch| epoch as u32)
+            .ok_or_else(|| ClientError::Protocol("keyfile epoch missing from response".into()))
+    }
+
     pub async fn manifest(&self, file_id: Uuid, revision: Option<Uuid>) -> Result<(Vec<u8>, Uuid)> {
         let mut req = self
             .http
@@ -367,6 +397,28 @@ impl ApiClient {
             .await?;
         Ok(self.check(res).await?.bytes().await?.to_vec())
     }
+}
+
+/// Rotates the account master key after a device revocation and publishes the
+/// new keyfile for the remaining devices.
+///
+/// The rotated keyfile keeps the previous epoch wrapped inside it, so revisions
+/// written before the rotation stay readable. When publication fails the new
+/// key material is discarded and the stored keyfile is unchanged, so a failed
+/// attempt never locks anyone out. Repeating the call after an ambiguous
+/// network failure is safe: the server recognises an already applied keyfile.
+///
+/// A concurrent rotation on another device surfaces as `ClientError::Api` with
+/// status 409; re-fetch the keyfile and retry only after reopening it.
+pub async fn rotate_account_key(
+    api: &ApiClient,
+    keyfile: &KeyFile,
+    master: &MasterKey,
+    password: &str,
+) -> Result<(KeyFile, MasterKey)> {
+    let (rotated_keyfile, rotated_master) = keyfile.rotate(master, password)?;
+    api.publish_keyfile(&rotated_keyfile, keyfile.epoch).await?;
+    Ok((rotated_keyfile, rotated_master))
 }
 
 /// Encrypts and uploads a local file as a new immutable revision.

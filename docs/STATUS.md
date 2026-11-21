@@ -1359,9 +1359,11 @@ many files were already changed instead of claiming nothing happened.
    and a preferences fallback (#7). Still to do: Keychain (iOS/macOS), plus
    unlock-after-upgrade checks on each platform; keep the recovery kit policy
    documented.
-3. **Device revocation + AMK epoch rotation**: implement client-side rotation,
-   re-wrap for remaining devices, and retain old epoch keys for old revisions;
-   today the backend only instructs the client to rotate.
+3. **Device revocation + AMK epoch rotation**: the crypto crate rotates the AMK,
+   keeps previous epochs wrapped in the keyfile so old revisions stay readable,
+   and the backend stores/publishes the rotated keyfile behind an epoch guard;
+   a client SDK call performs the whole rotation. Still to do: an in-app
+   rotation control with FFI wiring, and recreating the recovery kit afterwards.
 4. **Windows packaging**: code signing, installer/updater, and a clean-VM test
    without SDKs. The FFI DLL must ship next to the executable. Hosted Windows
    native tests/builds are now blocking; installer/restart validation remains open.
@@ -1411,8 +1413,11 @@ many files were already changed instead of claiming nothing happened.
   Explicit unlocked Flutter reference backfill ships in bounded, retry-safe
   account-menu batches; isolated browser acceptance remains unperformed; see
   API compatibility notes before enabling. This deletes only local metadata.
-- No AMK rotation command yet; device revocation instructs the client but does
-  not perform client-side key rotation automatically.
+- AMK rotation exists in the crypto crate and client SDK (`rotate_account_key`)
+  and is published through `POST /account/keyfile`; there is no in-app control,
+  so revocation still needs a client that calls it, and the installed two-device
+  check is unperformed. A recovery kit created before a rotation restores only
+  its own epoch until it is recreated.
 - The release image is `linux/amd64` only. Native arm runners or a successful
   QEMU build are needed for `linux/arm64`; no multi-arch manifest is published yet.
 - Client CI builds Linux/Android/Windows; Windows native unit tests and release

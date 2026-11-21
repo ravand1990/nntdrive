@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Features
+
+- Root key rotation after a device revocation: `KeyFile::rotate` creates a new AMK epoch and keeps every previous epoch wrapped inside the keyfile, `MasterKeyRing` reads names, manifests and chunks sealed under any retained epoch while new content always uses the current one, and `KeyFile::rewrap` re-wraps the whole ring on a password change. The backend stores and publishes a rotated keyfile through `GET`/`POST /api/v1/account/keyfile`, guarded by an expected epoch so two rotations cannot fork the account key. The client SDK exposes `fetch_keyfile` and `rotate_account_key`; a failed publish leaves the stored keyfile untouched, and an already applied publish is idempotent (#8).
+
 ## [0.33.0] - 2026-11-20
 
 ### Features

@@ -579,6 +579,101 @@ pub async fn revoke_device(
     })))
 }
 
+/// Returns the account keyfile for an authenticated device. It is encrypted
+/// with the account password, so the server still cannot read it.
+pub async fn get_keyfile(
+    State(state): State<AppState>,
+    auth: Auth,
+) -> ApiResult<impl IntoResponse> {
+    let keyfile: Option<Value> = sqlx::query_scalar("SELECT keyfile FROM accounts WHERE id = $1")
+        .bind(auth.account_id)
+        .fetch_optional(&state.pool)
+        .await?
+        .flatten();
+    match keyfile {
+        Some(keyfile) if keyfile.is_object() => Ok(Json(json!({ "keyfile": keyfile }))),
+        _ => Err(ApiError::NotFound),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PublishKeyfilePayload {
+    pub keyfile: Value,
+    pub expected_epoch: u32,
+}
+
+/// Publishes a rotated keyfile. Rotation happens client-side, so the server
+/// only stores the new password-wrapped keyfile and refuses stale writers:
+/// `expected_epoch` must still be the stored epoch and the new keyfile must
+/// carry exactly the next one. Repeating an already applied publish returns
+/// success, because a client cannot tell a lost response from a lost request.
+pub async fn publish_keyfile(
+    State(state): State<AppState>,
+    auth: Auth,
+    Json(body): Json<PublishKeyfilePayload>,
+) -> ApiResult<impl IntoResponse> {
+    if !body.keyfile.is_object() {
+        return Err(ApiError::BadRequest("keyfile must be an object".into()));
+    }
+    let account_id: Uuid = body
+        .keyfile
+        .get("account_id")
+        .and_then(Value::as_str)
+        .and_then(|raw| raw.parse().ok())
+        .ok_or_else(|| ApiError::BadRequest("keyfile account_id is required".into()))?;
+    if account_id != auth.account_id {
+        return Err(ApiError::Forbidden);
+    }
+    let epoch = body
+        .keyfile
+        .get("epoch")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| ApiError::BadRequest("keyfile epoch is required".into()))?;
+    let next_epoch = u64::from(body.expected_epoch) + 1;
+    if epoch != next_epoch {
+        return Err(ApiError::BadRequest(
+            "keyfile epoch must follow the expected epoch".into(),
+        ));
+    }
+    let key_epoch = i32::try_from(epoch)
+        .map_err(|_| ApiError::BadRequest("keyfile epoch is out of range".into()))?;
+
+    let mut tx = state.pool.begin().await?;
+    let stored: Option<Value> =
+        sqlx::query_scalar("SELECT keyfile FROM accounts WHERE id = $1 FOR UPDATE")
+            .bind(auth.account_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .flatten();
+    let stored = stored.ok_or(ApiError::NotFound)?;
+    if stored == body.keyfile {
+        tx.rollback().await?;
+        return Ok(Json(json!({ "epoch": epoch, "already_applied": true })));
+    }
+    let stored_epoch = stored.get("epoch").and_then(Value::as_u64).unwrap_or(0);
+    if stored_epoch != u64::from(body.expected_epoch) {
+        tx.rollback().await?;
+        return Err(ApiError::Conflict(
+            "keyfile epoch changed; reload the account key".into(),
+        ));
+    }
+    sqlx::query("UPDATE accounts SET keyfile = $2 WHERE id = $1")
+        .bind(auth.account_id)
+        .bind(&body.keyfile)
+        .execute(&mut *tx)
+        .await?;
+    if let Some(device_id) = auth.device_id {
+        sqlx::query("UPDATE devices SET key_epoch = $3 WHERE account_id = $1 AND id = $2")
+            .bind(auth.account_id)
+            .bind(device_id)
+            .bind(key_epoch)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(Json(json!({ "epoch": epoch })))
+}
+
 /// Stores an encrypted provider password for the admin API. Never returns it.
 pub fn seal_provider_password(state: &AppState, password: &str) -> Vec<u8> {
     encrypt_secret(&state.config.secret_key, password.as_bytes())
