@@ -333,7 +333,9 @@ class OverviewFolderInput {
       {this.running = false, this.progressPath, this.progressDirection,
       this.progressComplete, this.errorReasons,
       this.activePlan = const [], this.planTotal, this.activeTransfers = const [],
-      this.scanEntries = const [], this.scanTotal = 0});
+      this.scanEntries = const [], this.scanTotal = 0,
+      this.compareEntries = const [], this.compareTotal = 0,
+      this.comparing = false});
 
   final String id;
   final String name;
@@ -362,6 +364,17 @@ class OverviewFolderInput {
 
   /// Number of scanned paths the engine reported, including unretained ones.
   final int scanTotal;
+
+  /// Bounded remote paths the running snapshot already compared (`path`,
+  /// `is_dir`). Names were decrypted on this device.
+  final List<Map<String, dynamic>> compareEntries;
+
+  /// Number of compared remote paths the snapshot reported.
+  final int compareTotal;
+
+  /// True once the running sync started listing the remote copy, so scan rows
+  /// must not stand in for the comparison any more.
+  final bool comparing;
 }
 
 /// Copies only the scalar plan fields the mapper consumes. Paths are already
@@ -401,7 +414,10 @@ OverviewFolderInput _withActiveProgress(
     int? planTotal,
     List<String> activeTransfers = const [],
     List<Map<String, dynamic>> scanEntries = const [],
-    int scanTotal = 0}) {
+    int scanTotal = 0,
+    List<Map<String, dynamic>> compareEntries = const [],
+    int compareTotal = 0,
+    bool comparing = false}) {
   final path = progress?['path'];
   final direction = progress?['direction'];
   final complete = progress?['complete'];
@@ -412,7 +428,8 @@ OverviewFolderInput _withActiveProgress(
       progressComplete: complete is bool ? complete : null,
       activePlan: activePlan, planTotal: planTotal,
       activeTransfers: activeTransfers, scanEntries: scanEntries,
-      scanTotal: scanTotal);
+      scanTotal: scanTotal, compareEntries: compareEntries,
+      compareTotal: compareTotal, comparing: comparing);
 }
 
 /// Live recheck of a folder that started syncing after the initial freeze.
@@ -423,7 +440,10 @@ OverviewFolderInput _liveActiveProgress(
         planTotal: source.activePlanTotal,
         activeTransfers: List<String>.unmodifiable(source.activeTransferPaths),
         scanEntries: _freezeScanEntries(source.activeScanEntries),
-        scanTotal: source.activeScanTotal);
+        scanTotal: source.activeScanTotal,
+        compareEntries: _freezeScanEntries(source.activeCompareEntries),
+        compareTotal: source.activeCompareTotal,
+        comparing: source.activeCompareStarted);
 
 // Freeze only fields consumed by mapping. Recursively copying whole error
 // records would traverse unused diagnostic payloads on the UI isolate and
@@ -461,7 +481,10 @@ OverviewFolderInput _freezeOverviewFolder(SyncFolderConfig folder) {
           planTotal: folder.activePlanTotal,
           activeTransfers: List<String>.unmodifiable(folder.activeTransferPaths),
           scanEntries: _freezeScanEntries(folder.activeScanEntries),
-          scanTotal: folder.activeScanTotal)
+          scanTotal: folder.activeScanTotal,
+          compareEntries: _freezeScanEntries(folder.activeCompareEntries),
+          compareTotal: folder.activeCompareTotal,
+          comparing: folder.activeCompareStarted)
       : input;
 }
 
@@ -537,6 +560,57 @@ OverviewFolderMapping _mapUnsyncedFolder(
           'The rest appear when sync finishes and the list refreshes.',
         ));
       }
+      return _mappedFolder(folder, entries, notices, truncated);
+    }
+    if (folder.comparing) {
+      // Snapshot phase: name the remote paths the comparison has already listed
+      // instead of one opaque root row. Nothing is reconciled yet, so every row
+      // stays Pending and none is retryable.
+      final compared = List<Map<String, dynamic>>.of(folder.compareEntries)
+        ..sort((a, b) => (a['path'] as String).compareTo(b['path'] as String));
+      for (final item in compared) {
+        if (entries.length >= maxEntries) {
+          truncated = true;
+          break;
+        }
+        entries.add(UnsyncedEntry(
+          status: UnsyncedStatus.pending,
+          folderId: folder.id,
+          folderName: folder.name,
+          path: item['path'] as String,
+          isDirectory: item['is_dir'] == true,
+          retryable: false,
+          reason: 'Comparing with the remote copy.',
+        ));
+      }
+      if (compared.isEmpty) {
+        // An empty remote folder reports no path: keep one root row so the
+        // folder is still visible while the comparison runs.
+        if (maxEntries > 0) {
+          entries.add(UnsyncedEntry(
+            status: UnsyncedStatus.pending,
+            folderId: folder.id,
+            folderName: folder.name,
+            path: '',
+            isDirectory: true,
+            retryable: false,
+            reason: 'Comparing this folder with the remote copy.',
+          ));
+        } else {
+          truncated = true;
+        }
+      }
+      final reported = folder.compareTotal > folder.compareEntries.length
+          ? folder.compareTotal
+          : folder.compareEntries.length;
+      if (reported > entries.length) truncated = true;
+      notices.add(UnsyncedNotice(
+          folder.name,
+          truncated
+              ? 'Showing ${entries.length} of $reported remote paths compared. '
+                  'Queued items appear as soon as the plan is ready.'
+              : 'Comparing this folder with the remote copy. Queued items '
+                  'appear as soon as the plan is ready.'));
       return _mappedFolder(folder, entries, notices, truncated);
     }
     if (folder.scanEntries.isNotEmpty) {

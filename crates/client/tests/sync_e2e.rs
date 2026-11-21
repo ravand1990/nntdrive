@@ -621,6 +621,67 @@ async fn folder_move_blocks_exclusions_and_collisions_without_losing_content() {
     assert!(local.path().join("saved/private/file").exists());
 }
 
+#[tokio::test]
+async fn snapshot_reports_compared_remote_paths_while_listing() {
+    let Some(s) = stack().await else { return };
+    let root = make_root(&s, &api(&s), "compare-rows").await;
+    let source = tempfile::tempdir().unwrap();
+    let journals = tempfile::tempdir().unwrap();
+    tokio::fs::create_dir(source.path().join("nested"))
+        .await
+        .unwrap();
+    tokio::fs::write(source.path().join("uploaded.txt"), b"hello")
+        .await
+        .unwrap();
+    tokio::fs::write(source.path().join("nested/inner.txt"), b"inner")
+        .await
+        .unwrap();
+    let uploaded = sync(
+        &s,
+        root,
+        source.path(),
+        &journals.path().join("a.sqlite"),
+        "device-a",
+    )
+    .await;
+    assert_eq!(uploaded.uploaded, 2, "{uploaded:?}");
+
+    // A second device lists the remote tree over real HTTP. The snapshot has to
+    // name the paths it compared while the listing is still running.
+    let target = tempfile::tempdir().unwrap();
+    let batches: Arc<std::sync::Mutex<Vec<Vec<String>>>> = Arc::default();
+    let sink = batches.clone();
+    let mut remote = HttpRemote::new(api(&s), s.master.clone(), root);
+    let journal = Journal::open(journals.path().join("b.sqlite"))
+        .await
+        .unwrap();
+    let report = SyncEngine::new("device-b")
+        .with_snapshot_observer(Arc::new(move |paths| {
+            sink.lock()
+                .unwrap()
+                .push(paths.iter().map(|path| path.path.clone()).collect());
+        }))
+        .run_once(&mut remote, target.path(), &journal, "2026-11-04T120000Z")
+        .await
+        .unwrap();
+    assert_eq!(report.downloaded, 2, "{report:?}");
+
+    let batches = batches.lock().unwrap().clone();
+    assert!(
+        batches
+            .iter()
+            .all(|batch| batch.len() <= nntdrive_sync::SNAPSHOT_PROGRESS_BATCH),
+        "bounded batches: {batches:?}"
+    );
+    let reported: Vec<String> = batches.into_iter().flatten().collect();
+    for expected in ["uploaded.txt", "nested", "nested/inner.txt"] {
+        assert!(
+            reported.iter().any(|path| path == expected),
+            "{expected} missing from {reported:?}"
+        );
+    }
+}
+
 fn b64(bytes: &[u8]) -> String {
     use base64::Engine;
     base64::engine::general_purpose::STANDARD.encode(bytes)

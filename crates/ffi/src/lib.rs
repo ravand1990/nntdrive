@@ -99,6 +99,16 @@ fn scan_event(paths: &[nntdrive_sync::ScannedPath]) -> String {
     json!({"phase":"scan","items":items}).to_string()
 }
 
+/// One live compare batch: relative remote paths the snapshot has already
+/// listed. Names were decrypted locally; nothing here is sent to the backend.
+fn snapshot_event(paths: &[nntdrive_sync::ScannedPath]) -> String {
+    let items: Vec<Value> = paths
+        .iter()
+        .map(|compared| json!({"path":compared.path,"is_dir":compared.is_dir}))
+        .collect();
+    json!({"phase":"compare","items":items}).to_string()
+}
+
 /// Frees a string returned by any `nntdrive_*` function.
 ///
 /// # Safety
@@ -621,6 +631,16 @@ pub unsafe extern "C" fn nntdrive_sync_request(
                     // live "scanning" view before any plan exists. Relative
                     // local paths only; nothing is sent to the backend.
                     cb(CString::new(scan_event(paths))
+                        .expect("JSON contains no NUL")
+                        .into_raw());
+                }
+            }))
+            .with_snapshot_observer(std::sync::Arc::new(move |paths| {
+                if let Some(cb) = callback {
+                    // Bounded batches of remote paths the snapshot has already
+                    // compared, for a live "comparing" view after the scan.
+                    // Names are decrypted locally; nothing goes to the server.
+                    cb(CString::new(snapshot_event(paths))
                         .expect("JSON contains no NUL")
                         .into_raw());
                 }
@@ -1563,5 +1583,31 @@ mod tests {
             json!([]),
             "an empty batch stays a valid event"
         );
+    }
+
+    #[test]
+    fn snapshot_event_names_compared_remote_paths_only() {
+        let paths = vec![
+            nntdrive_sync::ScannedPath {
+                path: "notes".into(),
+                is_dir: true,
+            },
+            nntdrive_sync::ScannedPath {
+                path: "notes/todo.txt".into(),
+                is_dir: false,
+            },
+        ];
+        let value: Value = serde_json::from_str(&snapshot_event(&paths)).unwrap();
+        assert_eq!(value["phase"], "compare");
+        assert_eq!(
+            value["items"],
+            json!([
+                {"path": "notes", "is_dir": true},
+                {"path": "notes/todo.txt", "is_dir": false},
+            ])
+        );
+        let empty: Value = serde_json::from_str(&snapshot_event(&[])).unwrap();
+        assert_eq!(empty["phase"], "compare");
+        assert_eq!(empty["items"], json!([]));
     }
 }

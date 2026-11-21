@@ -129,6 +129,19 @@ class SyncFolderConfig {
   /// beyond the retained bound. Zero until the scan reports its first batch.
   int activeScanTotal = 0;
 
+  /// Bounded, device-local view of the remote paths the running snapshot has
+  /// already compared: one entry per path with `path` and `is_dir`. Names were
+  /// decrypted on this device; nothing here is sent to the backend.
+  List<Map<String, dynamic>> activeCompareEntries = [];
+
+  /// Number of remote paths the snapshot reported for this run, including paths
+  /// beyond the retained bound.
+  int activeCompareTotal = 0;
+
+  /// True once the running sync has started comparing the remote copy, so the
+  /// overview names compared paths instead of the scan rows that preceded it.
+  bool activeCompareStarted = false;
+
   /// File transfers the native sync reported as completed during the latest
   /// run, bounded and device-local. Only relative paths the client already
   /// owns; cleared when the next run starts, never persisted or sent.
@@ -898,6 +911,10 @@ class SyncController extends ChangeNotifier {
   /// caps what it reports; the count still reflects every reported path.
   static const int activeScanLimit = 256;
 
+  /// Upper bound on compared remote paths retained for the live overview, with
+  /// the same contract as [activeScanLimit].
+  static const int activeCompareLimit = 256;
+
   /// Upper bound on completed transfers retained per run. The activity feed
   /// names at most a small prefix of these and summarises the remainder, so a
   /// misbehaving producer cannot grow client memory or the local log.
@@ -909,6 +926,9 @@ class SyncController extends ChangeNotifier {
     folder.activeTransferPaths = {};
     folder.activeScanEntries = [];
     folder.activeScanTotal = 0;
+    folder.activeCompareEntries = [];
+    folder.activeCompareTotal = 0;
+    folder.activeCompareStarted = false;
   }
 
   /// Keeps one bounded record per completed file transfer of this run.
@@ -958,6 +978,31 @@ class SyncController extends ChangeNotifier {
         }
       }
       // One notification per bounded batch, like plan batches.
+      notifyListeners();
+      return;
+    }
+    if (phase == 'compare') {
+      // The snapshot lists the remote tree after the local scan. Name what has
+      // been compared instead of keeping the now-stale scan rows.
+      if (!folder.activeCompareStarted) {
+        folder.activeCompareStarted = true;
+        folder.activeScanEntries = [];
+        folder.activeScanTotal = 0;
+      }
+      final items = event['items'];
+      if (items is List) {
+        for (final item in items) {
+          if (item is! Map) continue;
+          final path = item['path'];
+          if (path is! String || path.isEmpty) continue;
+          folder.activeCompareTotal += 1;
+          if (folder.activeCompareEntries.length >= activeCompareLimit) continue;
+          folder.activeCompareEntries.add(<String, dynamic>{
+            'path': path,
+            'is_dir': item['is_dir'] == true,
+          });
+        }
+      }
       notifyListeners();
       return;
     }
