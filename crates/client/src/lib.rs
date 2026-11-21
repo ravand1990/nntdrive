@@ -6,7 +6,7 @@
 //! backend proxy, verify hashes, reconstruct, decrypt and write atomically.
 
 use base64::Engine;
-use nntdrive_crypto::{AccountKey, CryptoError, Envelope, KeyFile, MasterKey};
+use nntdrive_crypto::{AccountKey, CryptoError, Envelope, KeyFile, MasterKey, RecoveryKit};
 use nntdrive_storage::chunker::{hash_hex, ChunkStream};
 use nntdrive_storage::erasure;
 use nntdrive_storage::manifest::{ChunkEntry, Compression, FileManifest};
@@ -42,6 +42,8 @@ pub enum ClientError {
     Integrity(String),
     #[error("not found")]
     NotFound,
+    #[error("the account stores recovery kit epoch {kit_epoch}; rotating needs its recovery code so the stored kit can be replaced for the new epoch (use rotate_account_key_with_recovery_kit)")]
+    RecoveryKitRequired { kit_epoch: u32 },
 }
 
 pub type Result<T> = std::result::Result<T, ClientError>;
@@ -242,12 +244,50 @@ impl ApiClient {
             .ok_or_else(|| ClientError::Protocol("keyfile missing from response".into()))
     }
 
+    /// Fetches the account's stored recovery kit, if one was registered.
+    ///
+    /// The kit is encrypted with the offline recovery code, so fetching it is
+    /// safe; it is only useful to whoever also holds that code.
+    pub async fn recovery_kit(&self) -> Result<Option<RecoveryKit>> {
+        let res = self
+            .auth(self.http.get(self.url("/account/keyfile")))
+            .send()
+            .await?;
+        let value: serde_json::Value = self.check(res).await?.json().await?;
+        match value.get("recovery_kit") {
+            Some(kit) if kit.is_object() => serde_json::from_value(kit.clone())
+                .map(Some)
+                .map_err(|e| ClientError::Protocol(format!("recovery kit is unreadable: {e}"))),
+            _ => Ok(None),
+        }
+    }
+
     /// Publishes a client-rotated keyfile. `expected_epoch` is the epoch the
     /// caller believes is current; a stale writer is refused with 409.
     pub async fn publish_keyfile(&self, keyfile: &KeyFile, expected_epoch: u32) -> Result<u32> {
+        self.publish_keyfile_with_kit(keyfile, expected_epoch, None)
+            .await
+    }
+
+    /// Publishes a rotated keyfile together with the recovery kit minted for
+    /// the new epoch, so the stored kit and the stored keyfile never disagree.
+    ///
+    /// An account that already stores a kit refuses a publish without one: the
+    /// old kit cannot read post-rotation content, so replacing it in the same
+    /// request is the only way to keep recovery working.
+    pub async fn publish_keyfile_with_kit(
+        &self,
+        keyfile: &KeyFile,
+        expected_epoch: u32,
+        recovery_kit: Option<&RecoveryKit>,
+    ) -> Result<u32> {
+        let mut body = json!({ "keyfile": keyfile, "expected_epoch": expected_epoch });
+        if let Some(kit) = recovery_kit {
+            body["recovery_kit"] = json!(kit);
+        }
         let res = self
             .auth(self.http.post(self.url("/account/keyfile")))
-            .json(&json!({ "keyfile": keyfile, "expected_epoch": expected_epoch }))
+            .json(&body)
             .send()
             .await?;
         let value: serde_json::Value = self.check(res).await?.json().await?;
@@ -399,6 +439,16 @@ impl ApiClient {
     }
 }
 
+/// A completed rotation: the keyfile and master key for the new epoch plus the
+/// recovery kit minted for it. The recovery code inside is shown exactly once
+/// and must be stored offline; the previous code no longer opens anything.
+pub struct RotatedAccountKey {
+    pub keyfile: KeyFile,
+    pub master: MasterKey,
+    pub recovery_kit: RecoveryKit,
+    pub recovery_code: String,
+}
+
 /// Rotates the account master key after a device revocation and publishes the
 /// new keyfile for the remaining devices.
 ///
@@ -408,6 +458,11 @@ impl ApiClient {
 /// attempt never locks anyone out. Repeating the call after an ambiguous
 /// network failure is safe: the server recognises an already applied keyfile.
 ///
+/// An account that stores a recovery kit must rotate with its recovery code
+/// (see [`rotate_account_key_with_recovery_kit`]): the stored kit is wrapped
+/// for the old epoch and would silently become useless. This function refuses
+/// instead of leaving a stale kit behind.
+///
 /// A concurrent rotation on another device surfaces as `ClientError::Api` with
 /// status 409; re-fetch the keyfile and retry only after reopening it.
 pub async fn rotate_account_key(
@@ -416,9 +471,40 @@ pub async fn rotate_account_key(
     master: &MasterKey,
     password: &str,
 ) -> Result<(KeyFile, MasterKey)> {
+    if let Some(kit) = api.recovery_kit().await? {
+        return Err(ClientError::RecoveryKitRequired {
+            kit_epoch: kit.epoch,
+        });
+    }
     let (rotated_keyfile, rotated_master) = keyfile.rotate(master, password)?;
     api.publish_keyfile(&rotated_keyfile, keyfile.epoch).await?;
     Ok((rotated_keyfile, rotated_master))
+}
+
+/// Rotates the account master key and replaces the stored recovery kit with one
+/// minted for the new epoch, in the same publish request.
+///
+/// The current recovery code is required to mint the replacement. The returned
+/// code is new and must be shown to the user once; the old code stops working.
+pub async fn rotate_account_key_with_recovery_kit(
+    api: &ApiClient,
+    keyfile: &KeyFile,
+    master: &MasterKey,
+    password: &str,
+    recovery_kit: &RecoveryKit,
+    recovery_code: &str,
+    note: Option<String>,
+) -> Result<RotatedAccountKey> {
+    let (rotated_keyfile, rotated_master) = keyfile.rotate(master, password)?;
+    let (rotated_kit, rotated_code) = recovery_kit.rotate(recovery_code, &rotated_master, note)?;
+    api.publish_keyfile_with_kit(&rotated_keyfile, keyfile.epoch, Some(&rotated_kit))
+        .await?;
+    Ok(RotatedAccountKey {
+        keyfile: rotated_keyfile,
+        master: rotated_master,
+        recovery_kit: rotated_kit,
+        recovery_code: rotated_code,
+    })
 }
 
 /// Encrypts and uploads a local file as a new immutable revision.

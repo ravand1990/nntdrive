@@ -452,10 +452,17 @@ async fn main() -> Result<()> {
             out,
         } => {
             let kf: KeyFile = serde_json::from_slice(&std::fs::read(&keyfile)?)?;
-            let master = kf.unlock(&password)?;
-            let (kit, code) = RecoveryKit::create(&master, None)?;
+            let ring = kf.unlock_ring(&password)?;
+            let (kit, code) = RecoveryKit::create_with_ring(&ring, None)?;
             std::fs::write(&out, kit.to_json_pretty()?)?;
             println!("recovery kit: {}", out.display());
+            println!(
+                "epochs covered: {}",
+                ring.epochs()
+                    .map(|epoch| epoch.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
             println!("RECOVERY CODE (shown once, store offline): {code}");
         }
         Command::RecoveryRestore {
@@ -465,15 +472,21 @@ async fn main() -> Result<()> {
             out,
         } => {
             let kit = RecoveryKit::from_json(&std::fs::read_to_string(&kit)?)?;
-            let master = kit.unlock(&recovery_code)?;
-            let keyfile = KeyFile::create(&password, master.account_id())?;
-            // Reuse the restored master, not the newly generated one.
-            let kf = keyfile.0.rewrap(&master, &password, &password)?;
+            // Restore every epoch the kit covers, not only the current one, so
+            // revisions written before a rotation stay readable after recovery.
+            let ring = kit.unlock_ring(&recovery_code)?;
+            let kf = KeyFile::from_ring(&ring, &password)?;
             std::fs::write(&out, serde_json::to_vec_pretty(&kf)?)?;
             println!(
-                "restored keyfile: {} (epoch {})",
+                "restored keyfile: {} (epochs {})",
                 out.display(),
-                master.epoch()
+                ring.epochs()
+                    .map(|epoch| epoch.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            println!(
+                "check the account's published keyfile epoch before relying on this kit; a kit minted before a key rotation cannot restore newer content"
             );
         }
         Command::Demo {

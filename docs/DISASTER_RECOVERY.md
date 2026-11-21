@@ -13,7 +13,9 @@
 | `checkpoint.json` | With each DB backup | Integrity/version reference; not secret |
 
 The recovery kit contains the AMK wrapped with a 256-bit recovery code through
-Argon2id. It contains no user files. Treat it as the root of recovery.
+Argon2id. It contains no user files. Treat it as the root of recovery. A kit
+minted after a key rotation also carries the earlier epochs, so it restores
+revisions sealed before that rotation as well.
 
 ## Recovery anchor design
 
@@ -99,6 +101,13 @@ nntdrive recovery-restore --kit recovery.json --out new.keyfile.json
 
 Then restore the DB backup and continue. The new keyfile wraps the same AMK, so
 existing content remains readable.
+
+If the account key was rotated after the kit was minted, that kit cannot restore
+the newer content. `recovery-restore` reports the epochs it covers, and a client
+compares the kit epoch with the account's published keyfile epoch before relying
+on it: a stale kit is reported with an actionable message instead of an
+unexplained decrypt failure. Rotation replaces the stored kit, so a recovery
+code issued after the last rotation is the one to keep.
 
 ## Scenario: lost recovery kit and password
 

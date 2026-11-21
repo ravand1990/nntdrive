@@ -710,14 +710,17 @@ pub unsafe extern "C" fn nntdrive_copy_file(handle: u64, request: *const c_char)
 
 /// Creates a recovery kit for an unlocked account.
 ///
+/// The kit covers every epoch the unlocked session holds, so it can still
+/// restore revisions sealed before a key rotation.
+///
 /// # Safety
 /// Returned pointer must be freed with `nntdrive_string_free`.
 #[no_mangle]
 pub extern "C" fn nntdrive_recovery_kit(handle: u64) -> *mut c_char {
     guard(|| {
-        let master = key(handle)?;
+        let ring = key(handle)?;
         let (kit, code) =
-            RecoveryKit::create(master.current(), Some("NNTDrive recovery kit".into()))
+            RecoveryKit::create_with_ring(&ring, Some("NNTDrive recovery kit".into()))
                 .map_err(|e| e.to_string())?;
         Ok(json!({ "recovery_kit": kit, "recovery_code": code }))
     })

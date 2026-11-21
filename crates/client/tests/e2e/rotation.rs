@@ -214,3 +214,174 @@ async fn rotation_keeps_sdk_uploads_and_downloads_readable_across_epochs() {
     .await;
     assert!(denied.is_err());
 }
+
+/// A rotation on an account that stores a recovery kit replaces the stored kit
+/// in the same publish, and the replacement alone restores revisions sealed
+/// before and after the rotation.
+#[tokio::test]
+async fn rotation_replaces_the_stored_recovery_kit_and_the_new_kit_restores_both_epochs() {
+    let Some(s) = stack_with_recovery_kit().await else {
+        return;
+    };
+    let (registered_kit, registered_code) = s.recovery_kit.clone().unwrap();
+    let mut api = ApiClient::new(s.base_url.clone()).unwrap();
+    api.set_token(s.token.clone());
+    let dir = tempfile::tempdir().unwrap();
+
+    // A revision sealed under epoch 0 before the rotation.
+    let before_id = create_node(&api, &s.master, "before.bin").await;
+    let before_path = dir.path().join("before.bin");
+    let before_bytes = vec![3u8; 8_192];
+    tokio::fs::write(&before_path, &before_bytes).await.unwrap();
+    upload_file(
+        &api,
+        &s.master,
+        before_id,
+        Uuid::new_v4(),
+        None,
+        &before_path,
+    )
+    .await
+    .unwrap();
+
+    // The registered kit is stored for the current epoch.
+    let stored_kit = api.recovery_kit().await.unwrap().expect("stored kit");
+    assert_eq!(stored_kit.epoch, 0);
+    assert!(stored_kit.retained.is_empty());
+
+    // Rotating with the recovery code publishes keyfile and kit together.
+    let rotated = nntdrive_client::rotate_account_key_with_recovery_kit(
+        &api,
+        &s.keyfile,
+        &s.master,
+        PASSWORD,
+        &registered_kit,
+        &registered_code,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(rotated.keyfile.epoch, 1);
+    assert_ne!(rotated.recovery_code, registered_code);
+    assert_eq!(
+        api.account_keyfile().await.unwrap(),
+        serde_json::to_value(&rotated.keyfile).unwrap()
+    );
+    let stored_after = api.recovery_kit().await.unwrap().expect("replacement kit");
+    assert_eq!(stored_after.epoch, 1);
+    assert_eq!(stored_after.retained.len(), 1);
+    // The old code no longer opens the stored kit.
+    assert!(stored_after.unlock(&registered_code).is_err());
+
+    // A device that only kept the pre-rotation kit gets an actionable message.
+    let stale = registered_kit.check_epoch(stored_after.epoch).unwrap_err();
+    assert!(matches!(
+        stale,
+        nntdrive_crypto::CryptoError::StaleRecoveryKit {
+            kit_epoch: 0,
+            current_epoch: 1
+        }
+    ));
+    assert!(stale.to_string().contains("rotation"));
+
+    // Recovery with the replacement kit and its new code restores both epochs.
+    let recovered = stored_after.unlock_ring(&rotated.recovery_code).unwrap();
+    assert_eq!(recovered.epochs().collect::<Vec<_>>(), vec![1, 0]);
+
+    // A revision uploaded after the rotation seals with the current epoch.
+    let after_id = create_node(&api, &recovered, "after.bin").await;
+    let after_path = dir.path().join("after.bin");
+    let after_bytes = vec![5u8; 2_048];
+    tokio::fs::write(&after_path, &after_bytes).await.unwrap();
+    upload_file(
+        &api,
+        &recovered,
+        after_id,
+        Uuid::new_v4(),
+        None,
+        &after_path,
+    )
+    .await
+    .unwrap();
+
+    // The recovered device downloads the pre-rotation and post-rotation file.
+    let before_out = dir.path().join("before.out");
+    download_file(&api, &recovered, before_id, None, &before_out)
+        .await
+        .unwrap();
+    assert_eq!(tokio::fs::read(&before_out).await.unwrap(), before_bytes);
+    let after_out = dir.path().join("after.out");
+    download_file(&api, &recovered, after_id, None, &after_out)
+        .await
+        .unwrap();
+    assert_eq!(tokio::fs::read(&after_out).await.unwrap(), after_bytes);
+
+    // The pre-rotation kit alone cannot read the post-rotation revision.
+    let old_ring = registered_kit.unlock_ring(&registered_code).unwrap();
+    let denied = download_file(
+        &api,
+        &old_ring,
+        after_id,
+        None,
+        &dir.path().join("stale.out"),
+    )
+    .await;
+    assert!(denied.is_err());
+}
+
+/// A rotation without the recovery code is refused while a kit is stored, so a
+/// stale kit can never be left behind by a successful rotation.
+#[tokio::test]
+async fn rotation_without_the_recovery_code_is_refused_when_a_kit_is_stored() {
+    let Some(s) = stack_with_recovery_kit().await else {
+        return;
+    };
+    let mut api = ApiClient::new(s.base_url.clone()).unwrap();
+    api.set_token(s.token.clone());
+    let stored_keyfile = serde_json::to_value(&s.keyfile).unwrap();
+
+    let err = nntdrive_client::rotate_account_key(&api, &s.keyfile, &s.master, PASSWORD)
+        .await
+        .unwrap_err();
+    match err {
+        ClientError::RecoveryKitRequired { kit_epoch } => assert_eq!(kit_epoch, 0),
+        other => panic!("unexpected error: {other}"),
+    }
+
+    // Nothing was rotated or replaced.
+    assert_eq!(api.account_keyfile().await.unwrap(), stored_keyfile);
+    assert_eq!(api.recovery_kit().await.unwrap().unwrap().epoch, 0);
+
+    // The server enforces the same rule for a client that skips the check.
+    let (rotated_keyfile, _) = s.keyfile.rotate(&s.master, PASSWORD).unwrap();
+    let err = api.publish_keyfile(&rotated_keyfile, 0).await.unwrap_err();
+    match err {
+        ClientError::Api { status, .. } => assert_eq!(status, 409),
+        other => panic!("unexpected error: {other}"),
+    }
+
+    // A kit for the wrong epoch and a foreign account's kit are refused too.
+    let (wrong_epoch_kit, _) = RecoveryKit::create(&s.master, None).unwrap();
+    let err = api
+        .publish_keyfile_with_kit(&rotated_keyfile, 0, Some(&wrong_epoch_kit))
+        .await
+        .unwrap_err();
+    match err {
+        ClientError::Api { status, .. } => assert_eq!(status, 400),
+        other => panic!("unexpected error: {other}"),
+    }
+    let foreign_master = nntdrive_crypto::MasterKey::generate(Uuid::new_v4(), 1);
+    let (foreign_kit, _) = RecoveryKit::create(&foreign_master, None).unwrap();
+    let err = api
+        .publish_keyfile_with_kit(&rotated_keyfile, 0, Some(&foreign_kit))
+        .await
+        .unwrap_err();
+    match err {
+        ClientError::Api { status, .. } => assert_eq!(status, 403),
+        other => panic!("unexpected error: {other}"),
+    }
+
+    // Still unchanged after every refused attempt.
+    assert_eq!(api.account_keyfile().await.unwrap(), stored_keyfile);
+    assert_eq!(api.recovery_kit().await.unwrap().unwrap().epoch, 0);
+}

@@ -70,6 +70,8 @@ pub enum CryptoError {
     Base32,
     #[error("invalid recovery code")]
     InvalidRecoveryCode,
+    #[error("recovery kit is for key epoch {kit_epoch} but the account is on epoch {current_epoch}; a kit created before a key rotation cannot restore content sealed afterwards. Create a new kit from a device that can still unlock the account and store the new recovery code offline")]
+    StaleRecoveryKit { kit_epoch: u32, current_epoch: u32 },
 }
 
 pub type Result<T> = std::result::Result<T, CryptoError>;
@@ -225,6 +227,47 @@ impl KeyFile {
             },
             master,
         ))
+    }
+
+    /// Builds a keyfile from an already unlocked ring and a password.
+    ///
+    /// Used after recovering the account from a recovery kit: the restored
+    /// keyfile must keep every epoch the kit restored, otherwise revisions
+    /// written before a rotation would become unreadable after a recovery.
+    pub fn from_ring(ring: &MasterKeyRing, password: &str) -> Result<Self> {
+        let kdf = KdfParams::generate();
+        let kek = kdf.derive(password.as_bytes())?;
+        let current = ring.current();
+        let wrapped = envelope::seal(
+            &kek,
+            &amk_wrap_aad(ring.account_id(), current.epoch()),
+            current.expose_secret(),
+        )?;
+        let mut retained = Vec::new();
+        for master in ring.previous() {
+            if master.epoch() >= current.epoch() {
+                return Err(CryptoError::Malformed("retained epoch is not older"));
+            }
+            retained.push(RetainedEpoch {
+                epoch: master.epoch(),
+                wrapped_master_key: envelope::seal(
+                    &kek,
+                    &amk_wrap_aad(ring.account_id(), master.epoch()),
+                    master.expose_secret(),
+                )?,
+                retired_at: chrono::Utc::now(),
+            });
+        }
+        retained.sort_by_key(|r| r.epoch);
+        Ok(Self {
+            version: Self::VERSION,
+            account_id: ring.account_id(),
+            epoch: current.epoch(),
+            kdf,
+            wrapped_master_key: wrapped,
+            created_at: chrono::Utc::now(),
+            retained,
+        })
     }
 
     /// Re-wraps the current and every retained epoch under a new password.
@@ -709,6 +752,18 @@ impl MasterKeyRing {
 
     pub fn epoch(&self) -> u32 {
         self.current.epoch
+    }
+
+    /// Retained (older) epochs, newest first. Callers sealing a copy of the
+    /// ring must verify each epoch is older than [`Self::epoch`].
+    pub fn previous(&self) -> &[MasterKey] {
+        &self.previous
+    }
+
+    /// Builds a ring from a current key and already-unlocked older epochs.
+    pub fn from_parts(current: MasterKey, mut previous: Vec<MasterKey>) -> Self {
+        previous.sort_by_key(|m| m.epoch);
+        Self { current, previous }
     }
 
     pub fn epochs(&self) -> impl Iterator<Item = u32> + '_ {
