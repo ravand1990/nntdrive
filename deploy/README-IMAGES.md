@@ -9,7 +9,10 @@ Releases from v0.7.0 include the generate-once launcher; older releases
 Linux/WSL, Python 3 and Docker Compose **2.24+**.
 
 The backend image is `ghcr.io/ravand1990/nntdrive-backend`. Pin a version in
-`.env` instead of using `latest` for unattended upgrades. GHCR package visibility
+`.env` instead of using `latest` for unattended upgrades. Images published by the
+multi-arch release pipeline carry both `linux/amd64` and `linux/arm64`, so Docker
+pulls the architecture of the host automatically; releases up to v0.34.0 were
+amd64 only. GHCR package visibility
 is separate from repository visibility: if a pull requires authentication, use
 a separate token with `read:packages` (not a client updater token):
 

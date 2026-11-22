@@ -65,9 +65,15 @@ class WorkflowPerformanceTests(unittest.TestCase):
 
     def test_cache_inputs_and_nonpublishing_scope(self):
         docker = jobs(self.ci)["docker"]
-        for contract in ("push: false", "cache-from: type=gha,scope=pr-backend",
-                         "cache-to: type=gha,scope=pr-backend,mode=max"):
+        # Each architecture builds on its native runner with its own cache scope:
+        # a shared scope would let one architecture reuse the other's layers and
+        # silently skip the cross-architecture build.
+        arch_expr = "${{ matrix.arch }}"
+        for contract in ("push: false",
+                         f"cache-from: type=gha,scope=pr-backend-{arch_expr}",
+                         f"cache-to: type=gha,scope=pr-backend-{arch_expr},mode=max"):
             self.assertIn(contract, docker)
+        self.assertIn("ubuntu-24.04-arm", docker)
         for name in ("build-android", "android-native-smoke"):
             body = jobs(self.clients)[name]
             self.assertIn("cache: gradle", body)
@@ -112,9 +118,19 @@ class WorkflowPerformanceTests(unittest.TestCase):
 
     def test_release_gates_and_tag_cancellation_are_preserved(self):
         release = jobs(self.release)
-        for name in ("image", "clients"):
-            self.assertIn("needs: test", release[name])
-        self.assertIn("needs: [image, clients]", release["github-release"])
+        # Both architecture builds gate on the release test job, and the GitHub
+        # release gates on the merged multi-arch manifest, so an arm64-only
+        # failure cannot publish a release or a single-arch image.
+        self.assertIn("needs: test", release["image"])
+        self.assertIn("ubuntu-24.04-arm", release["image"])
+        self.assertIn("platform: linux/arm64", release["image"])
+        self.assertIn("push-by-digest=true", release["image"])
+        self.assertIn("needs: image", release["image-manifest"])
+        self.assertIn("docker buildx imagetools create", release["image-manifest"])
+        self.assertIn("expected 2 per-architecture digests", release["image-manifest"])
+        self.assertIn("needs: [image-manifest, clients]", release["github-release"])
+        self.assertIn("multi-arch manifest for linux/amd64 and linux/arm64",
+                      release["github-release"])
         self.assertIn("provenance: true", release["image"])
         self.assertIn("sbom: true", release["image"])
         self.assertNotIn("scope=pr-backend", self.release)

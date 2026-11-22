@@ -68,7 +68,18 @@ jobs:
         run: ./target/release/nntdrive demo --keyfile-out /tmp/demo.keyfile.json
 
   docker:
-    runs-on: ubuntu-24.04
+    # Both architectures the release manifest publishes are built natively, so an
+    # arm64-only breakage (a wrong base image, a missing library) fails before a
+    # tag is cut instead of at release time.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     # Build-only validation is independent; publishing remains release-gated.
     steps:
@@ -79,6 +90,6 @@ jobs:
           context: .
           file: deploy/Dockerfile
           push: false
-          tags: nntdrive/backend:ci
-          cache-from: type=gha,scope=pr-backend
-          cache-to: type=gha,scope=pr-backend,mode=max
+          tags: nntdrive/backend:ci-${{ matrix.arch }}
+          cache-from: type=gha,scope=pr-backend-${{ matrix.arch }}
+          cache-to: type=gha,scope=pr-backend-${{ matrix.arch }},mode=max

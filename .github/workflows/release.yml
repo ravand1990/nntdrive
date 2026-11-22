@@ -50,7 +50,20 @@ jobs:
 
   image:
     needs: test
-    runs-on: ubuntu-24.04
+    # One native runner per architecture; the digests are merged into a single
+    # multi-arch manifest by the image-manifest job. QEMU is deliberately not
+    # used: emulating an arm64 Rust release build would dominate the release.
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: linux/amd64
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
@@ -79,41 +92,140 @@ jobs:
             org.opencontainers.image.description=Self-hosted end-to-end encrypted storage on Usenet
             org.opencontainers.image.licenses=AGPL-3.0-or-later
 
-      - name: Build and push versioned image
+      - name: Build and push the ${{ matrix.platform }} image by digest
         id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: deploy/Dockerfile
-          platforms: linux/amd64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/nntdrive-backend,push-by-digest=true,name-canonical=true,push=true
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             VERSION=${{ steps.meta.outputs.version }}
           provenance: true
           sbom: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=release-${{ matrix.arch }}
+          cache-to: type=gha,scope=release-${{ matrix.arch }},mode=max
+
+      - name: Stage the digest for the multi-arch manifest
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "build-push-action returned no usable digest: '$digest'" >&2
+            exit 1
+          fi
+          touch "$RUNNER_TEMP/digests/${digest#sha256:}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  image-manifest:
+    needs: image
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Collect the per-architecture digests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: digests-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/nntdrive-backend
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=ref,event=branch
+            type=sha,format=short
+          labels: |
+            org.opencontainers.image.title=NNTDrive backend
+            org.opencontainers.image.description=Self-hosted end-to-end encrypted storage on Usenet
+            org.opencontainers.image.licenses=AGPL-3.0-or-later
+
+      - name: Create the multi-arch manifest
+        working-directory: ${{ runner.temp }}/digests
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/nntdrive-backend
+        run: |
+          set -euo pipefail
+          count="$(find . -maxdepth 1 -type f | wc -l)"
+          if [[ "$count" -ne 2 ]]; then
+            echo "expected 2 per-architecture digests, found $count" >&2
+            exit 1
+          fi
+          tags="$(jq -r '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON")"
+          if [[ -z "$tags" ]]; then
+            echo "metadata action produced no tags" >&2
+            exit 1
+          fi
+          digests=()
+          for digest in *; do
+            digests+=("${IMAGE}@sha256:${digest}")
+          done
+          docker buildx imagetools create $tags "${digests[@]}"
+
+      - name: Verify both architectures are in the published manifest
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/nntdrive-backend:${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect "$IMAGE" | tee "$RUNNER_TEMP/manifest.txt"
+          for platform in linux/amd64 linux/arm64; do
+            if ! grep -q "Platform: *$platform" "$RUNNER_TEMP/manifest.txt"; then
+              echo "published manifest has no $platform entry" >&2
+              exit 1
+            fi
+          done
 
       - name: Write release summary
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/nntdrive-backend
         run: |
-          echo "## NNTDrive container image" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Image: \`ghcr.io/${{ github.repository_owner }}/nntdrive-backend\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "Digest: \`${{ steps.build.outputs.digest }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Tags:" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          echo "${{ steps.meta.outputs.tags }}" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          set -euo pipefail
+          digest="$(docker buildx imagetools inspect "$IMAGE:${{ steps.meta.outputs.version }}" --format '{{json .Manifest}}' | jq -r '.digest')"
+          {
+            echo "## NNTDrive container image"
+            echo ""
+            echo "Image: \`${IMAGE}\`"
+            echo ""
+            echo "Platforms: \`linux/amd64\`, \`linux/arm64\`"
+            echo ""
+            echo "Manifest digest: \`${digest}\`"
+            echo ""
+            echo "Tags:"
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   clients:
     needs: test
     uses: ./.github/workflows/clients.yml
 
   github-release:
-    needs: [image, clients]
+    needs: [image-manifest, clients]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     steps:
@@ -163,7 +275,7 @@ jobs:
           IMAGE="ghcr.io/${GITHUB_REPOSITORY_OWNER}/nntdrive-backend:${VERSION}"
           NOTES_FILE="$RUNNER_TEMP/release-notes.md"
           {
-            echo "Container image: \`${IMAGE}\` (linux/amd64)"
+            echo "Container image: \`${IMAGE}\` (multi-arch manifest for linux/amd64 and linux/arm64)"
             echo
             echo "Client builds: \`nntdrive-${VERSION}-linux-x64.tar.gz\`, \`nntdrive-${VERSION}-android.apk\` and \`nntdrive-${VERSION}-windows-x64.zip\`."
             echo "Checking for updates in the Windows/Linux clients uses this release feed; Android clients use the same feed and hand the verified APK to the system installer; iOS is not built yet."

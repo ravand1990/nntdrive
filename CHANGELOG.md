@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Features
+
+- The released container image is now a multi-architecture manifest: the release workflow builds the backend natively on GitHub's amd64 and arm64 runners, merges both digests into one manifest, refuses to publish unless both platforms are present, and says so in the release notes. Ordinary CI builds both architectures before merge, so an arm64-only breakage fails on the pull request instead of at release time (#18).
+
 ## [0.34.0] - 2026-11-21
 
 ### Bug fixes
