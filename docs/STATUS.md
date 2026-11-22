@@ -1,5 +1,52 @@
 # Project status
 
+## Cache limit and device free space (#199 first slice)
+
+The cache ceiling is now the user's choice. **Change the cache limit** on the
+**Offline copies & cache** screen offers 256 MiB, 512 MiB, 1 GiB, 2 GiB and
+5 GiB, or a typed size (16 MiB to 1 TiB, accepting `750 MiB`, `1.5 GiB`,
+`2048 MB`); an unusable or out-of-range entry is refused with the accepted range
+and the dialog stays open. A new limit applies immediately: the cache evicts
+least-recently-used unpinned copies down to it, writes the shrunk index, and the
+screen reports the entries and bytes reclaimed. Copies kept offline are never
+deleted — if they alone exceed the limit the screen warns and leaves them, and
+the same warning appears when changing the limit. The chosen value is stored
+per device in shared preferences, so it survives a restart; a missing or
+out-of-range stored value falls back to 2 GiB.
+
+The screen also reports the device's real free space. A small read-only native
+call (`nntdrive_free_space`) reads the volume that holds the cache through
+`statfs` on Unix (available bytes, not reserved blocks) and
+`GetDiskFreeSpaceExW` on Windows; the result stays on the device and no path or
+size is sent to the backend. When the reading fails or the loaded native core
+predates the call, the screen says the reading is unavailable instead of
+guessing. It warns when the device has less free space than the cache limit,
+because downloads can then fail before eviction is involved; nothing in the
+cache grows to fill the device.
+
+The cache's internal operation queue was also changed: waiters now get a
+completer created by their own caller instead of chaining onto one long-lived
+future, so the queue cannot stall when callers come from different zones (a
+widget test's fake-async zone, for example) and ownership passes directly to the
+next waiter.
+
+Verified in the pinned isolated wrapper: clean Flutter analysis and **751
+passing tests / 4 platform skips**, including the new limit-parsing, persistence,
+shrink-eviction, free-space, warning and dialog tests, plus a real native
+free-space reading of a temporary directory. The FFI crate's 18 tests pass
+(including the new free-space success and missing-directory cases), with
+`cargo fmt` and `clippy -D warnings` clean. Sabotage runs were made and restored
+before the final green run: skipping eviction on a shrink fails the two
+shrink-eviction tests, ignoring the device reading fails the free-space and
+device-warning tests, removing the kept-offline warning fails its test, and
+returning 0 bytes from the native call fails the Rust free-space test.
+
+Not verified, and not included in this slice: no installed build or real mobile
+device was exercised; the Windows branch is compiled by the Windows CI job but
+its runtime reading was not exercised; the cache still does not refuse a
+download on low disk space (it reports the shortage and the write fails), and
+OS-level placeholders remain #14.
+
 ## Offline download cache (#82 first slice)
 
 Files can now stay on the device: **Keep offline** downloads the current
@@ -35,9 +82,8 @@ Removing the pinned guard from eviction fails two tests; accepting any index fil
 name fails the tampered-index test. Both sabotages were restored before the
 successful run.
 
-Not verified, and not included in this slice: free disk space is not shown (it
-needs a platform statfs API; the screen reports the cache limit and headroom
-instead), the 2 GiB limit is a constant rather than a user setting, OS-level
+Not verified, and not included in this slice: free disk space and a user-set
+limit were still missing here and are covered by the #199 section above, OS-level
 placeholders remain #14, and no installed build was exercised.
 
 ## In-app previews (#83 first slice)

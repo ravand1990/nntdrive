@@ -40,6 +40,7 @@ import 'file_copy.dart';
 import 'item_actions.dart';
 import 'download_cache.dart';
 import 'cache_page.dart';
+import 'cache_settings.dart';
 import 'preview.dart';
 import 'preview_page.dart';
 import 'login_autostart.dart';
@@ -1878,8 +1879,15 @@ class _FilesPageState extends State<FilesPage> {
   Future<DownloadCache> _openCacheNow() async {
     try {
       final support = await getApplicationSupportDirectory();
+      // The limit is device-local and survives restarts; an unreadable or
+      // out-of-range stored value falls back to the built-in default.
+      final limit = await loadCacheLimitBytes(
+        await SharedPreferences.getInstance(),
+      );
       final cache = DownloadCache(
-          root: Directory(p.join(support.path, 'download-cache')));
+        root: Directory(p.join(support.path, 'download-cache')),
+        limitBytes: limit,
+      );
       await cache.open();
       return cache;
     } catch (_) {
@@ -1923,6 +1931,16 @@ class _FilesPageState extends State<FilesPage> {
         nameFor: (id) => _names[id] ?? '',
         onChanged: () {
           if (mounted) unawaited(_refreshOfflinePins());
+        },
+        onLimitChanged: (bytes) async {
+          try {
+            return await saveCacheLimitBytes(
+              await SharedPreferences.getInstance(),
+              bytes,
+            );
+          } catch (_) {
+            return false;
+          }
         },
       ),
     ));

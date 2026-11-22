@@ -22,5 +22,13 @@ nntdrive-sync = { path = "../sync" }
 chrono.workspace = true
 unicode-normalization = "0.1.25"
 
+# Free-space reporting for the client cache screen (#199). Both are maintained,
+# target-specific and already present in the workspace dependency graph.
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1", features = ["fs"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+
 [dev-dependencies]
 tempfile = "3"
