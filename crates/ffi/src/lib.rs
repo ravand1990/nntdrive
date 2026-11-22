@@ -164,12 +164,15 @@ fn free_space_bytes(path: &Path) -> Result<u64, String> {
         let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
         wide.push(0);
         let mut available: u64 = 0;
-        let ok = windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(
-            wide.as_ptr(),
-            &mut available,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-        );
+        // GetDiskFreeSpaceExW is an unsafe Win32 call: it takes raw pointers.
+        let ok = unsafe {
+            windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(
+                wide.as_ptr(),
+                &mut available,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
         if ok == 0 {
             return Err("cannot read this device's free space".to_string());
         }
