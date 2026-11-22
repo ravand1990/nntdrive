@@ -38,6 +38,8 @@ import 'file_rename.dart';
 import 'file_move.dart';
 import 'file_copy.dart';
 import 'item_actions.dart';
+import 'download_cache.dart';
+import 'cache_page.dart';
 import 'login_autostart.dart';
 import 'move_dialog.dart';
 import 'folder_picker.dart';
@@ -1228,6 +1230,14 @@ class _FilesPageState extends State<FilesPage> {
   Map<String, LocalAvailability> _availability = {};
   int _refreshGeneration = 0;
 
+  /// Opened lazily: the first listing refresh or offline action opens it, and
+  /// until then no cache directory is created on a device that never uses one.
+  Future<DownloadCache>? _cacheFuture;
+
+  /// `fileId\u0000revisionId` keys that are pinned on this device. Filled best
+  /// effort: a cache that cannot be read simply means no badge, never an error.
+  Set<String> _offlinePins = {};
+
   /// The fixed space this path starts in, when it starts in one. A write inside
   /// a space whose own device is offline stays allowed, but the user is told
   /// what happens to the other device's unsynced copy.
@@ -1507,6 +1517,7 @@ class _FilesPageState extends State<FilesPage> {
     } finally {
       if (mounted && generation == _refreshGeneration) {
         setState(() => _loading = false);
+        unawaited(_refreshOfflinePins());
       }
     }
   }
@@ -1798,7 +1809,184 @@ class _FilesPageState extends State<FilesPage> {
     await _fileOperation(() => _downloadTo(file, destination, revisionId));
   }
 
+  /// Opens (and memoizes) the device cache. A failure is not memoized, so a
+  /// later attempt can succeed once the directory is writable again.
+  Future<DownloadCache> _openCache() => _cacheFuture ??= _openCacheNow();
+
+  Future<DownloadCache> _openCacheNow() async {
+    try {
+      final support = await getApplicationSupportDirectory();
+      final cache = DownloadCache(
+          root: Directory(p.join(support.path, 'download-cache')));
+      await cache.open();
+      return cache;
+    } catch (_) {
+      _cacheFuture = null;
+      rethrow;
+    }
+  }
+
+  static String _pinKey(String fileId, String revisionId) =>
+      '$fileId\u0000$revisionId';
+
+  /// Reads the pinned revisions so the browser can badge them. Silent on
+  /// failure: offline copies are an enhancement, not a browsing prerequisite.
+  Future<void> _refreshOfflinePins() async {
+    try {
+      final cache = await _openCache();
+      final pins = {
+        for (final entry in cache.entries)
+          if (entry.pinned) _pinKey(entry.fileId, entry.revisionId)
+      };
+      if (mounted && !setEquals(pins, _offlinePins)) {
+        setState(() => _offlinePins = pins);
+      }
+    } catch (_) {
+      // No cache on this device/build: leave the badges off.
+    }
+  }
+
+  Future<void> _openCachePage() async {
+    DownloadCache cache;
+    try {
+      cache = await _openCache();
+    } catch (e) {
+      _showError('The offline cache is unavailable on this device: $e');
+      return;
+    }
+    if (!mounted) return;
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => DownloadCachePage(
+        cache: cache,
+        nameFor: (id) => _names[id] ?? '',
+        onChanged: () {
+          if (mounted) unawaited(_refreshOfflinePins());
+        },
+      ),
+    ));
+  }
+
+  /// Keeps one file on this device so it opens without the network, or removes
+  /// that copy. Only the cache directory is touched; sync folders and saved
+  /// files are never involved.
+  Future<void> _keepOffline(RemoteFile file) async {
+    if (file.isDir) return;
+    final revision = file.currentVersion ?? '';
+    final DownloadCache cache;
+    try {
+      cache = await _openCache();
+    } catch (e) {
+      _showError('The offline cache is unavailable on this device: $e');
+      return;
+    }
+    if (!mounted) return;
+    final existing = cache.find(file.id, revisionId: revision);
+    if (existing != null && existing.pinned) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Remove the offline copy?'),
+          content: Text(
+              '${_name(file)} stays in your account. Only this device\'s copy '
+              'is deleted, so opening it again needs the network.'),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel')),
+            FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Remove')),
+          ],
+        ),
+      );
+      if (ok != true || !mounted) return;
+      await _fileOperation(() async {
+        await cache.remove(file.id, revision);
+      });
+      if (mounted) {
+        unawaited(_refreshOfflinePins());
+        _toast('Removed the offline copy of ${_name(file)}.');
+      }
+      return;
+    }
+    if (existing != null) {
+      // The bytes are already on this device; pinning them costs no network.
+      await _fileOperation(() => cache.setPinned(file.id, revision, true));
+      if (mounted) {
+        unawaited(_refreshOfflinePins());
+        _toast('${_name(file)} is now kept offline; it was already cached.');
+      }
+      return;
+    }
+    await _fileOperation(() => _downloadIntoCache(cache, file, revision));
+  }
+
+  /// Downloads one revision straight into the cache and pins it.
+  Future<void> _downloadIntoCache(
+      DownloadCache cache, RemoteFile file, String revision) async {
+    _showProgress('Keeping ${_name(file)} offline');
+    final partial = File(p.join(cache.root.path, '${_uuid.v4()}.part'));
+    try {
+      await cache.root.create(recursive: true);
+      await NativeBridge.instance.downloadAsync(
+        handle: widget.session.handle,
+        baseUrl: widget.session.server,
+        token: widget.session.token,
+        fileId: file.id,
+        revisionId: revision,
+        destination: partial.path,
+      );
+      final entry = await cache.adopt(
+        fileId: file.id,
+        revisionId: revision,
+        source: partial,
+        pinned: true,
+      );
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+      _recordActivity(ActivityKind.downloaded, _name(file),
+          itemId: file.id,
+          size: entry.sizeBytes,
+          reason: 'Kept offline on this device.');
+      if (mounted) {
+        unawaited(_refreshOfflinePins());
+        _toast('${_name(file)} is kept offline '
+            '(${formatCacheBytes(entry.sizeBytes)}).');
+      }
+    } catch (e) {
+      try {
+        if (await partial.exists()) await partial.delete();
+      } catch (_) {
+        // A scratch file that cannot be cleaned up is discarded on next open.
+      }
+      if (mounted && Navigator.of(context, rootNavigator: true).canPop()) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+      if (mounted) _showError(e);
+    }
+  }
+
   Future<void> _downloadTo(RemoteFile file, String destination, String? revisionId) async {
+    final wantedRevision = revisionId ?? file.currentVersion ?? '';
+    try {
+      final cache = await _openCache();
+      final entry = cache.find(file.id, revisionId: wantedRevision);
+      final local = cache.localFile(file.id, wantedRevision);
+      if (entry != null && entry.pinned && local != null) {
+        await local.copy(destination);
+        await cache.touch(file.id, wantedRevision);
+        _recordActivity(ActivityKind.downloaded, _name(file),
+            itemId: file.id,
+            size: entry.sizeBytes,
+            reason: 'Copied from the offline copy; no network used.');
+        if (mounted) {
+          _toast('Saved from the offline copy '
+              '(${formatCacheBytes(entry.sizeBytes)}); no network used.');
+        }
+        return;
+      }
+    } catch (_) {
+      // A cache problem must never stop an ordinary verified download.
+    }
     _showProgress('Downloading and verifying ${_name(file)}');
     try {
       final result = await NativeBridge.instance.downloadAsync(
@@ -1859,6 +2047,11 @@ class _FilesPageState extends State<FilesPage> {
   /// tapping a file. Unavailable entries carry their reason instead of looking
   /// like a broken control.
   void _itemActions(RemoteFile file) {
+    // Pin state comes from the badge set the refresh already loaded, so opening
+    // the menu never waits on the cache; the action itself re-checks the cache
+    // before it removes or adds a copy.
+    final pinned = !file.isDir &&
+        _offlinePins.contains(_pinKey(file.id, file.currentVersion ?? ''));
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -1872,6 +2065,7 @@ class _FilesPageState extends State<FilesPage> {
           isDir: file.isDir,
           favorite: file.favorite,
           busy: _renaming,
+          pinned: pinned,
         ),
         onSelected: (kind) {
           Navigator.pop(sheetContext);
@@ -1888,6 +2082,8 @@ class _FilesPageState extends State<FilesPage> {
         return;
       case ItemActionKind.download:
         return _download(file);
+      case ItemActionKind.keepOffline:
+        return _keepOffline(file);
       case ItemActionKind.versions:
         return _showVersions(file);
       case ItemActionKind.uploadVersion:
@@ -2234,6 +2430,16 @@ class _FilesPageState extends State<FilesPage> {
               },
             ),
             ListTile(
+              leading: const Icon(Icons.offline_pin_outlined),
+              title: const Text('Offline copies & cache'),
+              subtitle: const Text(
+                  'What this device keeps for opening files without the network'),
+              onTap: () {
+                Navigator.pop(context);
+                _openCachePage();
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.settings_outlined),
               title: const Text('Update settings'),
               subtitle: const Text('Repository and access token'),
@@ -2515,6 +2721,14 @@ class _FilesPageState extends State<FilesPage> {
                                     // Colour alone never carries this state.
                                     child: Icon(Icons.star,
                                         size: 18, semanticLabel: 'Favourite'),
+                                  ),
+                                if (!f.isDir &&
+                                    _offlinePins.contains(
+                                        _pinKey(f.id, f.currentVersion ?? '')))
+                                  const Padding(
+                                    padding: EdgeInsets.symmetric(horizontal: 4),
+                                    child: Icon(Icons.offline_pin,
+                                        size: 18, semanticLabel: 'Kept offline'),
                                   ),
                                 LocalRevealButton(
                                   state: local,

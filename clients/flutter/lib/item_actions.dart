@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 enum ItemActionKind {
   open,
   download,
+  keepOffline,
   versions,
   uploadVersion,
   favorite,
@@ -59,6 +60,7 @@ List<ItemActionSpec> itemActionSpecs({
   required bool isDir,
   required bool favorite,
   required bool busy,
+  bool pinned = false,
 }) {
   final mutating = <ItemActionSpec>[
     ItemActionSpec(
@@ -109,6 +111,16 @@ List<ItemActionSpec> itemActionSpecs({
       kind: ItemActionKind.download,
       label: 'Download and verify',
       icon: Icons.download,
+    ),
+    ItemActionSpec(
+      kind: ItemActionKind.keepOffline,
+      label: pinned ? 'Remove offline copy' : 'Keep offline',
+      icon: pinned ? Icons.offline_pin : Icons.offline_pin_outlined,
+      subtitle: pinned
+          ? 'Opens on this device without the network'
+          : 'Keeps one copy on this device so it opens without the network',
+      enabled: !busy,
+      disabledReason: busy ? busyActionUnavailable : null,
     ),
     const ItemActionSpec(
       kind: ItemActionKind.versions,
