@@ -49,6 +49,9 @@ update automation are outside
 - Browse folders, decrypt names locally, search/filter.
 - Create folders, upload files, download + verify, version history with
   per-revision download and restore, delete, favorites.
+- Keep a file offline in a bounded, evictable device cache with per-file pins
+  and a cache screen that reports usage and clears unpinned copies (#82). The
+  cache holds only downloaded copies, never sync folders or local-only files.
 - Multi-folder bidirectional sync: select a base folder plus additional folders,
   automatic runs every 5 minutes while the app is open, pause/resume, per-folder
   and global “Sync now”, conflict copies preserved, selective sync per folder

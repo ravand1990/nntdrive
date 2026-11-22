@@ -63,6 +63,29 @@ void main() {
       expect(delete.subtitle, isNotNull);
     });
 
+    test('a file offers keeping it offline, and removing that copy again', () {
+      final unpinned = itemActionSpecs(isDir: false, favorite: false, busy: false);
+      final offline = _spec(unpinned, ItemActionKind.keepOffline);
+      expect(offline.enabled, isTrue);
+      expect(offline.label, 'Keep offline');
+      expect(offline.subtitle, contains('without the network'));
+
+      final pinned =
+          itemActionSpecs(isDir: false, favorite: false, busy: false, pinned: true);
+      final remove = _spec(pinned, ItemActionKind.keepOffline);
+      expect(remove.label, 'Remove offline copy');
+      expect(remove.icon, Icons.offline_pin);
+
+      // A folder has no content to keep offline.
+      final folder = itemActionSpecs(isDir: true, favorite: false, busy: false);
+      expect(folder.map((spec) => spec.kind),
+          isNot(contains(ItemActionKind.keepOffline)));
+
+      // Recording a copy mutates device state, so it waits for a running run.
+      final busy = itemActionSpecs(isDir: false, favorite: false, busy: true);
+      expect(_spec(busy, ItemActionKind.keepOffline).enabled, isFalse);
+    });
+
     test('a favourite file offers removing the favourite', () {
       final specs = itemActionSpecs(isDir: false, favorite: true, busy: false);
       final favorite = _spec(specs, ItemActionKind.favorite);
@@ -182,6 +205,14 @@ void main() {
 
       await tester.tap(find.byTooltip('More actions for report.pdf'));
       await tester.pumpAndSettle();
+      // The menu also offers the offline-copy action now, so on a short test
+      // window the destructive entry can sit below the fold.
+      await tester.scrollUntilVisible(
+        find.text('Delete file'),
+        120,
+        scrollable: find.descendant(
+            of: find.byType(ItemActionsSheet), matching: find.byType(Scrollable)),
+      );
       await tester.tap(find.text('Delete file'));
       await tester.pumpAndSettle();
 
@@ -194,6 +225,12 @@ void main() {
 
       await tester.tap(find.byTooltip('More actions for report.pdf'));
       await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text('Delete file'),
+        120,
+        scrollable: find.descendant(
+            of: find.byType(ItemActionsSheet), matching: find.byType(Scrollable)),
+      );
       await tester.tap(find.text('Delete file'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Delete'));

@@ -8,6 +8,7 @@ release workflow refuses to publish if the entry is missing.
 
 ### Features
 
+- Files can now be kept on this device: **Keep offline** downloads the current revision into a bounded device cache and pins it, the browser marks the row, and the same action removes the copy again. A new **Offline copies & cache** screen reports how much of the 2 GiB limit is used, how much is pinned, how much headroom is left and which revisions are cached, and can clear every unpinned copy while reporting the entries and bytes it reclaimed. Only the client's own cache directory is involved: sync folders, local-only files and saved copies are never candidates, pinned copies are never evicted, and an interrupted download leaves only a scratch file that the next open discards (#82).
 - The released container image is now a multi-architecture manifest: the release workflow builds the backend natively on GitHub's amd64 and arm64 runners, merges both digests into one manifest, refuses to publish unless both platforms are present, and says so in the release notes. Ordinary CI builds both architectures before merge, so an arm64-only breakage fails on the pull request instead of at release time (#18).
 
 ## [0.34.0] - 2026-11-21

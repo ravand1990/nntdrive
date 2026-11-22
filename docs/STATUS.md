@@ -1,5 +1,45 @@
 # Project status
 
+## Offline download cache (#82 first slice)
+
+Files can now stay on the device: **Keep offline** downloads the current
+revision into a bounded cache under the app's support directory and pins it, the
+browser marks that row, and the same action removes the copy again. A new
+**Offline copies & cache** screen (account menu) reports the cache size against
+its 2 GiB limit, the pinned size, the headroom left before eviction, and each
+cached revision with per-item pin/remove; **Clear unpinned cache** reports the
+entries and bytes it reclaimed.
+
+The cache touches only its own `download-cache` directory. Entries store opaque
+file and revision IDs plus a derived file name, never a path taken from a
+listing, so a tampered index row cannot reach outside the root. Eviction is
+least-recently-used over unpinned revisions and runs after a store completes, so
+it cannot corrupt a running download; a pinned copy and the revision just stored
+are never evicted, which means the cache can sit above its limit when only pinned
+or newly stored bytes remain — the next store evicts the older unpinned copy.
+Entries keep the revision they were downloaded at, so a new revision is a
+separate entry instead of an overwrite. An interrupted download leaves one
+`.part` scratch file that the next open discards; a cache file replaced by a
+symlink is dropped without reading or deleting its target; a corrupt index is
+reported and its bytes are kept rather than guessed at. Sync folders, local-only
+files and saved copies are never candidates because the cache never lists or
+deletes outside its own directory.
+
+Verified in the pinned isolated wrapper: clean Flutter analysis and **711
+passing tests / 4 platform skips**, including 18 cache-engine tests (store,
+restart persistence, LRU order, pinned protection, limit enforcement on unpin,
+cleanup reporting, tampered index, neighbouring directory untouched, adoption
+scope, symlink target, partial files, corrupt index, orphan cleanup) and new
+widget/spec coverage for the cache screen and the menu entry that offers it.
+Removing the pinned guard from eviction fails two tests; accepting any index file
+name fails the tampered-index test. Both sabotages were restored before the
+successful run.
+
+Not verified, and not included in this slice: free disk space is not shown (it
+needs a platform statfs API; the screen reports the cache limit and headroom
+instead), the 2 GiB limit is a constant rather than a user setting, OS-level
+placeholders remain #14, and no installed build was exercised.
+
 ## Local activity history and notifications (#87 first slice)
 
 The desktop/mobile client now keeps a device-local activity feed for the signed-in
