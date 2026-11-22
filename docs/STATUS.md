@@ -1306,11 +1306,12 @@ many files were already changed instead of claiming nothing happened.
   serialized automatic/manual checks and prompts, in-app update settings
   (repository + optional read-only token for private releases), SHA-256
   verification, detached in-place replacement and restart.
-- Tag-driven release pipeline: tests, GHCR image `0.34.0`/`0.34`/`latest`/`sha-*`,
-  and a GitHub release with the image-only Compose files, `SHA256SUMS.txt` and
-  Linux, Android and Windows client builds. The image is amd64 only; arm64 needs
-  native runners or a longer QEMU build. iOS requires macOS/Xcode and is not
-  published.
+- Tag-driven release pipeline: tests, a multi-arch GHCR manifest
+  `0.34.0`/`0.34`/`latest`/`sha-*` covering `linux/amd64` and `linux/arm64`, and a
+  GitHub release with the image-only Compose files, `SHA256SUMS.txt` and Linux,
+  Android and Windows client builds. The already published v0.34.0 image is still
+  amd64 only; the next tag builds both architectures natively and checks both in
+  the manifest. iOS requires macOS/Xcode and is not published.
 
 ## Phase status
 
@@ -1439,8 +1440,11 @@ many files were already changed instead of claiming nothing happened.
   control yet, so revocation still needs a client that calls it, and the
   installed two-device check is unperformed. A recovery kit created before a
   rotation restores only its own epoch until it is recreated.
-- The release image is `linux/amd64` only. Native arm runners or a successful
-  QEMU build are needed for `linux/arm64`; no multi-arch manifest is published yet.
+- The release workflow now publishes a `linux/amd64` + `linux/arm64`
+  multi-arch manifest built on native GitHub runners, and CI builds both
+  architectures before merge. The published v0.34.0 image predates that change,
+  so no tagged release has yet pulled on arm64 and passed `/healthz`; #18 tracks
+  that acceptance.
 - Client CI builds Linux/Android/Windows; Windows native unit tests and release
   packaging are blocking. iOS is not currently built in CI and remains
   unimplemented. Android ABI packaging checks and the KVM native

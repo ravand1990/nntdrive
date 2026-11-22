@@ -61,8 +61,11 @@ Tagging `vX.Y.Z` runs `.github/workflows/release.yml`:
 
 1. validates the matching `CHANGELOG.md` section (Features/Bug fixes required);
 2. runs formatting, clippy, all Rust tests and the storage demo;
-3. builds a `linux/amd64` image with BuildKit (arm64 can be added with native arm runners);
-4. pushes `X.Y.Z`, `X.Y`, `latest` and `sha-*` tags to GHCR with provenance/SBOM;
+3. builds the backend image natively for `linux/amd64` and `linux/arm64` on GitHub's
+   amd64 and arm64 runners;
+4. merges both digests into one multi-arch manifest and checks that both
+   platforms are in it, then pushes `X.Y.Z`, `X.Y`, `latest` and `sha-*` tags to
+   GHCR with provenance/SBOM;
 5. creates/updates a GitHub release whose notes come from `CHANGELOG.md`, with the
    image-only Compose files attached.
 

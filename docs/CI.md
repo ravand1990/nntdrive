@@ -15,7 +15,7 @@ workflow, not proof of repository branch protection.
 |---|---|
 | `CI / wrapper-contracts` | Four Python wrapper/real Compose configuration tests; five subprocess tests for the fail-closed database gate; four workflow performance/coverage contracts; a disaster-recovery round trip (dump, damage, restore, checksum and checkpoint verification against disposable PostgreSQL in Docker); agent policy contracts; Bash syntax checks for the backup/restore scripts and actionlint. No SDK image build. |
 | `CI / rust` | fmt, Clippy, full workspace tests against disposable PostgreSQL 16 and mock NNTP, release backend/CLI build, storage demo. `psql` must succeed and any PostgreSQL skip notice fails the job. Test output uses `--nocapture`; pipeline failures propagate. |
-| `CI / docker` | Container build only, no push/deploy. |
+| `CI / docker` | Container build only, no push/deploy. Builds the backend image natively on both `ubuntu-24.04` (amd64) and `ubuntu-24.04-arm` (arm64) runners with per-architecture cache scopes, so a single-architecture breakage fails before a tag instead of at release time. This is a build, not a pull or a `/healthz` run. |
 | `Clients / analyze` | Linux release Rust FFI build, Flutter analysis and full unit/native bridge suite with explicit native library path. Missing native path/file now fails rather than returning a false pass. |
 | `Clients / build-linux` | Native library plus Flutter release bundle and artifact. Not a GUI launch or installed-app update test. |
 | `Clients / build-windows` | Native MSVC DLL, full Flutter unit/native bridge suite on Windows, release build, bundled DLL existence check, ZIP artifact. Failures are no longer allowed. Not installer, process restart, clean-machine or signed-distribution verification. |
