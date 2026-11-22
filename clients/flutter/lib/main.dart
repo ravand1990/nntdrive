@@ -40,6 +40,8 @@ import 'file_copy.dart';
 import 'item_actions.dart';
 import 'download_cache.dart';
 import 'cache_page.dart';
+import 'preview.dart';
+import 'preview_page.dart';
 import 'login_autostart.dart';
 import 'move_dialog.dart';
 import 'folder_picker.dart';
@@ -1809,6 +1811,66 @@ class _FilesPageState extends State<FilesPage> {
     await _fileOperation(() => _downloadTo(file, destination, revisionId));
   }
 
+  /// Shows a file inside the app when it is an image or plain text.
+  ///
+  /// A device copy is used first, so a pinned file previews without the
+  /// network. Preview bytes stay in memory, and the loader deletes its scratch
+  /// copy before the preview renders.
+  Future<void> _preview(RemoteFile file) async {
+    final revision = file.currentVersion ?? '';
+    DownloadCache? cache;
+    try {
+      cache = await _openCache();
+    } catch (_) {
+      // No cache on this device: the preview falls back to a download.
+      cache = null;
+    }
+    Directory tempRoot;
+    try {
+      final support = await getApplicationSupportDirectory();
+      tempRoot = Directory(p.join(support.path, 'preview-tmp'));
+    } catch (e) {
+      _showError('Preview is unavailable on this device: $e');
+      return;
+    }
+    if (!mounted) return;
+    final loader = PreviewLoader(
+      tempRoot: tempRoot,
+      lookupOfflineCopy: (fileId, revisionId) {
+        final local = cache?.localFile(fileId, revisionId);
+        // A preview counts as a use of the offline copy, so it keeps its place
+        // in the cache's least-recently-used order.
+        if (local != null) unawaited(cache!.touch(fileId, revisionId));
+        return local;
+      },
+      download: (destination) async {
+        await NativeBridge.instance.downloadAsync(
+          handle: widget.session.handle,
+          baseUrl: widget.session.server,
+          token: widget.session.token,
+          fileId: file.id,
+          revisionId: revision,
+          destination: destination,
+        );
+      },
+    );
+    await Navigator.of(context).push<void>(MaterialPageRoute<void>(
+      builder: (routeContext) => PreviewPage(
+        title: _name(file),
+        load: () => loader.load(
+          fileId: file.id,
+          revisionId: revision,
+          name: _name(file),
+          sizeBytes: file.size,
+        ),
+        onDownload: () {
+          Navigator.of(routeContext).pop();
+          _download(file);
+        },
+      ),
+    ));
+  }
+
   /// Opens (and memoizes) the device cache. A failure is not memoized, so a
   /// later attempt can succeed once the directory is writable again.
   Future<DownloadCache> _openCache() => _cacheFuture ??= _openCacheNow();
@@ -2080,6 +2142,8 @@ class _FilesPageState extends State<FilesPage> {
       case ItemActionKind.open:
         _open(file);
         return;
+      case ItemActionKind.preview:
+        return _preview(file);
       case ItemActionKind.download:
         return _download(file);
       case ItemActionKind.keepOffline:

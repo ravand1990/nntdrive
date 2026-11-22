@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 /// and one place that decides when an action is unavailable and why.
 enum ItemActionKind {
   open,
+  preview,
   download,
   keepOffline,
   versions,
@@ -107,6 +108,12 @@ List<ItemActionSpec> itemActionSpecs({
   }
 
   return <ItemActionSpec>[
+    const ItemActionSpec(
+      kind: ItemActionKind.preview,
+      label: 'Preview here',
+      icon: Icons.visibility_outlined,
+      subtitle: 'Images and text open inside the app',
+    ),
     const ItemActionSpec(
       kind: ItemActionKind.download,
       label: 'Download and verify',
