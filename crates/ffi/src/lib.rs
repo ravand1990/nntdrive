@@ -126,6 +126,62 @@ pub extern "C" fn nntdrive_abi_version() -> u32 {
     1
 }
 
+/// Free bytes available to this process on the filesystem that holds `path`.
+///
+/// The client shows this next to its own cache size so a user can see real
+/// device headroom. It is a read-only syscall wrapper: the path and the result
+/// stay on the device and nothing is sent to the backend.
+///
+/// # Safety
+/// `path` must be a valid NUL-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn nntdrive_free_space(path: *const c_char) -> *mut c_char {
+    guard(|| {
+        let raw = arg(path)?;
+        free_space_bytes(Path::new(&raw)).map(|free| json!({ "freeBytes": free }))
+    })
+}
+
+/// Available bytes for the filesystem containing `path`.
+///
+/// `f_bavail` (not `f_bfree`) is used on Unix: it is the space an ordinary
+/// process may actually write, so the number cannot promise reserved blocks.
+fn free_space_bytes(path: &Path) -> Result<u64, String> {
+    #[cfg(unix)]
+    {
+        let stats = rustix::fs::statvfs(path)
+            .map_err(|_| "cannot read this device's free space".to_string())?;
+        let block = if stats.f_frsize > 0 {
+            stats.f_frsize
+        } else {
+            stats.f_bsize
+        };
+        Ok(stats.f_bavail.saturating_mul(block))
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+        wide.push(0);
+        let mut available: u64 = 0;
+        let ok = windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(
+            wide.as_ptr(),
+            &mut available,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        );
+        if ok == 0 {
+            return Err("cannot read this device's free space".to_string());
+        }
+        Ok(available)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = path;
+        Err("free space is not supported on this platform".to_string())
+    }
+}
+
 /// Creates a new account identity: keyfile, recovery kit and server verifier.
 ///
 /// # Safety
@@ -1609,5 +1665,27 @@ mod tests {
         let empty: Value = serde_json::from_str(&snapshot_event(&[])).unwrap();
         assert_eq!(empty["phase"], "compare");
         assert_eq!(empty["items"], json!([]));
+    }
+
+    #[test]
+    fn free_space_reports_a_positive_available_byte_count() {
+        // A real statfs/GetDiskFreeSpaceEx read on a directory that exists.
+        let dir = std::env::temp_dir().join(format!("nntdrive-free-space-{}", Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        let free = free_space_bytes(&dir);
+        std::fs::remove_dir(&dir).unwrap();
+        let free = free.expect("the temp filesystem should report free space");
+        assert!(free > 0, "free space should be a positive byte count");
+    }
+
+    #[test]
+    fn free_space_reports_null_for_a_missing_directory() {
+        let missing = std::env::temp_dir().join(format!("nntdrive-missing-{}", Uuid::new_v4()));
+        let path = CString::new(missing.to_str().unwrap()).unwrap();
+        let text = unsafe { CString::from_raw(nntdrive_free_space(path.as_ptr())) };
+        let value: Value = serde_json::from_slice(text.as_bytes()).unwrap();
+        assert_eq!(value["ok"], false);
+        assert!(value["error"].as_str().is_some());
+        assert!(value.get("freeBytes").is_none());
     }
 }

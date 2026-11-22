@@ -476,4 +476,110 @@ void main() {
       expect(cache.usage.headroomBytes, 500);
     });
   });
+
+  group('changing the limit', () {
+    test('shrinking evicts the oldest unpinned copy and persists', () async {
+      final cache = await openCache(limitBytes: 1000);
+      final pinned = await sourceFile('pinned.bin', 100);
+      await cache.store(
+        fileId: 'file-pinned',
+        revisionId: 'rev-1',
+        source: pinned,
+        pinned: true,
+      );
+      final older = await sourceFile('older.bin', 400);
+      await cache.store(
+        fileId: 'file-older',
+        revisionId: 'rev-1',
+        source: older,
+      );
+      now = now.add(const Duration(minutes: 1));
+      final newer = await sourceFile('newer.bin', 400);
+      await cache.store(
+        fileId: 'file-newer',
+        revisionId: 'rev-1',
+        source: newer,
+      );
+
+      final cleanup = await cache.setLimit(600);
+
+      expect(cleanup.removedEntries, 1);
+      expect(cleanup.freedBytes, 400);
+      expect(cache.limitBytes, 600);
+      expect(cache.find('file-older'), isNull, reason: 'least recently used');
+      expect(cache.find('file-pinned'), isNotNull);
+      expect(cache.find('file-newer'), isNotNull);
+      expect(cache.usage.usedBytes, 500);
+      expect(cache.usage.headroomBytes, 100);
+
+      // A restart sees the shrunk cache: the index was rewritten.
+      final reopened = newCache(limitBytes: 600);
+      await reopened.open();
+      expect(reopened.find('file-older'), isNull);
+      expect(reopened.usage.usedBytes, 500);
+    });
+
+    test(
+      'a limit below the kept-offline total never deletes pinned copies',
+      () async {
+        final cache = await openCache(limitBytes: 1000);
+        final pinned = await sourceFile('pinned.bin', 300);
+        await cache.store(
+          fileId: 'file-pinned',
+          revisionId: 'rev-1',
+          source: pinned,
+          pinned: true,
+        );
+        final scratch = await sourceFile('scratch.bin', 200);
+        await cache.store(
+          fileId: 'file-scratch',
+          revisionId: 'rev-1',
+          source: scratch,
+        );
+
+        final cleanup = await cache.setLimit(100);
+
+        expect(cleanup.removedEntries, 1, reason: 'the unpinned copy goes');
+        expect(cleanup.keptPinnedEntries, 1);
+        expect(cache.find('file-pinned'), isNotNull);
+        expect(cache.usage.pinnedBytes, 300);
+        expect(
+          cache.usage.usedBytes,
+          300,
+          reason: 'above the limit because pinned copies are kept',
+        );
+        expect(cache.usage.headroomBytes, 0);
+      },
+    );
+
+    test('a non-positive limit is refused and changes nothing', () async {
+      final cache = await openCache(limitBytes: 1000);
+      final scratch = await sourceFile('scratch.bin', 200);
+      await cache.store(
+        fileId: 'file-scratch',
+        revisionId: 'rev-1',
+        source: scratch,
+      );
+
+      await expectLater(cache.setLimit(0), throwsArgumentError);
+      expect(cache.limitBytes, 1000);
+      expect(cache.entryCount, 1);
+    });
+
+    test('raising the limit keeps every existing copy', () async {
+      final cache = await openCache(limitBytes: 1000);
+      final scratch = await sourceFile('scratch.bin', 400);
+      await cache.store(
+        fileId: 'file-scratch',
+        revisionId: 'rev-1',
+        source: scratch,
+      );
+
+      final cleanup = await cache.setLimit(4096);
+
+      expect(cleanup.removedEntries, 0);
+      expect(cache.usage.usedBytes, 400);
+      expect(cache.usage.headroomBytes, 3696);
+    });
+  });
 }

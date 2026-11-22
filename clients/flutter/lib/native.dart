@@ -212,6 +212,28 @@ class NativeBridge {
     }
   }
 
+  /// Free bytes on the filesystem that holds [path], or null when the loaded
+  /// native core predates this call. A read-only syscall wrapper: the path and
+  /// the result stay on this device.
+  int? freeSpaceBytes(String path) {
+    final Pointer<Utf8> Function(Pointer<Utf8>) lookup;
+    try {
+      lookup = _lib.lookupFunction<_Str1Native, _Str1Dart>(
+        'nntdrive_free_space',
+      );
+    } catch (_) {
+      // An older bundled core simply has no free-space call.
+      return null;
+    }
+    final p = _cstr(path);
+    try {
+      final free = _decode(lookup(p))['freeBytes'];
+      return free is int && free >= 0 ? free : null;
+    } finally {
+      malloc.free(p);
+    }
+  }
+
   /// Runs disk hashing off the UI isolate; the result is a refresh-time snapshot.
   Future<bool> localFileMatches(Map<String, dynamic> request) async {
     final handle = request['handle'] as int;

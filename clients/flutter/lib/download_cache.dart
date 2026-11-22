@@ -179,19 +179,26 @@ class CacheOpenReport {
 class DownloadCache {
   DownloadCache({
     required this.root,
-    this.limitBytes = downloadCacheDefaultLimitBytes,
+    int limitBytes = downloadCacheDefaultLimitBytes,
     DateTime Function()? clock,
   }) : assert(limitBytes > 0),
+       _limitBytes = limitBytes,
        _clock = clock ?? DateTime.now;
 
   final Directory root;
-  final int limitBytes;
   final DateTime Function() _clock;
+
+  /// Current ceiling for the whole cache. Changed through [setLimit], which
+  /// evicts immediately so the reported usage always matches the limit.
+  int _limitBytes;
+
+  int get limitBytes => _limitBytes;
 
   final Map<String, CachedDownload> _entries = <String, CachedDownload>{};
   bool _opened = false;
   bool _corruptIndex = false;
-  Future<void> _tail = Future<void>.value();
+  bool _busy = false;
+  final List<Completer<void>> _waiters = <Completer<void>>[];
 
   bool get isOpen => _opened;
   bool get recoveredCorruptIndex => _corruptIndex;
@@ -249,10 +256,36 @@ class DownloadCache {
     return null;
   }
 
-  Future<T> _serial<T>(Future<T> Function() action) {
-    final result = _tail.then((_) => action());
-    _tail = result.then<void>((_) {}, onError: (Object _) {});
-    return result;
+  /// One owned operation at a time. Waiters get a completer created by their
+  /// own caller, so the queue never chains onto a future from another zone
+  /// (which would otherwise stall under a test's fake-async zone) and ownership
+  /// is handed directly to the next waiter instead of bouncing through a
+  /// temporarily-idle state.
+  Future<T> _serial<T>(Future<T> Function() action) async {
+    await _acquire();
+    try {
+      return await action();
+    } finally {
+      _release();
+    }
+  }
+
+  Future<void> _acquire() {
+    if (!_busy) {
+      _busy = true;
+      return Future<void>.value();
+    }
+    final waiter = Completer<void>();
+    _waiters.add(waiter);
+    return waiter.future;
+  }
+
+  void _release() {
+    if (_waiters.isNotEmpty) {
+      _waiters.removeAt(0).complete();
+    } else {
+      _busy = false;
+    }
   }
 
   /// Reads the index and reconciles it with the directory.
@@ -470,6 +503,20 @@ class DownloadCache {
       freedBytes: freed,
       keptPinnedEntries: pinned,
     );
+  });
+
+  /// Applies a new whole-cache limit and evicts down to it immediately.
+  ///
+  /// Only unpinned scratch copies are ever evicted, so a limit below the pinned
+  /// total leaves the cache above the limit and reports how many pinned copies
+  /// were kept. Rejects a non-positive limit before changing anything.
+  Future<CacheCleanup> setLimit(int bytes) => _serial(() async {
+    _requireOpen();
+    if (bytes <= 0) {
+      throw ArgumentError.value(bytes, 'bytes', 'must be positive');
+    }
+    _limitBytes = bytes;
+    return _enforceLimitLocked();
   });
 
   /// Evicts least-recently-used unpinned entries until the cache fits its
