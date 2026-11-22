@@ -42,6 +42,7 @@ void main() {
       expect(_spec(specs, ItemActionKind.copy).enabled, isTrue);
       // No content actions apply to a folder.
       expect(specs.map((s) => s.kind), isNot(contains(ItemActionKind.download)));
+      expect(specs.map((s) => s.kind), isNot(contains(ItemActionKind.preview)));
       // Deleting a folder moves its whole subtree to the trash (#81).
       final delete = _spec(specs, ItemActionKind.delete);
       expect(delete.enabled, isTrue);
@@ -52,6 +53,9 @@ void main() {
 
     test('a file offers its content actions and a confirmed delete', () {
       final specs = itemActionSpecs(isDir: false, favorite: false, busy: false);
+      final preview = _spec(specs, ItemActionKind.preview);
+      expect(preview.enabled, isTrue);
+      expect(preview.label, 'Preview here');
       expect(_spec(specs, ItemActionKind.download).enabled, isTrue);
       expect(_spec(specs, ItemActionKind.versions).enabled, isTrue);
       expect(_spec(specs, ItemActionKind.uploadVersion).enabled, isTrue);
@@ -197,6 +201,7 @@ void main() {
       expect(find.text('Copy file'), findsOneWidget);
       expect(find.text('Delete file'), findsOneWidget);
       expect(find.text('Download and verify'), findsOneWidget);
+      expect(find.text('Preview here'), findsOneWidget);
       expect(find.text('Version history'), findsOneWidget);
     });
 

@@ -40,6 +40,38 @@ needs a platform statfs API; the screen reports the cache limit and headroom
 instead), the 2 GiB limit is a constant rather than a user setting, OS-level
 placeholders remain #14, and no installed build was exercised.
 
+## In-app previews (#83 first slice)
+
+Files can be looked at without leaving the app. The item menu now offers
+**Preview here** for every file: images (png, jpg/jpeg, gif, webp, bmp) render in
+a zoomable in-app viewer, and plain text, Markdown, CSV, JSON and YAML files
+render as selectable text. Everything else, and anything that cannot be read,
+shows a plain explanation plus the existing **Download and open** fallback
+instead of a dead control.
+
+Previews stay on the device. An existing device copy is used first, so a pinned
+file previews without the network and counts as a use for the cache's
+least-recently-used order; otherwise the revision is downloaded into a scratch
+file under `preview-tmp`, read, and deleted before the preview is shown, so a
+failed download or a closed page leaves no decrypted copy. Leftover scratch files
+from an interrupted run are removed on first use. Images are capped at 32 MiB and
+text at 512 KiB with the first 200,000 characters rendered, so opening a large
+file cannot stall the page; images are decoded from memory and text beyond the
+cap is labelled as truncated.
+
+Verified in the pinned isolated wrapper: clean Flutter analysis and **728
+passing tests / 4 platform skips**, including 17 new loader and page tests
+(type detection, scratch-copy deletion, offline-copy reuse without a request,
+oversize refusal before download, truncation, malformed UTF-8, image bytes, empty
+image, failed-download cleanup, stale-scratch purge, and the page's text,
+truncation, unsupported, error and image states). Ignoring the offline copy
+fails the no-request test; skipping the scratch deletion fails five tests; both
+sabotages were restored before the successful run.
+
+Not included in this slice: PDF, audio and video previews, list/grid thumbnails
+and lazy page rendering remain open on #83, and no installed build was
+exercised.
+
 ## Local activity history and notifications (#87 first slice)
 
 The desktop/mobile client now keeps a device-local activity feed for the signed-in

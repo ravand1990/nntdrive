@@ -52,6 +52,11 @@ update automation are outside
 - Keep a file offline in a bounded, evictable device cache with per-file pins
   and a cache screen that reports usage and clears unpinned copies (#82). The
   cache holds only downloaded copies, never sync folders or local-only files.
+- Preview images and plain text/Markdown/CSV/JSON/YAML inside the app, using the
+  pinned copy when there is one; unsupported or unreadable files explain
+  themselves and offer the download fallback. Preview bytes stay on the device,
+  the scratch copy is deleted before the preview renders, and image/text sizes
+  are bounded (#83). PDF, audio/video and thumbnails are not implemented yet.
 - Multi-folder bidirectional sync: select a base folder plus additional folders,
   automatic runs every 5 minutes while the app is open, pause/resume, per-folder
   and global “Sync now”, conflict copies preserved, selective sync per folder
