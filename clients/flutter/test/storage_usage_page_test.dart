@@ -10,6 +10,8 @@ import 'package:nntdrive/storage_usage_page.dart';
 class Fixture {
   bool offline = false;
   int size = 12;
+  DateTime? updatedAt;
+  bool empty = false;
   int lists = 0;
   Completer<void>? gate;
   late final index = AccountSearch(
@@ -19,7 +21,20 @@ class Fixture {
       lists++;
       await gate?.future;
       if (offline) throw StateError('private filename or token');
-      return [RemoteFile('f', null, 'opaque', false, size, false, 1, null)];
+      return [
+        if (!empty)
+          RemoteFile(
+            'f',
+            null,
+            'opaque',
+            false,
+            size,
+            false,
+            1,
+            null,
+            updatedAt: updatedAt,
+          ),
+      ];
     },
     decrypt: (_) => 'Private.txt',
     authorize: () {},
@@ -38,6 +53,82 @@ Future<void> settled(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('oldest large threshold, UTC date, empty and unknown states', (
+    tester,
+  ) async {
+    final f = Fixture()..size = 10 * 1024 * 1024;
+    addTearDown(f.index.dispose);
+    await tester.runAsync(
+      () => tester.pumpWidget(
+        MaterialApp(home: StorageUsagePage(index: f.index)),
+      ),
+    );
+    await settled(tester);
+    await tester.scrollUntilVisible(
+      find.text('Oldest large files (up to 20)'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.textContaining('10 MiB (10485760 bytes)'), findsOneWidget);
+    expect(find.textContaining('namespace modification date'), findsOneWidget);
+    expect(find.textContaining('not access time'), findsOneWidget);
+    expect(
+      find.textContaining('not a safe-delete recommendation'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Large files with unknown modification date: 1'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('No large live files with a known modification date.'),
+      findsOneWidget,
+    );
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('oldest large dated row and empty account', (tester) async {
+    for (final empty in [false, true]) {
+      final f = Fixture()
+        ..size = 10 * 1024 * 1024
+        ..updatedAt = DateTime.parse('2020-01-01T02:00:00+02:00')
+        ..empty = empty;
+      addTearDown(f.index.dispose);
+      await tester.runAsync(
+        () => tester.pumpWidget(
+          MaterialApp(home: StorageUsagePage(index: f.index)),
+        ),
+      );
+      await settled(tester);
+      await tester.scrollUntilVisible(
+        find.text('Oldest large files (up to 20)'),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(
+        find.text('Large files with unknown modification date: 0'),
+        findsOneWidget,
+      );
+      if (empty) {
+        expect(
+          find.text('No large live files with a known modification date.'),
+          findsOneWidget,
+        );
+      } else {
+        await tester.scrollUntilVisible(
+          find.text('10485760 bytes · 2020-01-01T00:00:00.000Z (UTC)'),
+          100,
+          scrollable: find.byType(Scrollable).first,
+        );
+        expect(
+          find.text('10485760 bytes · 2020-01-01T00:00:00.000Z (UTC)'),
+          findsOneWidget,
+        );
+      }
+      await tester.pumpWidget(const SizedBox());
+    }
+  });
+
   testWidgets(
     'loading, exact totals, failed refresh retention, retry and close',
     (tester) async {
