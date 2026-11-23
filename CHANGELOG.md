@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Features
+
+- **Account → Storage usage** opens a read-only account dashboard with live-file bytes/count, top-level-folder and filename-extension breakdowns, and the 20 largest files. It reuses authenticated session-memory metadata, refreshes on entry or request, retains previous totals with a stale warning after failures, and aggregates on a worker isolate. The view excludes history, trash, quota/physical storage and device cache/sync usage; duplicate detection, oldest-file analysis, cleanup and automatic mutation freshness remain unfinished on #84.
+
 ## [0.35.0] - 2026-11-23
 
 ### Bug fixes

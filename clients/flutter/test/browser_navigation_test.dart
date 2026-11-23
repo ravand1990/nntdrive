@@ -45,6 +45,35 @@ Future<void> systemBack(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('account menu reaches read-only storage on a small window', (tester) async {
+    tester.view.physicalSize = const Size(390, 600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final api = _BrowserApi();
+    final operations = SessionOperations();
+    final session = Session(server: api.baseUrl, token: 'fixture', handle: 0,
+      accountId: 'fixture', email: 'fixture@example.invalid', operations: operations);
+    final sync = SyncController(server: api.baseUrl, token: 'fixture', handle: 0, api: api);
+    await tester.pumpWidget(MaterialApp(home: FilesPage(session: session,
+      sync: sync, operations: operations,
+      updates: UpdateChecks(check: () async => null, prompt: (_) async => true),
+      themeMode: ThemeMode.light, onTheme: (_) {}, onSignOut: () {}, api: api)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Account'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Storage usage'));
+    await tester.tap(find.text('Storage usage'));
+    await tester.pumpAndSettle();
+    expect(find.text('Live files · logical bytes'), findsOneWidget);
+    expect(find.text('Storage usage unavailable. Refresh to retry.'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    session.search.close();
+    await operations.drain(0);
+    sync.dispose();
+  });
+
   testWidgets('system back leaves one folder instead of exiting the account',
       (tester) async {
     final bridge = NativeBridge.instance;
