@@ -389,6 +389,29 @@ class AccountSearch extends ChangeNotifier {
     }
   }
 
+  /// Read-only consumers share the authenticated complete RAM snapshot. The
+  /// entire worker remains session-owned; close/drain awaits it and rejects late
+  /// output. A replacement snapshot invalidates this observation, never mixes it.
+  Future<T> readSnapshot<T>(
+      Future<T> Function(Map<String, SearchEntry>) worker) async {
+    final epoch = _epoch;
+    try {
+      return await operations.run(handle, () async {
+        _check(epoch);
+        _authorize();
+        if (!ready) throw const SearchUnavailable();
+        final snapshot = _entries;
+        final result = await worker(Map.unmodifiable(snapshot));
+        _check(epoch);
+        _authorize();
+        if (!identical(snapshot, _entries)) throw const SearchUnavailable();
+        return result;
+      });
+    } catch (_) {
+      throw const SearchUnavailable();
+    }
+  }
+
   List<SearchEntry> ancestors(SearchEntry entry) {
     _check(_epoch);
     final result = <SearchEntry>[];

@@ -26,6 +26,7 @@ import 'activity_sync.dart';
 import 'space_notice.dart';
 import 'account_search.dart';
 import 'search_page.dart';
+import 'storage_usage_page.dart';
 import 'search_status.dart';
 import 'desktop_host.dart';
 import 'desktop_instance.dart';
@@ -2444,7 +2445,7 @@ class _FilesPageState extends State<FilesPage> {
       context: context,
       showDragHandle: true,
       builder: (context) => SafeArea(
-        child: Column(
+        child: SingleChildScrollView(child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
@@ -2509,6 +2510,16 @@ class _FilesPageState extends State<FilesPage> {
                       )),
                   ),
                 );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.storage),
+              title: const Text('Storage usage'),
+              subtitle: const Text('Read-only live-file totals and largest files'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.of(this.context).push(MaterialPageRoute<void>(
+                  builder: (_) => StorageUsagePage(index: widget.session.search)));
               },
             ),
             ListTile(
@@ -2594,7 +2605,7 @@ class _FilesPageState extends State<FilesPage> {
               },
             ),
           ],
-        ),
+        )),
       ),
     );
   }

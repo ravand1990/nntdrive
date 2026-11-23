@@ -249,6 +249,67 @@ no new regression/sabotage claim is made. The search index and recent/saved
 filters remain RAM-only and disappear across process/session restart. Optional
 content extraction is not implemented.
 
+## Storage usage (#84 first slice)
+
+Open **Account → Storage usage** in the browser. The account menu scrolls on
+small windows. This read-only screen shows:
+
+- Exact logical live-file bytes/count from a complete account listing snapshot;
+  zero-byte files count, directory metadata does not. History, trash, quota,
+  encrypted/parity/physical Usenet bytes and local disk copies are not counted.
+- Recursive usage for each top-level folder, including empty folders, plus a
+  separate **Files at account root** group. Group identity is the opaque folder
+  ID, not the decrypted spelling (same-named folders remain separate).
+- Filename-extension groups, lowercased locally: the suffix from the last dot,
+  except dotfiles without another dot and names ending in a dot, which join
+  **No extension**. These are not MIME/content classifications.
+- At most 20 largest files, ordered by descending logical size, then opaque ID
+  for ties, with locally constructed account-relative containing paths. The
+  breakdowns show at most 20 groups by bytes/name plus one exact **Other**
+  remainder so the displayed group sums still match the full total.
+
+Entry and **Refresh storage usage** freshly traverse the same authenticated RAM
+index used by search; successful refresh replaces metadata/membership, including
+changed sizes and removed files. There is no polling, SSE or upload/delete/sync
+invalidation while the page is open: refresh after mutations. An already
+published session snapshot can be displayed offline; a failed refresh retains
+previous totals with a stale warning, not partial data or guessed zero usage.
+If another consumer replaces the index, the old summary is marked stale until
+refresh. The page admits only one refresh at a time and disables its refresh
+button until completion. A snapshot replacement during aggregation rejects that
+observation instead of mixing versions. This metadata-only rebuild does not run
+search's optional local-status inspection; the search page re-inspects on entry.
+
+Tolerance is **zero bytes/files within the captured listing snapshot**. This is
+not an atomic server transaction across folder requests: concurrent remote
+mutations can make a successful traversal mixed-time, or make validation fail.
+Listing sizes are server namespace metadata, not authenticated manifest content
+sizes or a verified physical-space measurement; no content is downloaded or
+hashed for this report. A malicious/rolled-back backend remains outside this
+accounting guarantee. Negative sizes, overflow and malformed ancestry fail closed.
+
+The pure aggregation, grouping/order and bounded winner-path construction run on
+a top-level worker isolate; only sendable RAM metadata crosses it. Session
+ownership awaits the full worker, rejects closed/locked/replaced observations and
+drains before key revocation. There is no new backend endpoint, plaintext name,
+path, hash or analytics request, and no new index/preferences/file persistence.
+The screen releases its summary on disposal/close; admitted worker RAM can live
+until completion. Dart strings cannot promise physical zeroization.
+
+Input inherits search's **100k-node/depth-256**, per-listing **64 MiB**, bounded
+name/parse/traversal worker contracts. The worker retains whole-snapshot grouping
+maps and up to 20 winning entries before returning bounded rows. Input map
+freezing/copying and message transfer/spawn remain costs, as do search's HTTP
+collection, global membership, queues and final merges. This is not an
+incremental aggregation or proof of whole-build isolation, installed frame time
+or a measured speedup. The 100k fixture establishes bounds/totals, not device
+performance acceptance.
+
+Not implemented here: device cache/pinned/synced breakdown (see the separate
+**Offline copies & cache** screen), oldest-large files, duplicates, containing
+folder navigation or cleanup. No action deletes anything. #84 remains open for
+those features and automatic freshness; installed-device acceptance is unrun.
+
 ## What the Rust bridge exports
 
 `crates/ffi` exposes a JSON C ABI:

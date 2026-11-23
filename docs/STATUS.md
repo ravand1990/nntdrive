@@ -1,5 +1,39 @@
 # Project status
 
+## Read-only storage dashboard (#84 first slice)
+
+**Account → Storage usage** reports logical live-file bytes and count, usage by
+account-root folder and filename extension, and up to 20 largest files with
+containing paths. Both breakdowns retain the top 20 groups plus an exact combined
+remainder. Root-level files have their own bucket; empty top-level folders and
+zero-byte files are included. Counts exclude folder metadata, history, trash,
+quota/physical Usenet storage, local sync folders and device cache/pins.
+
+Entry and explicit refresh rebuild the existing authenticated account search RAM
+snapshot, then aggregate it on a top-level worker isolate. Failed refreshes retain
+the previous complete summary and show stale/error guidance; closing the session
+clears displayed names and drains admitted workers before key revocation. No new
+plaintext persistence or network payload is introduced. See [client accounting
+semantics and bounds](CLIENTS.md#storage-usage-84-first-slice).
+
+Regression coverage includes exact nested totals, 100k entries/bounded output,
+worker execution/event-turn checks, error/refresh/reopen/close UI, session drain,
+replacement rejection, and real native-name/loopback Session listing assertions.
+Tests were introduced before implementation (the original tree cannot compile
+the new dashboard tests); replacing worker dispatch with caller-side Future.sync
+fails both execution-location and event-turn regressions, then was restored.
+The canonical `bash scripts/dev-check.sh flutter` rebuilt the release FFI,
+reported clean analysis, and passed **767 tests / 4 platform skips** using pinned
+Flutter 3.47.9 / Dart 3.13.7. The targeted four-file run passed 14 tests,
+including the existing browser-back regression (13 new tests).
+
+This is not completed #84 acceptance: automatic upload/delete/sync invalidation,
+device cache versus pinned versus synced accounting, duplicate/hash analysis,
+oldest-large-file analysis, containing-folder actions and confirmed cleanup with
+reclaimed-space reporting remain open. Installed-device/frame-time acceptance
+and an atomic account-wide backend snapshot are not established. Existing cache
+controls remain separate; this dashboard offers no deletion or cleanup action.
+
 ## Cache limit and device free space (#199 first slice)
 
 The cache ceiling is now the user's choice. **Change the cache limit** on the
