@@ -11,6 +11,7 @@ void main() {
   late DownloadCache cache;
   late DownloadCache roomy;
   late DownloadCache tiny;
+  late DownloadCache oversized;
 
   // All cache directories and copies are created here, never inside a widget
   // test body: awaiting real directory IO in a testWidgets body can hang until
@@ -23,6 +24,15 @@ void main() {
       limitBytes: 1024 * 1024,
     );
     await cache.open();
+    oversized = DownloadCache(
+      root: Directory(p.join(sandbox.path, 'oversized')),
+      limitBytes: 1000,
+    );
+    await oversized.open();
+    final latest = File(p.join(sandbox.path, 'latest.bin'));
+    await latest.writeAsBytes(List<int>.filled(600, 7));
+    await oversized.store(fileId: 'latest', revisionId: 'r1', source: latest);
+    await oversized.setLimit(100);
 
     roomy = DownloadCache(
       root: Directory(p.join(sandbox.path, 'roomy')),
@@ -124,6 +134,16 @@ void main() {
     );
     expect(find.text('Pinned report.pdf'), findsOneWidget);
     expect(tiny.usage.pinnedBytes, 4096, reason: 'pinned copies are kept');
+  });
+
+  testWidgets('explains a protected newest copy above the limit', (
+    tester,
+  ) async {
+    await tester.pumpWidget(page(oversized, freeSpace: (_) async => 1 << 40));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('newest downloaded copy'), findsOneWidget);
+    expect(oversized.find('latest'), isNotNull);
+    expect(oversized.usage.usedBytes, 600);
   });
 
   testWidgets('applies a preset limit and reports it as saved', (tester) async {

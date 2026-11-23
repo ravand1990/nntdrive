@@ -14,6 +14,16 @@ the same warning appears when changing the limit. The chosen value is stored
 per device in shared preferences, so it survives a restart; a missing or
 out-of-range stored value falls back to 2 GiB.
 
+Limit changes also protect the revision most recently stored or adopted in the
+current cache instance. Older unpinned copies remain eviction candidates; when
+the newest copy plus kept-offline bytes leave usage above the limit, the screen
+explains the exception. The next completed download replaces this protection;
+explicit remove, clear-unpinned and unpin operations retain their existing
+semantics. This is not a persisted pin or a reservation of free disk space.
+The follow-up passed the pinned Flutter wrapper (clean analysis, 754 tests,
+4 platform skips). Restoring the old shrink path failed both store/adopt
+regressions; omitting the explanation failed its widget regression.
+
 The screen also reports the device's real free space. A small read-only native
 call (`nntdrive_free_space`) reads the volume that holds the cache through
 `statfs` on Unix (available bytes, not reserved blocks) and

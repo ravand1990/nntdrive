@@ -200,6 +200,11 @@ class DownloadCache {
   bool _busy = false;
   final List<Completer<void>> _waiters = <Completer<void>>[];
 
+  /// File name of the revision stored or adopted last in this instance.
+  /// Limit changes protect it so lowering the limit cannot evict the copy
+  /// that just finished downloading. Explicit cleanup/unpin remains allowed.
+  String? _lastStoredName;
+
   bool get isOpen => _opened;
   bool get recoveredCorruptIndex => _corruptIndex;
 
@@ -392,6 +397,7 @@ class DownloadCache {
       pinned: pinned,
     );
     _entries[_key(fileId, revisionId)] = entry;
+    _lastStoredName = name;
     await _enforceLimitLocked(protect: name);
     await _writeIndex();
     return _entries[_key(fileId, revisionId)] ?? entry;
@@ -433,6 +439,7 @@ class DownloadCache {
       pinned: pinned,
     );
     _entries[_key(fileId, revisionId)] = entry;
+    _lastStoredName = name;
     await _enforceLimitLocked(protect: name);
     await _writeIndex();
     return entry;
@@ -507,16 +514,18 @@ class DownloadCache {
 
   /// Applies a new whole-cache limit and evicts down to it immediately.
   ///
-  /// Only unpinned scratch copies are ever evicted, so a limit below the pinned
-  /// total leaves the cache above the limit and reports how many pinned copies
-  /// were kept. Rejects a non-positive limit before changing anything.
+  /// Only unpinned scratch copies are ever evicted, and the revision stored or
+  /// adopted last is protected, so a limit change cannot pull the copy a
+  /// download just finished. A limit below the pinned or just-stored bytes
+  /// leaves the cache above the limit and reports how many pinned copies were
+  /// kept. Rejects a non-positive limit before changing anything.
   Future<CacheCleanup> setLimit(int bytes) => _serial(() async {
     _requireOpen();
     if (bytes <= 0) {
       throw ArgumentError.value(bytes, 'bytes', 'must be positive');
     }
     _limitBytes = bytes;
-    return _enforceLimitLocked();
+    return _enforceLimitLocked(protect: _lastStoredName);
   });
 
   /// Evicts least-recently-used unpinned entries until the cache fits its

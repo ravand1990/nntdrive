@@ -276,6 +276,8 @@ class _DownloadCachePageState extends State<DownloadCachePage> {
     final theme = Theme.of(context);
     final pinned = _entries.where((entry) => entry.pinned).length;
     final pinnedOverLimit = _usage.pinnedBytes > _usage.limitBytes;
+    final newestOverLimit =
+        !pinnedOverLimit && _usage.usedBytes > _usage.limitBytes;
     final free = _freeBytes;
     final deviceTight = free != null && free < _usage.limitBytes;
     final busy = _clearing || _changingLimit;
@@ -328,6 +330,18 @@ class _DownloadCachePageState extends State<DownloadCachePage> {
                         'limit. They are never deleted; stop keeping some '
                         'offline to get under '
                         '${formatCacheBytes(_usage.limitBytes)}.',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.error,
+                        ),
+                      ),
+                    ],
+                    if (newestOverLimit) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        'Warning: the newest downloaded copy is protected '
+                        'during a limit change, so it and any kept-offline '
+                        'copies can leave the cache above the limit. '
+                        'Remove it explicitly or clear unpinned cache to reclaim space.',
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.error,
                         ),

@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Bug fixes
+
+- Lowering the device cache limit no longer evicts the revision most recently stored or adopted in the current cache instance. Older unpinned copies are still evicted; the cache screen explains when the protected newest copy leaves usage above the limit. A later download replaces that protection, and explicit remove/clear operations remain available (#199).
+
 ### Features
 
 - The offline cache limit is now a device setting instead of a fixed 2 GiB constant. **Change the cache limit** on the **Offline copies & cache** screen offers 256 MiB, 512 MiB, 1 GiB, 2 GiB and 5 GiB, or a typed size from 16 MiB to 1 TiB; the new limit applies at once — unpinned copies are evicted down to it, while anything kept offline is never deleted and is reported instead — and it is remembered for the next start on that device. The same screen now shows how much room the device really has left, read from the operating system through the native core (`statfs`/`GetDiskFreeSpaceEx`), and warns when the device has less free space than the limit or when kept-offline copies are larger than it (#199).
