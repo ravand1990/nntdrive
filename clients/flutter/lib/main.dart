@@ -2519,7 +2519,17 @@ class _FilesPageState extends State<FilesPage> {
               onTap: () {
                 Navigator.pop(context);
                 Navigator.of(this.context).push(MaterialPageRoute<void>(
-                  builder: (_) => StorageUsagePage(index: widget.session.search)));
+                  builder: (_) => StorageUsagePage(
+                    index: widget.session.search,
+                    readCacheUsage: () async {
+                      // Never lazily open here: open() reconciles/deletes scratch.
+                      final opened = _cacheFuture;
+                      if (opened == null) {
+                        throw StateError('Cache accounting unavailable');
+                      }
+                      return (await opened).measureUsage();
+                    },
+                  )));
               },
             ),
             ListTile(

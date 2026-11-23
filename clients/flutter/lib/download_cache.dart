@@ -134,6 +134,26 @@ class CacheUsage {
   int get headroomBytes => usedBytes >= limitBytes ? 0 : limitBytes - usedBytes;
 }
 
+/// Read-only filesystem observation of indexed cached revisions, not allocated
+/// disk blocks or a whole-directory total. Scratch/orphan/index bytes are excluded.
+class MeasuredCacheUsage {
+  const MeasuredCacheUsage({
+    required this.bytes,
+    required this.copies,
+    required this.pinnedBytes,
+    required this.pinnedCopies,
+    required this.excludedCopies,
+  });
+
+  final int bytes;
+  final int copies;
+  final int pinnedBytes;
+  final int pinnedCopies;
+  final int excludedCopies;
+  int get unpinnedBytes => bytes - pinnedBytes;
+  int get unpinnedCopies => copies - pinnedCopies;
+}
+
 /// Result of one eviction or cleanup pass.
 class CacheCleanup {
   const CacheCleanup({
@@ -230,6 +250,67 @@ class DownloadCache {
       pinnedBytes: pinned,
     );
   }
+
+  /// Measures only the existing bounded index under the cache operation queue.
+  /// Never reopens/reconciles the cache, scans directories, reads contents or
+  /// writes metadata. Pin flags are frozen by serialization with cache writers.
+  /// External changes can make this a mixed-time observation, not an atomic or
+  /// integrity-verified snapshot. Stable links/non-files are never followed.
+  Future<MeasuredCacheUsage> measureUsage() => _serial(() async {
+    _requireOpen();
+    if (_corruptIndex || _entries.length > downloadCacheMaxEntries) {
+      throw StateError('Cache accounting unavailable');
+    }
+    Future<void> checkRoot() async {
+      var path = p.normalize(p.absolute(root.path));
+      while (true) {
+        if (await FileSystemEntity.type(path, followLinks: false) !=
+            FileSystemEntityType.directory) {
+          throw StateError('Cache accounting unavailable');
+        }
+        final parent = p.dirname(path);
+        if (parent == path) break;
+        path = parent;
+      }
+    }
+
+    await checkRoot();
+    var bytes = 0;
+    var copies = 0;
+    var pinnedBytes = 0;
+    var pinnedCopies = 0;
+    var excluded = 0;
+    for (final entry in _entries.values) {
+      final path = fileFor(entry).path;
+      if (await FileSystemEntity.type(path, followLinks: false) !=
+          FileSystemEntityType.file) {
+        excluded++;
+        continue;
+      }
+      final size = await File(path).length();
+      if (await FileSystemEntity.type(path, followLinks: false) !=
+          FileSystemEntityType.file) {
+        throw StateError('Cache accounting changed during measurement');
+      }
+      if (size < 0 || bytes > 0x7fffffffffffffff - size) {
+        throw StateError('Cache accounting unavailable');
+      }
+      bytes += size;
+      copies++;
+      if (entry.pinned) {
+        pinnedBytes += size;
+        pinnedCopies++;
+      }
+    }
+    await checkRoot();
+    return MeasuredCacheUsage(
+      bytes: bytes,
+      copies: copies,
+      pinnedBytes: pinnedBytes,
+      pinnedCopies: pinnedCopies,
+      excludedCopies: excluded,
+    );
+  });
 
   static String _key(String fileId, String revisionId) =>
       '$fileId\u0000$revisionId';

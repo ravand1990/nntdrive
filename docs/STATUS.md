@@ -1,6 +1,6 @@
 # Project status
 
-## Read-only storage dashboard (#84 first slice)
+## Read-only storage dashboard (#84 bounded slices)
 
 **Account → Storage usage** reports logical live-file bytes and count, usage by
 account-root folder and filename extension, and up to 20 largest files with
@@ -40,8 +40,32 @@ behavior (three existing widget tests passed). The extension's canonical
 `bash scripts/dev-check.sh flutter` exited 0: release FFI build, clean analysis,
 **772 tests / 4 platform skips**. The four-file storage run passed **17 tests**.
 
+The separate device-cache section now measures existing indexed regular-file
+lengths and cached-revision counts, with pinned/unpinned splits. It uses the
+cache's serial queue and bounded index, never reopening/reconciling the cache,
+scanning sync folders, reading content or writing metadata. Missing/nonregular
+copies are explicitly excluded; missing/linked roots, corrupt indexes and failed
+readings are unavailable, not zero. Cache refresh works independently of account
+listing failures, retains stale previous readings on error, and rejects late
+publication after close. Scratch/orphan/index bytes and allocated disk blocks
+are not measured. See CLIENTS.md for mixed-time/path-swap limitations and #207
+installed cache/pin acceptance additions.
+
+Cache regressions cover real filesystem size changes, zero-byte/multiple
+revisions, restart and pin changes, deleted/linked/directory replacements,
+unchanged index/scratch/orphan files, root/ancestor links, corrupt indexes and
+queue ordering. Widget regressions cover independent offline-account/cache
+refresh, stale retention/retry, unavailable versus zero, delayed close and the
+small-window browser route. Substituting stale index sizes fails the real-size
+regression (13 rather than 21 bytes); omitting cache refresh fails both new
+widget tests. Both sabotages were restored. The canonical
+`bash scripts/dev-check.sh flutter` exited 0: release FFI build, clean analysis,
+**779 tests / 4 platform skips**. The three-file focused run passed **14 tests**.
+An initial full run exposed a browser fixture awaiting IO with fake-only frame
+settling; it now admits bounded real event turns before asserting completion.
+
 This is not completed #84 acceptance: automatic upload/delete/sync invalidation,
-device cache versus pinned versus synced accounting, duplicate/hash analysis,
+sync-folder byte accounting, duplicate/hash analysis,
 containing-folder actions and confirmed cleanup with
 reclaimed-space reporting remain open. Installed-device/frame-time acceptance
 and an atomic account-wide backend snapshot are not established. Existing cache
