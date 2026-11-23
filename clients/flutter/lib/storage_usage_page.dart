@@ -3,10 +3,13 @@ import 'package:flutter/material.dart';
 import 'account_search.dart';
 import 'storage_usage.dart';
 import 'download_cache.dart';
+import 'sync_disk_usage.dart';
 
 class StorageUsagePage extends StatefulWidget {
   const StorageUsagePage({super.key, required this.index, this.readCacheUsage,
-    this.clearUnpinnedCache});
+    this.clearUnpinnedCache, this.readSyncUsage});
+  /// Session/controller-owned read-only worker. No journal or permission prompt.
+  final Future<SyncDiskUsage> Function()? readSyncUsage;
   final AccountSearch index;
 
   /// Reads the already opened device cache; must not open/reconcile or clean it.
@@ -22,6 +25,8 @@ class StorageUsagePage extends StatefulWidget {
 
 class _StorageUsagePageState extends State<StorageUsagePage> {
   StorageUsage? _usage;
+  SyncDiskUsage? _syncUsage;
+  bool _syncFailed = false;
   MeasuredCacheUsage? _cacheUsage;
   bool _cacheFailed = false;
   bool _clearing = false;
@@ -75,6 +80,7 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
       if (widget.index.closed) {
         _usage = null;
         _cacheUsage = null;
+        _syncUsage = null;
         _revision = null;
         _cleanupReport = null;
       }
@@ -96,9 +102,23 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
     setState(() => _busy = true);
     try {
       // Local accounting must still finish when account listing is offline.
-      await Future.wait([_refreshAccount(), _refreshCache()]);
+      await Future.wait([_refreshAccount(), _refreshCache(), _refreshSync()]);
     } finally {
       if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _refreshSync() async {
+    try {
+      final reader = widget.readSyncUsage;
+      if (reader == null) throw StateError('Sync-folder accounting unavailable');
+      final usage = await reader();
+      if (!mounted || widget.index.closed) return;
+      setState(() { _syncUsage = usage; _syncFailed = false; });
+    } catch (_) {
+      if (mounted && !widget.index.closed) {
+        setState(() => _syncFailed = true);
+      }
     }
   }
 
@@ -222,7 +242,7 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
             'Measured file lengths, separate from logical account bytes. '
             'Pinned copies are part of the cache, not additional bytes. '
             'Counts are cached revisions, not unique account files. '
-            'Sync-folder data is not measured. Refresh after cache or pin changes.',
+            'Sync-folder data is reported separately. Refresh after cache or pin changes.',
           ),
           if (_busy) const Text('Refreshing device cache…'),
           if (widget.clearUnpinnedCache != null)
@@ -332,10 +352,49 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
             'usage, local sync folders, cache and pins are not included. '
             'No duplicate detection or account/sync-folder cleanup actions.',
           ),
+          const SizedBox(height: 16),
+          const Text(
+            'This device · sync-folder file lengths',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
+          const Text(
+            'Read-only measured regular-file lengths, per configured root in '
+            'sync-settings order (up to 20 roots). Includes hidden, excluded and '
+            'local-only files. Not journal equality or verified synced content. '
+            'Not allocated disk space or deduplicated physical usage: hard links '
+            'and separate copies can count repeatedly. Never added to cache or '
+            'account totals; no combined device total.',
+          ),
+          if (_busy) const Text('Measuring sync folders…'),
+          if (_syncFailed && !widget.index.closed)
+            Text(_syncUsage == null
+              ? 'Sync-folder usage unavailable. Refresh to retry.'
+              : 'Sync-folder refresh failed. Previous observations may be stale. Refresh to retry.'),
+          if (_syncUsage != null) ...[
+            if (_syncUsage!.roots.isEmpty) const Text('No configured sync folders.'),
+            for (final item in _syncUsage!.roots.indexed)
+              Text('Sync root ${item.$1 + 1}: ${_syncObservation(item.$2)}'),
+          ],
+          const Text(
+            'Overlapping or equal configured roots are not measured (both rows). '
+            'Links are never followed; unsafe/missing roots are unavailable. '
+            'Incomplete rows show observed bytes only, not totals. Shared budget: '
+            '10000 entries and 2 seconds between filesystem operations; a stalled '
+            'OS call can take longer. Readings are mixed-time, not atomic against '
+            'local path swaps, and not continuously updated. Refresh to recheck. '
+            'No sync-folder cleanup or duplicate detection.',
+          ),
         ],
       ),
     );
   }
+
+  String _syncObservation(SyncDiskRootUsage usage) => switch (usage.state) {
+    SyncDiskState.complete => '${usage.bytes} measured bytes · ${usage.files} regular files (complete observation)',
+    SyncDiskState.incomplete => 'Incomplete: ${usage.bytes} observed bytes · ${usage.files} regular files · ${usage.skipped} unsafe/skipped entries (not a total)',
+    SyncDiskState.unavailable => 'Unavailable: missing, unsafe or unreadable root/tree',
+    SyncDiskState.overlap => 'Not measured: overlapping configured roots',
+  };
 
   Widget _buckets(String title, List<StorageBucket> buckets) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,

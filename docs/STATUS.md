@@ -107,12 +107,42 @@ The final canonical `bash scripts/dev-check.sh flutter` exited 0: release FFI
 build, clean analysis and **800 tests / 4 platform skips** on pinned Flutter
 3.47.9 / Dart 3.13.7. Installed navigation acceptance remains with #207.
 
+The dashboard now separately measures configured sync-folder regular-file lengths
+on a top-level worker: up to 20 rows in sync-settings order, with a shared
+10000-entry / 2-second cooperative budget. Complete versus incomplete observed
+bytes, unavailable roots and overlap refusals are explicit. Equal/nested roots
+are both refused; there is no combined device total or addition to cache/account
+totals. Includes hidden/excluded/local-only files; lengths are not journal equality,
+verified synced content or deduplicated allocated disk usage. No file contents,
+journals, filesystem writes, network requests or permission prompts are needed.
+Traversal checks root/ancestors/components without following links, plus canonical
+and post-length validation. A stalled OS call may exceed the time budget; mixed-time
+metadata checks do not establish hostile path-swap atomicity. Controller refreshes
+coalesce and session/controller drain waits for admitted work; close or changed
+configuration rejects late results. Offline account failure does not block local
+observations; failed refresh retains explicitly stale prior readings.
+
+Coverage includes real lengths/changes/deletions/hidden/local-only files, unchanged
+corrupt external journal and tree, missing/file/relative/traversal roots, root and
+ancestor links, nested escaping links/cycles, overlap versus adjacent roots,
+entry/time/root bounds, worker location/event turns, real controller dispatch,
+single-flight/drain/close and configuration replacement. Widgets cover unavailable,
+partial/overlap, independent offline refresh, stale retry and close/disposal.
+The original dashboard fails the new section regression. Caller-side worker and
+removed-confinement sabotages each fail their focused regression and were restored.
+The final canonical `bash scripts/dev-check.sh flutter` exited 0 with a release
+FFI build, no analysis issues and **812 tests / 4 platform skips** on Flutter
+3.47.9 / Dart 3.13.7. The four-file affected run passed **27 tests**. Initial
+checks caught one new lint and lazy-viewport fixture assumptions; both were fixed
+before the final full run. SDK advisory tag-fetch warnings did not fail the wrapper.
+
 This is not completed #84 acceptance: automatic upload/delete/sync invalidation,
-sync-folder byte accounting, duplicate/hash analysis
-and account/sync-folder cleanup remain open. Installed-device/frame-time acceptance
-and an atomic account-wide backend snapshot are not established. Extend #207's
-installed acceptance to confirmation/dismissal, pinned preservation, measured
-reclaimed copies/bytes, failure/retry and refreshed cache totals.
+duplicate/hash analysis and account/sync-folder cleanup remain open. Larger trees
+remain explicitly incomplete; there is no continuation/persistent accounting index.
+Installed-device/frame-time acceptance and an atomic account-wide backend snapshot
+are not established. #207 retains installed navigation/cache/cleanup acceptance
+and adds sync-root file-length comparisons, denied/missing/linked/overlapping
+roots, partial output, offline refresh and sign-out during measurement.
 
 ## Cache limit and device free space (#199 first slice)
 

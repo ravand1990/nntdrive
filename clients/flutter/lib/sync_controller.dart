@@ -16,6 +16,7 @@ import 'package:uuid/uuid.dart';
 import 'account_roots.dart';
 import 'api.dart';
 import 'local_availability.dart';
+import 'sync_disk_usage.dart';
 import 'native.dart';
 import 'pending_moves.dart';
 import 'session_operations.dart';
@@ -1180,6 +1181,33 @@ class SyncController extends ChangeNotifier {
       'excluded': folder.excluded,
     };
     return consume == null ? inspectRunner(handle, request) : consume(request);
+  }
+
+  Future<SyncDiskUsage>? _diskUsageFuture;
+
+  /// Read-only local metadata, independent of network/native/journal inspection.
+  /// Coalesce refresh races, drain the entire worker, discard changed configs.
+  Future<SyncDiskUsage> measureSyncDiskUsage({
+    Future<SyncDiskUsage> Function(List<String>) runner = runSyncDiskUsage,
+  }) {
+    if (_stopped || !_loaded || folders.length > 20) {
+      return Future.error(StateError('Sync-folder accounting unavailable'));
+    }
+    return _diskUsageFuture ??= _operations.run(0, () async {
+      final snapshot = List<SyncFolderConfig>.of(folders);
+      final paths = [for (final folder in snapshot) folder.localPath];
+      try {
+        final usage = await runner(paths);
+        if (_stopped || folders.length != snapshot.length ||
+            snapshot.indexed.any((item) => !identical(folders[item.$1], item.$2) ||
+                item.$2.localPath != paths[item.$1])) {
+          throw StateError('Sync-folder configuration changed');
+        }
+        return usage;
+      } finally {
+        _diskUsageFuture = null;
+      }
+    });
   }
 
   /// Local-only evidence for an overview row, owned until inspection completes.
