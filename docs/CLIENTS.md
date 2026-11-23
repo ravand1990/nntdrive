@@ -1,5 +1,9 @@
 # Client platforms
 
+For a dated, source-linked comparison with consumer cloud clients, see
+[Cloud storage parity review](CLOUD-PARITY.md). That review separates integrated
+features, remaining implementation gaps and installed-device acceptance.
+
 ## Current state
 
 | Platform | Source | Build status | Crypto/content |
