@@ -93,8 +93,22 @@ route regression now scrolls before asserting that section. The SDK's advisory
 tag-fetch permission/DNS warnings did not fail the final wrapper. Installed
 cleanup acceptance remains unrun.
 
+Largest and oldest-large rows now offer **Open containing folder**, explicitly
+inside the app. Opaque IDs reuse search-result navigation with fresh ancestor
+listings/authenticated names and a refreshed browser parent; root files open the
+account root, without launching file actions or a device file manager. Stale
+replacement snapshots disable links; missing/moved/unreadable entries show generic
+refresh guidance. Selection/resolution reject close/replacement and drain admitted
+work before revocation. Tests cover both lists/root and nested navigation, fresh
+renamed labels, safe failures, stale links, replacement and suspended close/drain;
+real native/loopback tests assert opaque-only requests. Bypassing fresh listings
+fails the fresh-label and failure UI regressions; the sabotage was restored.
+The final canonical `bash scripts/dev-check.sh flutter` exited 0: release FFI
+build, clean analysis and **800 tests / 4 platform skips** on pinned Flutter
+3.47.9 / Dart 3.13.7. Installed navigation acceptance remains with #207.
+
 This is not completed #84 acceptance: automatic upload/delete/sync invalidation,
-sync-folder byte accounting, duplicate/hash analysis, containing-folder actions
+sync-folder byte accounting, duplicate/hash analysis
 and account/sync-folder cleanup remain open. Installed-device/frame-time acceptance
 and an atomic account-wide backend snapshot are not established. Extend #207's
 installed acceptance to confirmation/dismissal, pinned preservation, measured

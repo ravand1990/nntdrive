@@ -313,6 +313,31 @@ incremental aggregation or proof of whole-build isolation, installed frame time
 or a measured speedup. The 100k fixture establishes bounds/totals, not device
 performance acceptance.
 
+### Open containing folder (in app)
+
+Both largest and oldest-large rows offer **Open containing folder**. This returns
+to the encrypted file browser at the file's parent (or account root for root
+files); it does not launch a device file manager, download content, open a file
+action menu or modify account/cache data. Display paths are labels only. Rows
+carry opaque node IDs, and navigation shares search-result resolution: every
+ancestor and the selected entry are freshly listed by opaque parent ID and their
+names authenticated locally before the browser refreshes the destination.
+Renamed ancestors use fresh labels. Missing, moved, duplicate-ID, type-changed or
+unreadable entries fail closed with generic refresh guidance, never raw network
+or crypto diagnostics. This is a mixed-time traversal, not an atomic namespace
+transaction; a concurrent move may require reopening/refreshing the report.
+
+Replacement snapshots disable old report links until refresh. Failed offline
+refreshes may retain links to the last complete snapshot, but opening still
+requires fresh online listings and can fail safely. Selection and resolution are
+session-owned: close/replacement rejects late results, admitted HTTP/decryption
+is drained before key revocation, and disposed views do not navigate. The shared
+search route still enters directory results and offers file actions only after
+fresh browser listing; the dashboard route only opens the parent. Automated
+widget/native HTTP coverage is not installed-platform acceptance (#207). Remaining
+#84 work includes sync-folder accounting, duplicates, account/sync-folder cleanup
+and automatic mutation freshness.
+
 ### Device cache measurement
 
 A separate **This device · indexed offline cache** section reports total,

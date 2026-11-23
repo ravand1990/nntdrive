@@ -29,6 +29,38 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
   bool _busy = false;
   bool _failed = false;
   int? _revision;
+  bool _opening = false;
+  String? _navigationError;
+
+  Future<void> _openContainingFolder(StorageFile file) async {
+    final revision = _revision;
+    if (_opening || _busy || widget.index.closed || revision == null ||
+        revision != widget.index.snapshotRevision) { return; }
+    setState(() { _opening = true; _navigationError = null; });
+    try {
+      final entry = await widget.index.readSnapshot((snapshot) async {
+        if (revision != widget.index.snapshotRevision) throw const SearchUnavailable();
+        final entry = snapshot[file.id];
+        if (entry == null || entry.file.isDir) throw const SearchUnavailable();
+        return entry;
+      });
+      if (!mounted || widget.index.closed || revision != widget.index.snapshotRevision) return;
+      Navigator.pop(context, entry);
+    } catch (_) {
+      if (mounted && !widget.index.closed) {
+        setState(() => _navigationError =
+          'Folder unavailable. Refresh storage usage and retry.');
+      }
+    } finally {
+      if (mounted) setState(() => _opening = false);
+    }
+  }
+
+  Widget _folderAction(StorageFile file) => TextButton(
+    onPressed: _busy || _opening || widget.index.closed ||
+        _revision != widget.index.snapshotRevision ? null : () => _openContainingFolder(file),
+    child: const Text('Open containing folder'),
+  );
 
   @override
   void initState() {
@@ -246,6 +278,9 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
             ),
             _buckets('By top-level folder', usage.folders),
             _buckets('By filename extension', usage.types),
+            const Text('Open containing folder navigates inside this app, not the device file manager. '
+              'The folder is freshly listed and decrypted; stale or moved entries may require refresh.'),
+            if (_navigationError != null) Text(_navigationError!),
             const SizedBox(height: 16),
             Text(
               'Largest files (up to 20)',
@@ -255,7 +290,10 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
             for (final file in usage.largest)
               ListTile(
                 title: Text(file.path),
-                subtitle: Text('${file.bytes} bytes'),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [Text('${file.bytes} bytes'), _folderAction(file)],
+                ),
               ),
             const SizedBox(height: 16),
             Text(
@@ -275,8 +313,12 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
             for (final file in usage.oldestLarge)
               ListTile(
                 title: Text(file.path),
-                subtitle: Text(
-                  '${file.bytes} bytes · ${file.updatedAt.toIso8601String()} (UTC)',
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('${file.bytes} bytes · ${file.updatedAt.toIso8601String()} (UTC)'),
+                    _folderAction(file),
+                  ],
                 ),
               ),
           ],

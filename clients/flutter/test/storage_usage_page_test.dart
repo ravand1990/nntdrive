@@ -54,6 +54,27 @@ Future<void> settled(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('folder links disable on replacement snapshot and clear on close', (tester) async {
+    final f = Fixture()..size = 10485760..updatedAt = DateTime.utc(2020);
+    addTearDown(f.index.dispose);
+    await tester.runAsync(() => tester.pumpWidget(MaterialApp(home: StorageUsagePage(index: f.index))));
+    await settled(tester);
+    await tester.scrollUntilVisible(find.text('10485760 bytes'), 150,
+      scrollable: find.byType(Scrollable).first);
+    final action = find.widgetWithText(TextButton, 'Open containing folder').first;
+    expect(tester.widget<TextButton>(action).onPressed, isNotNull);
+    await tester.runAsync(f.index.rebuild);
+    await tester.pump();
+    expect(tester.widget<TextButton>(action).onPressed, isNull);
+    await tester.scrollUntilVisible(find.textContaining('Previous totals may be stale'), -150,
+      scrollable: find.byType(Scrollable).first);
+    expect(find.textContaining('Previous totals may be stale'), findsOneWidget);
+    f.index.close();
+    await tester.pump();
+    expect(find.text('Open containing folder'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('cache refresh is independent, failed readings retain stale totals', (tester) async {
     final f = Fixture()..offline = true;
     addTearDown(f.index.dispose);
@@ -145,6 +166,9 @@ void main() {
       find.textContaining('not a safe-delete recommendation'),
       findsOneWidget,
     );
+    await tester.scrollUntilVisible(
+      find.text('Large files with unknown modification date: 1'), 100,
+      scrollable: find.byType(Scrollable).first);
     expect(
       find.text('Large files with unknown modification date: 1'),
       findsOneWidget,
@@ -175,7 +199,7 @@ void main() {
       );
       await settled(tester);
       await tester.scrollUntilVisible(
-        find.text('Oldest large files (up to 20)'),
+        find.text('Large files with unknown modification date: 0'),
         200,
         scrollable: find.byType(Scrollable).first,
       );
