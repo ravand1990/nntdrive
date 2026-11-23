@@ -6,6 +6,8 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-11-23
+
 ### Bug fixes
 
 - Lowering the device cache limit no longer evicts the revision most recently stored or adopted in the current cache instance. Older unpinned copies are still evicted; the cache screen explains when the protected newest copy leaves usage above the limit. A later download replaces that protection, and explicit remove/clear operations remain available (#199).
