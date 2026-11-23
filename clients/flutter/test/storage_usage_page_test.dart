@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nntdrive/account_search.dart';
 import 'package:nntdrive/api.dart';
 import 'package:nntdrive/session_operations.dart';
+import 'package:nntdrive/storage_usage.dart';
 import 'package:nntdrive/storage_usage_page.dart';
 import 'package:nntdrive/download_cache.dart';
 
@@ -54,21 +55,64 @@ Future<void> settled(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('published upload and deletion metadata automatically replace totals', (tester) async {
+    final f = Fixture();
+    addTearDown(f.index.dispose);
+    var cacheReads = 0;
+    var syncReads = 0;
+    await tester.runAsync(() => tester.pumpWidget(MaterialApp(
+      home: StorageUsagePage(index: f.index,
+        readCacheUsage: () async {
+          cacheReads++;
+          return const MeasuredCacheUsage(bytes: 0, copies: 0,
+            pinnedBytes: 0, pinnedCopies: 0, excludedCopies: 0);
+        },
+        readSyncUsage: () async { syncReads++; throw StateError('unavailable'); }),
+    )));
+    await settled(tester);
+    expect(find.text('Total: 12 bytes · 1 files'), findsOneWidget);
+    f.size = 43;
+    await tester.runAsync(f.index.rebuild);
+    await settled(tester);
+    expect(find.text('Total: 43 bytes · 1 files'), findsOneWidget);
+    expect(f.lists, 2);
+    f.empty = true;
+    await tester.runAsync(f.index.rebuild);
+    await settled(tester);
+    expect(find.text('Total: 0 bytes · 0 files'), findsOneWidget);
+    expect(f.lists, 3);
+    f.index.remember(const SearchFilter(text: 'private'));
+    await settled(tester);
+    expect(f.lists, 3);
+    expect(cacheReads, 1);
+    expect(syncReads, 1);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('folder links disable on replacement snapshot and clear on close', (tester) async {
     final f = Fixture()..size = 10485760..updatedAt = DateTime.utc(2020);
     addTearDown(f.index.dispose);
-    await tester.runAsync(() => tester.pumpWidget(MaterialApp(home: StorageUsagePage(index: f.index))));
+    Completer<void>? aggregationGate;
+    await tester.runAsync(() => tester.pumpWidget(MaterialApp(home: StorageUsagePage(
+      index: f.index, aggregate: (snapshot) async {
+        await aggregationGate?.future;
+        return runStorageUsage(snapshot);
+      }))));
     await settled(tester);
     await tester.scrollUntilVisible(find.text('10485760 bytes'), 150,
       scrollable: find.byType(Scrollable).first);
     final action = find.widgetWithText(TextButton, 'Open containing folder').first;
     expect(tester.widget<TextButton>(action).onPressed, isNotNull);
+    aggregationGate = Completer<void>();
     await tester.runAsync(f.index.rebuild);
     await tester.pump();
     expect(tester.widget<TextButton>(action).onPressed, isNull);
     await tester.scrollUntilVisible(find.textContaining('Previous totals may be stale'), -150,
       scrollable: find.byType(Scrollable).first);
     expect(find.textContaining('Previous totals may be stale'), findsOneWidget);
+    aggregationGate.complete();
+    await settled(tester);
+    expect(find.textContaining('Previous totals may be stale'), findsNothing);
     f.index.close();
     await tester.pump();
     expect(find.text('Open containing folder'), findsNothing);
@@ -324,12 +368,9 @@ void main() {
       f.offline = false;
       f.size = 40;
       await tester.runAsync(f.index.rebuild);
-      await tester.pump();
-      expect(find.text('Total: 12 bytes · 1 files'), findsOneWidget);
-      expect(
-        find.textContaining('Previous totals may be stale'),
-        findsOneWidget,
-      );
+      await settled(tester);
+      expect(find.text('Total: 40 bytes · 1 files'), findsOneWidget);
+      expect(find.textContaining('Previous totals may be stale'), findsNothing);
       await tester.runAsync(
         () => tester.tap(find.byTooltip('Refresh storage usage')),
       );
