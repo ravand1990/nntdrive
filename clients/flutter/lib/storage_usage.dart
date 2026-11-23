@@ -11,14 +11,15 @@ class StorageBucket {
 }
 
 class StorageFile {
-  const StorageFile(this.path, this.bytes);
+  const StorageFile(this.path, this.bytes, this.id);
+  final String id;
   final String path;
   final int bytes;
 }
 
 /// Namespace modification time, not last access or verified content age.
 class StorageDatedFile extends StorageFile {
-  const StorageDatedFile(super.path, super.bytes, this.updatedAt);
+  const StorageDatedFile(super.path, super.bytes, super.id, this.updatedAt);
   final DateTime updatedAt;
 }
 
@@ -203,12 +204,13 @@ StorageUsage _aggregate(Map<String, SearchEntry> snapshot) {
       for (final bucket in types.entries)
         StorageBucket(bucket.key, bucket.value.bytes, bucket.value.files),
     ]),
-    [for (final entry in largest) StorageFile(path(entry), entry.file.size)],
+    [for (final entry in largest) StorageFile(path(entry), entry.file.size, entry.file.id)],
     [
       for (final entry in oldestLarge)
         StorageDatedFile(
           path(entry),
           entry.file.size,
+          entry.file.id,
           entry.file.updatedAt!.toUtc(),
         ),
     ],

@@ -26,6 +26,7 @@ import 'activity_sync.dart';
 import 'space_notice.dart';
 import 'account_search.dart';
 import 'search_page.dart';
+import 'search_navigation.dart';
 import 'storage_usage_page.dart';
 import 'search_status.dart';
 import 'desktop_host.dart';
@@ -1328,20 +1329,41 @@ class _FilesPageState extends State<FilesPage> {
             cancelled: cancelled);
         }),
     ));
-    if (entry == null || !mounted || !index.ready) return;
-    final parents = index.ancestors(entry);
-    setState(() {
-      _search = '';
-      _folderFilter.clear();
-      _path
-        ..clear()
-        ..addAll(parents.map((e) => e.file));
-      if (entry.file.isDir) _path.add(entry.file);
-    });
-    await _refresh(); // Resolve current state before offering file actions.
-    if (!mounted || !index.ready || _error != null || entry.file.isDir) return;
-    final current = _files.where((file) => file.id == entry.file.id).firstOrNull;
-    if (current != null) _open(current);
+    if (entry != null) await _navigateIndexedEntry(entry, containingOnly: false);
+  }
+
+  Future<void> _navigateIndexedEntry(SearchEntry entry, {required bool containingOnly}) async {
+    final index = widget.session.search;
+    if (!mounted || index.closed) return;
+    try {
+      await widget.operations.run(widget.session.handle, () async {
+        final parents = await resolveSearchLocation(index: index, entry: entry,
+          containingOnly: containingOnly,
+          list: (parent) => _api.listFiles(parentId: parent),
+          decrypt: (files) async {
+            final names = await NativeBridge.instance.openNamesAsync(
+              widget.session.handle,
+              files.map((file) => (id: file.id, nameEnc: file.nameEnc)).toList());
+            return {for (var i = 0; i < files.length; i++) files[i].id: names[i]};
+          });
+        if (!mounted || index.closed) return;
+        setState(() {
+          _search = '';
+          _folderFilter.clear();
+          _path..clear()..addAll(parents.map((e) => e.file));
+          _names.addAll({for (final parent in parents) parent.file.id: parent.name});
+          _files = [];
+        });
+        await _refreshNow(redactErrors: true);
+        if (!mounted || index.closed || _error != null || containingOnly || entry.file.isDir) return;
+        final current = _files.where((file) => file.id == entry.file.id).firstOrNull;
+        if (current != null) _open(current);
+      });
+    } catch (_) {
+      if (mounted && !index.closed) {
+        _showError('Folder unavailable. Refresh the source page and retry.');
+      }
+    }
   }
 
   /// Local folder name used by activity rows for actions in this view.
@@ -1466,7 +1488,7 @@ class _FilesPageState extends State<FilesPage> {
 
   Future<void> _refresh() => _fileOperation(_refreshNow);
 
-  Future<void> _refreshNow() async {
+  Future<void> _refreshNow({bool redactErrors = false}) async {
     final generation = ++_refreshGeneration;
     final parentIds = _path.map((entry) => entry.id).toList();
     setState(() {
@@ -1480,6 +1502,7 @@ class _FilesPageState extends State<FilesPage> {
         await _sync.refreshAccountRoots();
       }
       final files = await _api.listFiles(parentId: parentIds.lastOrNull);
+      if (!mounted || widget.session.search.closed) return;
       final bridge = NativeBridge.instance;
       final names = <String, String>{};
       for (final f in files) {
@@ -1491,7 +1514,7 @@ class _FilesPageState extends State<FilesPage> {
       }
       await _sync.scanConflicts();
       final availability = await _inspectAvailability(parentIds);
-      if (!mounted || generation != _refreshGeneration) return;
+      if (!mounted || widget.session.search.closed || generation != _refreshGeneration) return;
       setState(() {
         _availability = availability;
         _me = me;
@@ -1513,10 +1536,14 @@ class _FilesPageState extends State<FilesPage> {
         widget.onSignOut();
         return;
       }
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted) {
+        setState(() => _error = redactErrors
+          ? 'Folder unavailable. Refresh and retry.' : e.toString());
+      }
     } catch (e) {
       if (mounted && generation == _refreshGeneration) {
-        setState(() => _error = e.toString());
+        setState(() => _error = redactErrors
+          ? 'Folder unavailable. Refresh and retry.' : e.toString());
       }
     } finally {
       if (mounted && generation == _refreshGeneration) {
@@ -2516,9 +2543,9 @@ class _FilesPageState extends State<FilesPage> {
               leading: const Icon(Icons.storage),
               title: const Text('Storage usage'),
               subtitle: const Text('Live-file totals and device cache cleanup'),
-              onTap: () {
+              onTap: () async {
                 Navigator.pop(context);
-                Navigator.of(this.context).push(MaterialPageRoute<void>(
+                final entry = await Navigator.of(this.context).push<SearchEntry>(MaterialPageRoute(
                   builder: (_) => StorageUsagePage(
                     index: widget.session.search,
                     readCacheUsage: () async {
@@ -2542,6 +2569,7 @@ class _FilesPageState extends State<FilesPage> {
                         return cache.clearUnpinned();
                       }),
                   )));
+                if (entry != null) await _navigateIndexedEntry(entry, containingOnly: true);
               },
             ),
             ListTile(

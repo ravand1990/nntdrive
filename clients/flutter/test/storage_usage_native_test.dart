@@ -6,6 +6,9 @@ import 'package:nntdrive/session_operations.dart';
 import 'package:nntdrive/main.dart' show Session;
 import 'package:nntdrive/native.dart';
 import 'package:nntdrive/storage_usage.dart';
+import 'package:nntdrive/api.dart';
+import 'package:nntdrive/account_search.dart';
+import 'package:nntdrive/search_navigation.dart';
 
 // Real HTTP/crypto belongs outside the testWidgets HTTP override isolate.
 void main() {
@@ -19,7 +22,7 @@ void main() {
           bridge.unlock(jsonEncode(keys['keyfile']), password)['handle'] as int;
       const folder = '0b9e6b0e-6d3e-4c2a-9c1e-2b1c0d1e2f30';
       const id = '1b9e6b0e-6d3e-4c2a-9c1e-2b1c0d1e2f30';
-      final sealedFolder = bridge.sealName(handle, folder, 'Private folder');
+      var sealedFolder = bridge.sealName(handle, folder, 'Private folder');
       final sealedName = bridge.sealName(handle, id, 'Private report.TXT');
       var size = 13;
       String? updatedAt;
@@ -83,6 +86,29 @@ void main() {
         );
         expect(usage.oldestLarge.single.updatedAt, DateTime.utc(2020));
         expect(usage.unknownLargeDates, 0);
+        expect(usage.largest.single.id, id);
+        expect(usage.oldestLarge.single.id, id);
+        final selected = await session.search.readSnapshot((snapshot) async => snapshot[id]!);
+        sealedFolder = bridge.sealName(handle, folder, 'Fresh private folder');
+        final api = ApiClient(baseUrl: session.server, token: session.token);
+        Future<List<SearchEntry>> navigate() => resolveSearchLocation(
+          index: session.search, entry: selected, containingOnly: true,
+          list: (parent) => api.listFiles(parentId: parent),
+          decrypt: (files) async {
+            final names = await bridge.openNamesAsync(handle,
+              files.map((file) => (id: file.id, nameEnc: file.nameEnc)).toList());
+            return {for (var i = 0; i < files.length; i++) files[i].id: names[i]};
+          });
+        final location = await navigate();
+        expect(location.single.name, 'Fresh private folder');
+        expect(location.single.file.id, folder);
+        corrupt = true;
+        await expectLater(navigate(), throwsException);
+        corrupt = false;
+        deleted = true;
+        await expectLater(navigate(), throwsException);
+        deleted = false;
+        sealedFolder = bridge.sealName(handle, folder, 'Private folder');
         for (final date in [null, 'malformed']) {
           updatedAt = date;
           await session.search.rebuild();
