@@ -2556,6 +2556,13 @@ class _FilesPageState extends State<FilesPage> {
                       }
                       return (await opened).measureUsage();
                     },
+                    readSyncUsage: () => widget.operations.run(
+                      widget.session.handle, () async {
+                        if (widget.session.search.closed) throw StateError('Session closed');
+                        final usage = await _sync.measureSyncDiskUsage();
+                        if (widget.session.search.closed) throw StateError('Session closed');
+                        return usage;
+                      }),
                     clearUnpinnedCache: () => widget.operations.run(
                       widget.session.handle, () async {
                         final opened = _cacheFuture;

@@ -335,8 +335,8 @@ is drained before key revocation, and disposed views do not navigate. The shared
 search route still enters directory results and offers file actions only after
 fresh browser listing; the dashboard route only opens the parent. Automated
 widget/native HTTP coverage is not installed-platform acceptance (#207). Remaining
-#84 work includes sync-folder accounting, duplicates, account/sync-folder cleanup
-and automatic mutation freshness.
+#84 work includes duplicates, account/sync-folder cleanup and automatic mutation
+freshness; bounded sync-folder file-length observations are described below.
 
 ### Device cache measurement
 
@@ -346,8 +346,8 @@ on entry/manual refresh through `DownloadCache.measureUsage()`, not the cache
 index's stored byte estimates. Counts represent cached revisions (including
 zero-byte copies), not unique remote files; pinned copies are a subset of total
 cache usage. No local bytes are added to the logical account total. The existing
-cache is device-local, not an account-scoped inventory. **Sync-folder data is not
-measured**, even if the same remote file also has a cached copy.
+cache is device-local, not an account-scoped inventory. Sync-folder data is
+reported separately below, even if the same remote file also has a cached copy.
 
 Measurement reuses the existing cache instance/index and serial operation queue,
 with at most 5000 indexed entries. It performs asynchronous metadata probes only:
@@ -409,9 +409,50 @@ claimed. Installed desktop/mobile cleanup acceptance is still unrun; #207 needs
 confirmation/dismissal, pin preservation, measured result, failure/retry and
 post-cleanup refresh checks alongside its measurement checks.
 
-Not implemented here: synced-folder byte accounting, duplicates, containing
-folder navigation, account/sync-folder cleanup or automatic freshness. #84
-remains open for those features; installed-device acceptance is unrun.
+### Bounded sync-folder file-length observations
+
+**This device · sync-folder file lengths** independently measures regular-file
+lengths on entry/manual refresh. Each row identifies the configured root by its
+position in sync settings, including disabled roots. Hidden, excluded, local-only
+and conflict files are included: this is local disk evidence, not a remote
+logical size, journal baseline comparison, verified synced bytes or cleanup plan.
+No content/hash reads, journal open/migration, filesystem writes, permission
+prompts, native sync calls or network requests are added by this measurement.
+
+At most **20 roots** are admitted (more means unavailable), with a **shared
+10000-entry / 2-second** cooperative scan budget. Output is at most 20 rows.
+Directory enumeration streams one directory at a time without following links;
+queued directories are bounded by visited entries. Every root/ancestor/component
+is checked without following links and against its canonical path before
+admission; regular files are rechecked after measuring length. Missing, linked,
+non-directory or unreadable roots are unavailable. Links/nonregular children,
+read failures, budget exhaustion and changed roots produce explicitly incomplete
+or unavailable observations, never successful guessed totals. Incomplete rows
+show only observed bytes/counts. The clock is checked between filesystem
+operations: stalled OS operations can exceed two seconds. These are mixed-time
+metadata observations, not hostile path-swap atomicity or content integrity.
+
+Equal/ancestor/descendant configured roots are **both refused** as overlapping,
+not silently counted twice or subtracted using partial readings. Adjacent roots
+remain independent. There is deliberately **no combined local total**. Hard links,
+sparse/compressed files, reflinks and separate cache/sync copies mean measured
+lengths cannot establish deduplicated physical allocation or free-volume usage.
+Nothing is added to cache/pinned or logical account totals.
+
+All filesystem IO runs on a top-level worker receiving only bounded root paths.
+Controller and session admission/drain own the full await; concurrent controller
+refreshes coalesce, and close/configuration changes discard late observations.
+Local measurement remains independent of offline account refresh. A failed
+refresh retains the last observations with an explicit stale warning; close
+clears them. There is no continuous filesystem watcher or mutation invalidation.
+Installed desktop/mobile acceptance remains #207: compare known files, changes,
+links, denied/missing and overlapping roots, partial budget output, offline
+refresh and sign-out while measurement is pending. No installed acceptance is
+claimed by Linux filesystem and widget fixtures.
+
+Still open on #84: duplicate/hash review, account/sync-folder cleanup and automatic
+freshness. Trees exceeding these bounds remain incomplete; no continuation scan
+or persistent accounting index is implemented.
 
 ## What the Rust bridge exports
 

@@ -94,7 +94,7 @@ void main() {
     expect(find.text('Cache total: 13 bytes · 3 copies'), findsOneWidget);
     expect(find.text('Pinned: 9 bytes · 1 copies'), findsOneWidget);
     expect(find.text('Unpinned: 4 bytes · 2 copies'), findsOneWidget);
-    expect(find.textContaining('Sync-folder data is not measured'), findsOneWidget);
+    expect(find.textContaining('Sync-folder data is reported separately'), findsOneWidget);
     expect(find.textContaining('1 indexed copies missing'), findsOneWidget);
     expect(reads, 1);
     failCache = true;
