@@ -478,6 +478,53 @@ void main() {
   });
 
   group('changing the limit', () {
+    for (final adopt in [false, true]) {
+      test(
+        'shrink protects the just-${adopt ? 'adopted' : 'stored'} revision',
+        () async {
+          final cache = await openCache(limitBytes: 1000);
+          final older = await sourceFile('older.bin', 200);
+          await cache.store(fileId: 'older', revisionId: 'r1', source: older);
+          now = now.add(const Duration(minutes: 1));
+          final source = adopt
+              ? File(p.join(cache.root.path, 'download.part'))
+              : await sourceFile('latest.bin', 600);
+          if (adopt) await source.writeAsBytes(List<int>.filled(600, 7));
+          final latest = adopt
+              ? await cache.adopt(
+                  fileId: 'latest',
+                  revisionId: 'r1',
+                  source: source,
+                )
+              : await cache.store(
+                  fileId: 'latest',
+                  revisionId: 'r1',
+                  source: source,
+                );
+
+          final cleanup = await cache.setLimit(100);
+          expect(cleanup.removedEntries, 1);
+          expect(cache.find('older'), isNull);
+          expect(cache.find('latest'), isNotNull);
+          expect(await cache.fileFor(latest).length(), 600);
+          expect(cache.usage.usedBytes, 600);
+          expect(cache.usage.headroomBytes, 0);
+
+          // The protection moves to the next completed store, not a permanent pin.
+          final next = await sourceFile('next.bin', 50);
+          await cache.store(fileId: 'next', revisionId: 'r1', source: next);
+          expect(cache.find('latest'), isNull);
+          expect(cache.find('next'), isNotNull);
+          expect(cache.usage.usedBytes, 50);
+          await cache.clearUnpinned();
+          expect(
+            cache.entryCount,
+            0,
+            reason: 'explicit cleanup is still allowed',
+          );
+        },
+      );
+    }
     test('shrinking evicts the oldest unpinned copy and persists', () async {
       final cache = await openCache(limitBytes: 1000);
       final pinned = await sourceFile('pinned.bin', 100);
@@ -523,18 +570,19 @@ void main() {
       'a limit below the kept-offline total never deletes pinned copies',
       () async {
         final cache = await openCache(limitBytes: 1000);
+        // The unpinned copy is older; the newest protected copy is pinned.
+        final scratch = await sourceFile('scratch.bin', 200);
+        await cache.store(
+          fileId: 'file-scratch',
+          revisionId: 'rev-1',
+          source: scratch,
+        );
         final pinned = await sourceFile('pinned.bin', 300);
         await cache.store(
           fileId: 'file-pinned',
           revisionId: 'rev-1',
           source: pinned,
           pinned: true,
-        );
-        final scratch = await sourceFile('scratch.bin', 200);
-        await cache.store(
-          fileId: 'file-scratch',
-          revisionId: 'rev-1',
-          source: scratch,
         );
 
         final cleanup = await cache.setLimit(100);
