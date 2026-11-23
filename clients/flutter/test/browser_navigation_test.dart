@@ -64,12 +64,17 @@ void main() {
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Storage usage'));
     await tester.runAsync(() => tester.tap(find.text('Storage usage')));
-    // The dashboard also awaits device-cache metadata IO. Fake frame settling
-    // alone cannot deliver a pending cache-open/measurement completion.
+    // Wait on the always-built toolbar: the account progress row can be below
+    // this small viewport and therefore absent from the lazy ListView.
     for (var i = 0; i < 500; i++) {
       await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 10)));
       await tester.pump(const Duration(milliseconds: 20));
-      if (find.byType(LinearProgressIndicator).evaluate().isEmpty) break;
+      final refresh = find.byWidgetPredicate((widget) =>
+          widget is IconButton && widget.tooltip == 'Refresh storage usage');
+      if (session.search.closed || (refresh.evaluate().isNotEmpty &&
+          tester.widget<IconButton>(refresh).onPressed != null)) {
+        break;
+      }
     }
     expect(find.byType(LinearProgressIndicator), findsNothing);
     await tester.pumpAndSettle();
@@ -81,12 +86,15 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     expect(find.text('Live files · logical bytes'), findsOneWidget);
+    // The deliberately invalid handle closes this fixture's session. Closing
+    // must not be overwritten by a late account-refresh failure.
+    expect(session.search.closed, isTrue);
     await tester.scrollUntilVisible(
-      find.text('Storage usage unavailable. Refresh to retry.'),
+      find.text('Session closed. Unlock again to view storage.'),
       100,
       scrollable: find.byType(Scrollable).first,
     );
-    expect(find.text('Storage usage unavailable. Refresh to retry.'), findsOneWidget);
+    expect(find.text('Session closed. Unlock again to view storage.'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
     session.search.close();

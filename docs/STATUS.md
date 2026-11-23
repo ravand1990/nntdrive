@@ -136,6 +136,31 @@ FFI build, no analysis issues and **812 tests / 4 platform skips** on Flutter
 checks caught one new lint and lazy-viewport fixture assumptions; both were fixed
 before the final full run. SDK advisory tag-fetch warnings did not fail the wrapper.
 
+The open dashboard also adopts newly published authenticated search snapshot
+revisions automatically. Reaggregation is single-flight, coalesces intermediate
+revisions and discards obsolete results/errors; it does not rebuild HTTP or
+measure cache/sync folders. History/busy notifications alone do no aggregation.
+Entry/manual rebuilds consume their own publication once; manual refresh joins
+an existing aggregate before rebuilding. Failed current-revision aggregates keep
+complete previous totals explicitly stale, with retry via refresh or a later
+publication. Close/disposal prevents follow-up admission and late publication;
+existing session drain owns already admitted workers. This is revision-publication
+adoption only, not continuous backend mutation observation.
+
+Revision-adoption regressions cover external size/deletion publication with no
+extra listings/device measurements, history/busy no-ops, suspended workers with
+successive revisions, obsolete success/error rejection, current failure/retry,
+manual overlap, and close/disposal with a queued manual refresh and session drain.
+The original page fails the upload-metadata test; with only the aggregation
+injection seam added, it also fails all five gated lifecycle tests. Restored
+production passed the four-file affected run (**17 tests**), then canonical
+`bash scripts/dev-check.sh flutter` exited 0 with release FFI build, clean
+analysis and **818 tests / 4 platform skips** on pinned Flutter 3.47.9 / Dart
+3.13.7. The small-window route fixture now waits on its always-built toolbar and
+expects closed-session guidance for its invalid handle, not a late stale error.
+Earlier checks caught that fixture assumption and a new lint; both were fixed.
+SDK advisory tag-fetch permission/DNS warnings did not fail the final wrapper.
+
 This is not completed #84 acceptance: automatic upload/delete/sync invalidation,
 duplicate/hash analysis and account/sync-folder cleanup remain open. Larger trees
 remain explicitly incomplete; there is no continuation/persistent accounting index.

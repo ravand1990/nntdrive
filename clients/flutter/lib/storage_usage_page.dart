@@ -7,7 +7,10 @@ import 'sync_disk_usage.dart';
 
 class StorageUsagePage extends StatefulWidget {
   const StorageUsagePage({super.key, required this.index, this.readCacheUsage,
-    this.clearUnpinnedCache, this.readSyncUsage});
+    this.clearUnpinnedCache, this.readSyncUsage,
+    this.aggregate = runStorageUsage});
+  /// Production remains the top-level worker; injection permits lifecycle gates.
+  final Future<StorageUsage> Function(Map<String, SearchEntry>) aggregate;
   /// Session/controller-owned read-only worker. No journal or permission prompt.
   final Future<SyncDiskUsage> Function()? readSyncUsage;
   final AccountSearch index;
@@ -34,6 +37,9 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
   bool _busy = false;
   bool _failed = false;
   int? _revision;
+  late int _observedRevision;
+  bool _refreshingAccount = false;
+  Future<void>? _reading;
   bool _opening = false;
   String? _navigationError;
 
@@ -70,6 +76,7 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
   @override
   void initState() {
     super.initState();
+    _observedRevision = widget.index.snapshotRevision;
     widget.index.addListener(_changed);
     _refresh();
   }
@@ -85,16 +92,47 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
         _cleanupReport = null;
       }
     });
+    final revision = widget.index.snapshotRevision;
+    if (revision == _observedRevision) return;
+    _observedRevision = revision;
+    // Busy/history notifications do not admit work. A manual rebuild is read
+    // by its owner below, not once here and again after rebuild completes.
+    if (!widget.index.closed && !_refreshingAccount) _read();
   }
 
-  Future<void> _read() async {
-    final revision = widget.index.snapshotRevision;
-    final usage = await widget.index.readSnapshot(runStorageUsage);
-    if (!mounted || widget.index.closed) return;
-    setState(() {
-      _usage = usage;
-      _revision = revision;
+  Future<void> _read() {
+    final active = _reading;
+    if (active != null) return active;
+    final reading = _readLatest().whenComplete(() {
+      _reading = null;
+      if (mounted) setState(() {});
     });
+    _reading = reading;
+    if (mounted) setState(() {});
+    return reading;
+  }
+
+  Future<void> _readLatest() async {
+    while (mounted && !widget.index.closed && widget.index.ready) {
+      final revision = widget.index.snapshotRevision;
+      try {
+        final usage = await widget.index.readSnapshot(widget.aggregate);
+        if (!mounted || widget.index.closed) return;
+        if (revision != widget.index.snapshotRevision) continue;
+        setState(() {
+          _usage = usage;
+          _revision = revision;
+          _failed = false;
+        });
+      } catch (_) {
+        if (!mounted || widget.index.closed) return;
+        // readSnapshot rejects replacements too. Neither obsolete errors nor
+        // obsolete results may replace the last complete summary.
+        if (revision != widget.index.snapshotRevision) continue;
+        setState(() => _failed = true);
+      }
+      return; // No polling/retry loop for a failed unchanged revision.
+    }
   }
 
   Future<void> _refresh() async {
@@ -191,16 +229,21 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
   }
 
   Future<void> _refreshAccount() async {
+    _refreshingAccount = true;
     try {
+      // Join any automatic reader before rebuilding; never overlap aggregates.
+      await _reading;
+      if (!mounted || widget.index.closed) return;
       // An offline entry can still display the last complete session snapshot.
       if (_usage == null && widget.index.ready) await _read();
       if (!mounted || widget.index.closed) return;
       await widget.index.rebuild();
       if (!mounted || widget.index.closed) return;
       await _read();
-      if (mounted) setState(() => _failed = false);
     } catch (_) {
-      if (mounted) setState(() => _failed = true);
+      if (mounted && !widget.index.closed) setState(() => _failed = true);
+    } finally {
+      _refreshingAccount = false;
     }
   }
 
@@ -275,11 +318,12 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
             style: TextStyle(fontWeight: FontWeight.bold),
           ),
           const Text(
-            'Read-only account snapshot. Open this page or refresh after '
-            'upload, delete or sync. Not continuously updated.',
+            'Read-only account snapshot. Adopts published index revisions. '
+            'Refresh after upload, delete or sync; mutations are not observed '
+            'continuously.',
           ),
           const SizedBox(height: 12),
-          if (_busy) ...[
+          if (_busy || (_reading != null && !widget.index.closed)) ...[
             const LinearProgressIndicator(),
             const Text('Refreshing account storage…'),
           ],

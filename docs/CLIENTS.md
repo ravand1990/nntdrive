@@ -277,15 +277,24 @@ small windows. The account report is read-only and shows:
 
 Entry and **Refresh storage usage** freshly traverse the same authenticated RAM
 index used by search; successful refresh replaces metadata/membership, including
-changed sizes and removed files. There is no polling, SSE or upload/delete/sync
-invalidation while the page is open: refresh after mutations. An already
-published session snapshot can be displayed offline; a failed refresh retains
-previous totals with a stale warning, not partial data or guessed zero usage.
-If another consumer replaces the index, the old summary is marked stale until
-refresh. The page admits only one refresh at a time and disables its refresh
-button until completion. A snapshot replacement during aggregation rejects that
-observation instead of mixing versions. This metadata-only rebuild does not run
-search's optional local-status inspection; the search page re-inspects on entry.
+changed sizes and removed files. While open, the page also automatically
+reaggregates newly published complete index revisions without another HTTP
+rebuild or cache/sync-folder measurement. History and busy notifications alone
+admit no aggregation. At most one aggregate runs; revisions published while it
+is suspended coalesce to the latest revision, and obsolete results/errors are
+discarded. The page's own rebuild publication is consumed once, and a manual
+refresh joins an already admitted aggregate before rebuilding.
+
+There is still no polling, SSE or upload/delete/sync mutation invalidation: if
+nothing rebuilds the index, refresh after mutations. An already published session
+snapshot can be displayed offline. A failed rebuild or current-revision aggregate
+retains previous complete totals with stale guidance, never partial data or guessed
+zero usage; a new successful observation clears the aggregation warning. A failed
+unchanged revision is not retried on history/busy notifications. Close/disposal
+rejects late publication and follow-up work, while session drain awaits admitted
+workers. The manual refresh button is disabled until that refresh completes.
+This metadata-only rebuild does not run search's optional local-status inspection;
+the search page re-inspects on entry.
 
 Tolerance is **zero bytes/files within the captured listing snapshot**. This is
 not an atomic server transaction across folder requests: concurrent remote
@@ -327,7 +336,8 @@ unreadable entries fail closed with generic refresh guidance, never raw network
 or crypto diagnostics. This is a mixed-time traversal, not an atomic namespace
 transaction; a concurrent move may require reopening/refreshing the report.
 
-Replacement snapshots disable old report links until refresh. Failed offline
+Replacement snapshots disable old report links until automatic reaggregation
+successfully adopts the new revision. Failed offline
 refreshes may retain links to the last complete snapshot, but opening still
 requires fresh online listings and can fail safely. Selection and resolution are
 session-owned: close/replacement rejects late results, admitted HTTP/decryption
