@@ -6,6 +6,7 @@ import 'package:nntdrive/account_search.dart';
 import 'package:nntdrive/api.dart';
 import 'package:nntdrive/session_operations.dart';
 import 'package:nntdrive/storage_usage_page.dart';
+import 'package:nntdrive/download_cache.dart';
 
 class Fixture {
   bool offline = false;
@@ -53,6 +54,74 @@ Future<void> settled(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('cache refresh is independent, failed readings retain stale totals', (tester) async {
+    final f = Fixture()..offline = true;
+    addTearDown(f.index.dispose);
+    var failCache = false;
+    var reads = 0;
+    var bytes = 13;
+    Future<MeasuredCacheUsage> read() async {
+      reads++;
+      if (failCache) throw StateError('private cache path');
+      return MeasuredCacheUsage(bytes: bytes, copies: 3,
+          pinnedBytes: 9, pinnedCopies: 1, excludedCopies: 1);
+    }
+    await tester.runAsync(() => tester.pumpWidget(MaterialApp(
+      home: StorageUsagePage(index: f.index, readCacheUsage: read),
+    )));
+    await settled(tester);
+    expect(find.text('Cache total: 13 bytes · 3 copies'), findsOneWidget);
+    expect(find.text('Pinned: 9 bytes · 1 copies'), findsOneWidget);
+    expect(find.text('Unpinned: 4 bytes · 2 copies'), findsOneWidget);
+    expect(find.textContaining('Sync-folder data is not measured'), findsOneWidget);
+    expect(find.textContaining('1 indexed copies missing'), findsOneWidget);
+    expect(reads, 1);
+    failCache = true;
+    f.offline = false;
+    await tester.runAsync(() => tester.tap(find.byTooltip('Refresh storage usage')));
+    await settled(tester);
+    expect(find.textContaining('Previous cache totals may be stale'), findsOneWidget);
+    expect(find.text('Cache total: 13 bytes · 3 copies'), findsOneWidget);
+    expect(find.textContaining('private cache path'), findsNothing);
+    expect(find.text('Total: 12 bytes · 1 files'), findsOneWidget);
+    failCache = false;
+    bytes = 21;
+    await tester.runAsync(() => tester.tap(find.byTooltip('Refresh storage usage')));
+    await settled(tester);
+    expect(reads, 3);
+    expect(find.text('Cache total: 21 bytes · 3 copies'), findsOneWidget);
+    expect(find.text('Unpinned: 12 bytes · 2 copies'), findsOneWidget);
+    expect(find.textContaining('Previous cache totals may be stale'), findsNothing);
+    f.index.close();
+    await tester.pump();
+    expect(find.textContaining('Cache total:'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('cache unavailable is not zero and close rejects delayed reading', (tester) async {
+    final f = Fixture();
+    addTearDown(f.index.dispose);
+    await tester.runAsync(() => tester.pumpWidget(MaterialApp(
+      home: StorageUsagePage(index: f.index),
+    )));
+    await settled(tester);
+    expect(find.text('Device cache usage unavailable. Refresh to retry.'), findsOneWidget);
+    expect(find.textContaining('Cache total:'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    final gate = Completer<MeasuredCacheUsage>();
+    await tester.runAsync(() => tester.pumpWidget(MaterialApp(
+      home: StorageUsagePage(index: f.index, readCacheUsage: () => gate.future),
+    )));
+    expect(find.text('Refreshing device cache…'), findsOneWidget);
+    expect(tester.widget<IconButton>(find.byType(IconButton)).onPressed, isNull);
+    f.index.close();
+    gate.complete(const MeasuredCacheUsage(bytes: 99, copies: 1,
+        pinnedBytes: 0, pinnedCopies: 0, excludedCopies: 0));
+    await settled(tester);
+    expect(find.textContaining('Cache total:'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('oldest large threshold, UTC date, empty and unknown states', (
     tester,
   ) async {
@@ -79,6 +148,11 @@ void main() {
     expect(
       find.text('Large files with unknown modification date: 1'),
       findsOneWidget,
+    );
+    await tester.scrollUntilVisible(
+      find.text('No large live files with a known modification date.'),
+      100,
+      scrollable: find.byType(Scrollable).first,
     );
     expect(
       find.text('No large live files with a known modification date.'),
@@ -110,6 +184,11 @@ void main() {
         findsOneWidget,
       );
       if (empty) {
+        await tester.scrollUntilVisible(
+          find.text('No large live files with a known modification date.'),
+          100,
+          scrollable: find.byType(Scrollable).first,
+        );
         expect(
           find.text('No large live files with a known modification date.'),
           findsOneWidget,

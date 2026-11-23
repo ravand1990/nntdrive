@@ -2,10 +2,15 @@ import 'package:flutter/material.dart';
 
 import 'account_search.dart';
 import 'storage_usage.dart';
+import 'download_cache.dart';
 
 class StorageUsagePage extends StatefulWidget {
-  const StorageUsagePage({super.key, required this.index});
+  const StorageUsagePage({super.key, required this.index, this.readCacheUsage});
   final AccountSearch index;
+
+  /// Reads the already opened device cache; must not open/reconcile or clean it.
+  /// Missing reader or a failed reading means unavailable, never zero bytes.
+  final Future<MeasuredCacheUsage> Function()? readCacheUsage;
 
   @override
   State<StorageUsagePage> createState() => _StorageUsagePageState();
@@ -13,6 +18,8 @@ class StorageUsagePage extends StatefulWidget {
 
 class _StorageUsagePageState extends State<StorageUsagePage> {
   StorageUsage? _usage;
+  MeasuredCacheUsage? _cacheUsage;
+  bool _cacheFailed = false;
   bool _busy = false;
   bool _failed = false;
   int? _revision;
@@ -29,6 +36,7 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
     setState(() {
       if (widget.index.closed) {
         _usage = null;
+        _cacheUsage = null;
         _revision = null;
       }
     });
@@ -48,6 +56,32 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
     if (_busy || widget.index.closed) return;
     setState(() => _busy = true);
     try {
+      // Local accounting must still finish when account listing is offline.
+      await Future.wait([_refreshAccount(), _refreshCache()]);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _refreshCache() async {
+    try {
+      final reader = widget.readCacheUsage;
+      if (reader == null) throw StateError('Cache accounting unavailable');
+      final usage = await reader();
+      if (!mounted || widget.index.closed) return;
+      setState(() {
+        _cacheUsage = usage;
+        _cacheFailed = false;
+      });
+    } catch (_) {
+      if (mounted && !widget.index.closed) {
+        setState(() => _cacheFailed = true);
+      }
+    }
+  }
+
+  Future<void> _refreshAccount() async {
+    try {
       // An offline entry can still display the last complete session snapshot.
       if (_usage == null && widget.index.ready) await _read();
       if (!mounted || widget.index.closed) return;
@@ -57,8 +91,6 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
       if (mounted) setState(() => _failed = false);
     } catch (_) {
       if (mounted) setState(() => _failed = true);
-    } finally {
-      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -66,12 +98,14 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
   void dispose() {
     widget.index.removeListener(_changed);
     _usage = null;
+    _cacheUsage = null;
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final usage = _usage;
+    final cache = _cacheUsage;
     final stale =
         _failed ||
         widget.index.failed ||
@@ -90,6 +124,35 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          const Text(
+            'This device · indexed offline cache',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
+          const Text(
+            'Measured file lengths, separate from logical account bytes. '
+            'Pinned copies are part of the cache, not additional bytes. '
+            'Counts are cached revisions, not unique account files. '
+            'Sync-folder data is not measured. Refresh after cache or pin changes.',
+          ),
+          if (_busy) const Text('Refreshing device cache…'),
+          if (_cacheFailed && !widget.index.closed)
+            Text(cache == null
+                ? 'Device cache usage unavailable. Refresh to retry.'
+                : 'Device cache refresh failed. Previous cache totals may be stale. Refresh to retry.'),
+          if (cache != null) ...[
+            Text('Cache total: ${cache.bytes} bytes · ${cache.copies} copies'),
+            Text('Pinned: ${cache.pinnedBytes} bytes · ${cache.pinnedCopies} copies'),
+            Text('Unpinned: ${cache.unpinnedBytes} bytes · ${cache.unpinnedCopies} copies'),
+            if (cache.excludedCopies > 0)
+              Text('${cache.excludedCopies} indexed copies missing, inaccessible or not regular files; excluded from measured totals.'),
+          ],
+          const Text(
+            'Only indexed regular cache files are measured; scratch, orphan and '
+            'index files are excluded. Not allocated disk space, content integrity '
+            'or a whole-directory total. Readings can change during measurement '
+            'and are not continuously updated.',
+          ),
+          const SizedBox(height: 16),
           const Text(
             'Live files · logical bytes',
             style: TextStyle(fontWeight: FontWeight.bold),

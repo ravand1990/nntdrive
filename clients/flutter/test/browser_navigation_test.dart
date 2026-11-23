@@ -63,9 +63,23 @@ void main() {
     await tester.tap(find.byTooltip('Account'));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Storage usage'));
-    await tester.tap(find.text('Storage usage'));
+    await tester.runAsync(() => tester.tap(find.text('Storage usage')));
+    // The dashboard also awaits device-cache metadata IO. Fake frame settling
+    // alone cannot deliver a pending cache-open/measurement completion.
+    for (var i = 0; i < 500; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 10)));
+      await tester.pump(const Duration(milliseconds: 20));
+      if (find.byType(LinearProgressIndicator).evaluate().isEmpty) break;
+    }
+    expect(find.byType(LinearProgressIndicator), findsNothing);
     await tester.pumpAndSettle();
+    expect(find.text('This device · indexed offline cache'), findsOneWidget);
     expect(find.text('Live files · logical bytes'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Storage usage unavailable. Refresh to retry.'),
+      100,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.text('Storage usage unavailable. Refresh to retry.'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());

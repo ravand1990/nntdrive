@@ -313,8 +313,48 @@ incremental aggregation or proof of whole-build isolation, installed frame time
 or a measured speedup. The 100k fixture establishes bounds/totals, not device
 performance acceptance.
 
-Not implemented here: device cache/pinned/synced breakdown (see the separate
-**Offline copies & cache** screen), duplicates, containing
+### Device cache measurement
+
+A separate **This device · indexed offline cache** section reports total,
+pinned and unpinned bytes/counts. These are actual regular-file lengths observed
+on entry/manual refresh through `DownloadCache.measureUsage()`, not the cache
+index's stored byte estimates. Counts represent cached revisions (including
+zero-byte copies), not unique remote files; pinned copies are a subset of total
+cache usage. No local bytes are added to the logical account total. The existing
+cache is device-local, not an account-scoped inventory. **Sync-folder data is not
+measured**, even if the same remote file also has a cached copy.
+
+Measurement reuses the existing cache instance/index and serial operation queue,
+with at most 5000 indexed entries. It performs asynchronous metadata probes only:
+no recursive/broad directory scan, content read/hash, index rewrite, eviction,
+reconciliation or call to `open()`. Scratch, orphan and index files are excluded;
+this is neither whole-directory usage nor allocated disk blocks/device free
+space. Missing/inaccessible/nonregular indexed paths are excluded with an
+explicit count, without dropping their index rows. Actual size changes are
+measured without claiming content/revision integrity. Missing/linked roots or
+linked ancestors, corrupt recovered indexes, oversized indexes and failed
+measurements are unavailable rather than a guessed zero. Linked cached entries
+are not followed. Local external swaps remain non-atomic: pre/post type checks
+cannot prevent hostile path replacement between metadata operations.
+
+The browser supplies only its already opened cache (normally initialized by
+listing/offline controls); the dashboard never opens it just to obtain numbers,
+since opening can reconcile/delete scratch. If unavailable, retry after the
+browser/offline cache becomes available. Cache and account refreshes run
+independently: offline HTTP failures do not hide a successful local observation,
+and a cache failure does not discard account totals. Failed cache refreshes keep
+previous cache totals explicitly stale; successful retry clears that warning.
+No observation is published after page disposal/session close. There is no new
+logging, plaintext persistence or network payload, nor automatic invalidation.
+
+Installed acceptance remains tracked by #207: compare on-device indexed file
+lengths and revision counts with pinned/unpinned splits, change a pin/remove a
+copy then explicitly refresh/reopen, verify offline account failures still permit
+local readings and unavailable readings never look like zero; keep sync-folder
+bytes and allocated/free device space separate. These automated fixtures do not
+establish installed desktop/mobile filesystem behavior or hostile-swap atomicity.
+
+Not implemented here: synced-folder byte accounting, duplicates, containing
 folder navigation or cleanup. No action deletes anything. #84 remains open for
 those features and automatic freshness; installed-device acceptance is unrun.
 
