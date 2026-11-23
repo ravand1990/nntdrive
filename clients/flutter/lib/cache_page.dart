@@ -196,12 +196,14 @@ class _DownloadCachePageState extends State<DownloadCachePage> {
       _reload();
       widget.onChanged?.call();
       _report(
-        cleanup.removedEntries == 0
+        (cleanup.removedEntries == 0
             ? 'Nothing was removed.'
             : 'Removed ${cleanup.removedEntries} cached '
                   '${cleanup.removedEntries == 1 ? 'copy' : 'copies'} and reclaimed '
                   '${formatCacheBytes(cleanup.freedBytes)}. '
-                  '${cleanup.keptPinnedEntries} kept offline.',
+                  '${cleanup.keptPinnedEntries} kept offline.') +
+            (cleanup.failedEntries == 0 ? '' :
+              ' ${cleanup.failedEntries} copies could not be removed; retry after checking device access.'),
       );
     } catch (e) {
       if (mounted) _report('Could not clear the cache: $e', error: true);

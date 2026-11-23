@@ -1,6 +1,6 @@
 # Project status
 
-## Read-only storage dashboard (#84 bounded slices)
+## Storage dashboard (#84 bounded slices)
 
 **Account → Storage usage** reports logical live-file bytes and count, usage by
 account-root folder and filename extension, and up to 20 largest files with
@@ -64,12 +64,41 @@ widget tests. Both sabotages were restored. The canonical
 An initial full run exposed a browser fixture awaiting IO with fake-only frame
 settling; it now admits bounded real event turns before asserting completion.
 
+The dashboard now offers explicit **Clear unpinned cache** confirmation. It calls
+the same opened cache's serial deletion API, rechecks current pins, reports only
+successfully deleted regular copies and their measured lengths, and refreshes
+local totals after success or failure without requiring account network access.
+Missing rows reclaim no bytes/copies; failed/unsafe copies stay indexed for retry.
+Pinned entries, sync folders, scratch/orphans and account data are not candidates.
+Duplicate confirmation/cleanup is blocked; cancellation, dismissal and late
+confirmation after close/disposal do not delete. Admitted cleanup is session-owned
+and drained; close/disposal suppress late reports. Failed post-cleanup readings
+retain explicitly stale totals. An index-write failure warns of possible partial
+cleanup rather than fabricating success. Lengths describe deleted file content,
+not allocated blocks or guaranteed free-volume growth (open handles/hard links can
+retain storage); no hostile filesystem-swap atomicity is promised.
+
+Cleanup coverage adds five focused cache tests (real size drift/missing/empty
+copies, pin serialization, unsafe replacement/root links, injected delete failure
+with persisted retry, and actual index-write failure) and seven widget tests
+(real disk cleanup while account listing is offline, confirmation/dismissal,
+duplicate admission, failure/stale retry and close/disposal boundaries). Stale
+index-size sabotage failed three tests (including 4 instead of 17 reclaimed
+bytes); bypassing confirmation failed Cancel's zero-deletion assertion. Both
+were restored. The final canonical `bash scripts/dev-check.sh flutter` exited 0:
+release FFI build, clean analysis, **791 tests / 4 platform skips**. The final
+three-file focused run passed **14 tests**. The first full run exposed the added
+control pushing a lazy account section below the small viewport; its browser
+route regression now scrolls before asserting that section. The SDK's advisory
+tag-fetch permission/DNS warnings did not fail the final wrapper. Installed
+cleanup acceptance remains unrun.
+
 This is not completed #84 acceptance: automatic upload/delete/sync invalidation,
-sync-folder byte accounting, duplicate/hash analysis,
-containing-folder actions and confirmed cleanup with
-reclaimed-space reporting remain open. Installed-device/frame-time acceptance
-and an atomic account-wide backend snapshot are not established. Existing cache
-controls remain separate; this dashboard offers no deletion or cleanup action.
+sync-folder byte accounting, duplicate/hash analysis, containing-folder actions
+and account/sync-folder cleanup remain open. Installed-device/frame-time acceptance
+and an atomic account-wide backend snapshot are not established. Extend #207's
+installed acceptance to confirmation/dismissal, pinned preservation, measured
+reclaimed copies/bytes, failure/retry and refreshed cache totals.
 
 ## Cache limit and device free space (#199 first slice)
 

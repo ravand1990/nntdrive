@@ -252,7 +252,7 @@ content extraction is not implemented.
 ## Storage usage (#84 first slice)
 
 Open **Account → Storage usage** in the browser. The account menu scrolls on
-small windows. This read-only screen shows:
+small windows. The account report is read-only and shows:
 
 - Exact logical live-file bytes/count from a complete account listing snapshot;
   zero-byte files count, directory metadata does not. History, trash, quota,
@@ -354,9 +354,39 @@ local readings and unavailable readings never look like zero; keep sync-folder
 bytes and allocated/free device space separate. These automated fixtures do not
 establish installed desktop/mobile filesystem behavior or hostile-swap atomicity.
 
+### Confirmed unpinned-cache cleanup
+
+**Clear unpinned cache** requires a separate confirmation explaining that only
+this device's indexed unpinned downloaded copies are removed. Account files,
+sync folders, pinned copies and unindexed scratch/orphan files stay untouched;
+opening removed copies again needs the network. Displayed totals are not a
+deletion plan: current pin flags are checked under the existing cache serial
+queue when cleanup runs. No second deletion path or cache reopen is introduced.
+
+The result reports actually deleted regular-file copies and lengths measured
+immediately before deletion, not stored index sizes. Deleted empty files count;
+already missing rows count as neither copies nor reclaimed bytes. Failed deletes
+and unsafe nonregular replacements remain indexed for retry and are counted as
+not removed. Cleanup refreshes measured totals even after a partial failure and
+works with account listing offline. If index persistence fails after deletion,
+the page reports possible partial cleanup, not a successful byte total. Failed
+refreshes retain previous totals with an explicit stale warning; refresh must
+succeed before retrying cleanup. Reports are historical, not live space readings.
+
+Cancel/barrier dismissal, session closure or disposal before confirmation admits
+no deletion. One dialog/cleanup is allowed at a time; refresh is disabled until
+it finishes. Already admitted cleanup finishes under session drain even if the
+page/session closes, but no late result/totals are shown. No keys or network
+requests are needed by deletion. Regular-file lengths are not allocated blocks
+or guaranteed newly available device space: hard links/open handles and external
+changes can retain storage. No secure erasure or hostile path-swap atomicity is
+claimed. Installed desktop/mobile cleanup acceptance is still unrun; #207 needs
+confirmation/dismissal, pin preservation, measured result, failure/retry and
+post-cleanup refresh checks alongside its measurement checks.
+
 Not implemented here: synced-folder byte accounting, duplicates, containing
-folder navigation or cleanup. No action deletes anything. #84 remains open for
-those features and automatic freshness; installed-device acceptance is unrun.
+folder navigation, account/sync-folder cleanup or automatic freshness. #84
+remains open for those features; installed-device acceptance is unrun.
 
 ## What the Rust bridge exports
 

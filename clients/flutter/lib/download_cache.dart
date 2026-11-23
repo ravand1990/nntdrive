@@ -160,6 +160,7 @@ class CacheCleanup {
     required this.removedEntries,
     required this.freedBytes,
     required this.keptPinnedEntries,
+    this.failedEntries = 0,
   });
 
   static const CacheCleanup none = CacheCleanup(
@@ -170,6 +171,8 @@ class CacheCleanup {
 
   final int removedEntries;
   final int freedBytes;
+  /// Indexed unpinned copies that could not safely be deleted; retained for retry.
+  final int failedEntries;
 
   /// Pinned entries that were candidates-free: they stayed even though the
   /// limit would otherwise have removed them.
@@ -261,20 +264,7 @@ class DownloadCache {
     if (_corruptIndex || _entries.length > downloadCacheMaxEntries) {
       throw StateError('Cache accounting unavailable');
     }
-    Future<void> checkRoot() async {
-      var path = p.normalize(p.absolute(root.path));
-      while (true) {
-        if (await FileSystemEntity.type(path, followLinks: false) !=
-            FileSystemEntityType.directory) {
-          throw StateError('Cache accounting unavailable');
-        }
-        final parent = p.dirname(path);
-        if (parent == path) break;
-        path = parent;
-      }
-    }
-
-    await checkRoot();
+    await _checkRoot();
     var bytes = 0;
     var copies = 0;
     var pinnedBytes = 0;
@@ -302,7 +292,7 @@ class DownloadCache {
         pinnedCopies++;
       }
     }
-    await checkRoot();
+    await _checkRoot();
     return MeasuredCacheUsage(
       bytes: bytes,
       copies: copies,
@@ -576,20 +566,35 @@ class DownloadCache {
   /// Removes every unpinned entry and reports exactly what it reclaimed.
   Future<CacheCleanup> clearUnpinned() => _serial(() async {
     _requireOpen();
+    await _checkRoot();
+    if (_corruptIndex || _entries.length > downloadCacheMaxEntries) {
+      throw StateError('Cache cleanup unavailable');
+    }
     var removed = 0;
     var freed = 0;
+    var failed = 0;
     final pinned = _entries.values.where((e) => e.pinned).length;
     for (final entry in _entries.values.where((e) => !e.pinned).toList()) {
       final deleted = await _deleteEntry(entry);
-      _entries.remove(_key(entry.fileId, entry.revisionId));
-      removed++;
-      if (deleted) freed += entry.sizeBytes;
+      if (deleted != null) {
+        _entries.remove(_key(entry.fileId, entry.revisionId));
+        removed++;
+        freed += deleted;
+      } else if (await FileSystemEntity.type(fileFor(entry).path,
+          followLinks: false) == FileSystemEntityType.notFound) {
+        // A missing row reclaims no copy or bytes.
+        _entries.remove(_key(entry.fileId, entry.revisionId));
+      } else {
+        failed++;
+      }
     }
+    await _checkRoot();
     await _writeIndex();
     return CacheCleanup(
       removedEntries: removed,
       freedBytes: freed,
       keptPinnedEntries: pinned,
+      failedEntries: failed,
     );
   });
 
@@ -640,8 +645,8 @@ class DownloadCache {
       _entries.remove(_key(victim.fileId, victim.revisionId));
       removed++;
       count--;
-      if (deleted) {
-        freed += victim.sizeBytes;
+      if (deleted != null) {
+        freed += deleted;
         usageNow = CacheUsage(
           limitBytes: limitBytes,
           usedBytes: usageNow.usedBytes - victim.sizeBytes,
@@ -659,19 +664,41 @@ class DownloadCache {
     );
   }
 
-  Future<bool> _deleteEntry(CachedDownload entry) async {
+  Future<void> _checkRoot() async {
+    var path = p.normalize(p.absolute(root.path));
+    while (true) {
+      if (await FileSystemEntity.type(path, followLinks: false) !=
+          FileSystemEntityType.directory) {
+        throw StateError('Cache directory unavailable');
+      }
+      final parent = p.dirname(path);
+      if (parent == path) break;
+      path = parent;
+    }
+  }
+
+  /// Null means no regular copy deleted, including failed deletion. Zero is a
+  /// successfully deleted empty file. Never use the possibly stale index size.
+  Future<int?> _deleteEntry(CachedDownload entry) async {
     final file = fileFor(entry);
     try {
+      await _checkRoot();
       final type = await FileSystemEntity.type(file.path, followLinks: false);
       if (type == FileSystemEntityType.link) {
-        // Never touch what a link points at; dropping the index row is enough.
-        return false;
+        // Never touch what a link points at.
+        return null;
       }
-      if (type != FileSystemEntityType.file) return false;
+      if (type != FileSystemEntityType.file) return null;
+      final length = await file.length();
+      await _checkRoot();
+      if (await FileSystemEntity.type(file.path, followLinks: false) !=
+          FileSystemEntityType.file) {
+        return null;
+      }
       await file.delete();
-      return true;
+      return length;
     } catch (_) {
-      return false;
+      return null;
     }
   }
 

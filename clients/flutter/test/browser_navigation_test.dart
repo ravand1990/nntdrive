@@ -74,6 +74,12 @@ void main() {
     expect(find.byType(LinearProgressIndicator), findsNothing);
     await tester.pumpAndSettle();
     expect(find.text('This device · indexed offline cache'), findsOneWidget);
+    expect(find.text('Clear unpinned cache'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Live files · logical bytes'),
+      100,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.text('Live files · logical bytes'), findsOneWidget);
     await tester.scrollUntilVisible(
       find.text('Storage usage unavailable. Refresh to retry.'),
