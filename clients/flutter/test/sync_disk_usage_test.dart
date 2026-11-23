@@ -36,6 +36,9 @@ void main() {
   late Directory root;
   setUp(() async {
     temp = await Directory.systemTemp.createTemp('sync-disk-test-');
+    // Match the existing confinement fixtures: temp paths may use aliases or
+    // noncanonical spellings on Windows/macOS. Production rejects those paths.
+    temp = Directory(await temp.resolveSymbolicLinks());
     root = await Directory(p.join(temp.path, 'root')).create();
   });
   tearDown(() => temp.delete(recursive: true));
