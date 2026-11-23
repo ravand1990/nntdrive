@@ -2515,7 +2515,7 @@ class _FilesPageState extends State<FilesPage> {
             ListTile(
               leading: const Icon(Icons.storage),
               title: const Text('Storage usage'),
-              subtitle: const Text('Read-only live-file totals and largest files'),
+              subtitle: const Text('Live-file totals and device cache cleanup'),
               onTap: () {
                 Navigator.pop(context);
                 Navigator.of(this.context).push(MaterialPageRoute<void>(
@@ -2529,6 +2529,18 @@ class _FilesPageState extends State<FilesPage> {
                       }
                       return (await opened).measureUsage();
                     },
+                    clearUnpinnedCache: () => widget.operations.run(
+                      widget.session.handle, () async {
+                        final opened = _cacheFuture;
+                        if (opened == null || widget.session.search.closed) {
+                          throw StateError('Cache cleanup unavailable');
+                        }
+                        final cache = await opened;
+                        if (widget.session.search.closed) {
+                          throw StateError('Session closed');
+                        }
+                        return cache.clearUnpinned();
+                      }),
                   )));
               },
             ),

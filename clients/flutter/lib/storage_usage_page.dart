@@ -5,12 +5,16 @@ import 'storage_usage.dart';
 import 'download_cache.dart';
 
 class StorageUsagePage extends StatefulWidget {
-  const StorageUsagePage({super.key, required this.index, this.readCacheUsage});
+  const StorageUsagePage({super.key, required this.index, this.readCacheUsage,
+    this.clearUnpinnedCache});
   final AccountSearch index;
 
   /// Reads the already opened device cache; must not open/reconcile or clean it.
   /// Missing reader or a failed reading means unavailable, never zero bytes.
   final Future<MeasuredCacheUsage> Function()? readCacheUsage;
+  /// Uses the opened cache's serial API; the owner rejects late session
+  /// admission and drains admitted cleanup.
+  final Future<CacheCleanup> Function()? clearUnpinnedCache;
 
   @override
   State<StorageUsagePage> createState() => _StorageUsagePageState();
@@ -20,6 +24,8 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
   StorageUsage? _usage;
   MeasuredCacheUsage? _cacheUsage;
   bool _cacheFailed = false;
+  bool _clearing = false;
+  String? _cleanupReport;
   bool _busy = false;
   bool _failed = false;
   int? _revision;
@@ -38,6 +44,7 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
         _usage = null;
         _cacheUsage = null;
         _revision = null;
+        _cleanupReport = null;
       }
     });
   }
@@ -53,7 +60,7 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
   }
 
   Future<void> _refresh() async {
-    if (_busy || widget.index.closed) return;
+    if (_busy || _clearing || widget.index.closed) return;
     setState(() => _busy = true);
     try {
       // Local accounting must still finish when account listing is offline.
@@ -77,6 +84,57 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
       if (mounted && !widget.index.closed) {
         setState(() => _cacheFailed = true);
       }
+    }
+  }
+
+  Future<void> _clearUnpinned() async {
+    if (_busy || _clearing || widget.index.closed ||
+        widget.clearUnpinnedCache == null) {
+      return;
+    }
+    // Include confirmation in single-flight admission.
+    setState(() => _clearing = true);
+    try {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Clear unpinned cache?'),
+          content: const Text(
+            'Delete currently unpinned indexed downloaded copies from this '
+            'device only. Pinned copies, sync folders and account files stay. '
+            'Opening removed copies again needs the network. Totals may have '
+            'changed since measurement; pin flags are checked during cleanup.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(context, true),
+              child: const Text('Clear')),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted || widget.index.closed) return;
+      setState(() {
+        _cacheFailed = true;
+        _cleanupReport = null;
+      });
+      try {
+        final result = await widget.clearUnpinnedCache!();
+        if (!mounted || widget.index.closed) return;
+        setState(() => _cleanupReport =
+          'Last cleanup: Removed ${result.removedEntries} cached copies and reclaimed '
+          '${result.freedBytes} measured bytes. '
+          '${result.keptPinnedEntries} pinned entries kept. '
+          '${result.failedEntries} copies could not be removed.');
+      } catch (_) {
+        if (!mounted || widget.index.closed) return;
+        setState(() => _cleanupReport =
+          'Cache cleanup failed; some copies may already have been removed. '
+          'Refresh totals before retrying.');
+      }
+      // Refresh after partial failure too, independently of account network.
+      if (mounted && !widget.index.closed) await _refreshCache();
+    } finally {
+      if (mounted) setState(() => _clearing = false);
     }
   }
 
@@ -116,7 +174,7 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
         actions: [
           IconButton(
             tooltip: 'Refresh storage usage',
-            onPressed: _busy || widget.index.closed ? null : _refresh,
+            onPressed: _busy || _clearing || widget.index.closed ? null : _refresh,
             icon: const Icon(Icons.refresh),
           ),
         ],
@@ -135,6 +193,13 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
             'Sync-folder data is not measured. Refresh after cache or pin changes.',
           ),
           if (_busy) const Text('Refreshing device cache…'),
+          if (widget.clearUnpinnedCache != null)
+            OutlinedButton(
+              onPressed: _busy || _clearing || widget.index.closed ||
+                  cache == null || _cacheFailed ? null : _clearUnpinned,
+              child: Text(_clearing ? 'Cache cleanup pending…' : 'Clear unpinned cache'),
+            ),
+          if (_cleanupReport != null) Text(_cleanupReport!),
           if (_cacheFailed && !widget.index.closed)
             Text(cache == null
                 ? 'Device cache usage unavailable. Refresh to retry.'
@@ -223,7 +288,7 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
             'within a complete snapshot, but concurrent changes during traversal '
             'can produce a mixed-time view. History, trash, quota, physical Usenet '
             'usage, local sync folders, cache and pins are not included. '
-            'No duplicate detection or cleanup actions.',
+            'No duplicate detection or account/sync-folder cleanup actions.',
           ),
         ],
       ),
