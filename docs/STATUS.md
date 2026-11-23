@@ -4,10 +4,15 @@
 
 **Account → Storage usage** reports logical live-file bytes and count, usage by
 account-root folder and filename extension, and up to 20 largest files with
-containing paths. Both breakdowns retain the top 20 groups plus an exact combined
-remainder. Root-level files have their own bucket; empty top-level folders and
-zero-byte files are included. Counts exclude folder metadata, history, trash,
-quota/physical Usenet storage, local sync folders and device cache/pins.
+containing paths. A second bounded list shows up to 20 oldest large live files
+(at least 10 MiB), ordered by namespace modification instant, then size descending
+and opaque ID. Dates display in UTC; missing/malformed dates are excluded and
+counted separately among large files. This is not access time, verified content
+age or a safe-delete recommendation. Both breakdowns retain the top 20 groups
+plus an exact combined remainder. Root-level files have their own bucket; empty
+top-level folders and zero-byte files are included. Counts exclude folder metadata,
+history, trash, quota/physical Usenet storage, local sync folders and device
+cache/pins.
 
 Entry and explicit refresh rebuild the existing authenticated account search RAM
 snapshot, then aggregate it on a top-level worker isolate. Failed refreshes retain
@@ -27,9 +32,17 @@ reported clean analysis, and passed **767 tests / 4 platform skips** using pinne
 Flutter 3.47.9 / Dart 3.13.7. The targeted four-file run passed 14 tests,
 including the existing browser-back regression (13 new tests).
 
+The oldest-large extension adds threshold/timezone/tie/unknown-date/immutable
+result and 100k winner-bound regressions, empty/unknown/dated widget states and
+real native HTTP timestamp refresh coverage. Before implementation, three new
+aggregation tests and the new unknown-state widget test failed on the original
+behavior (three existing widget tests passed). The extension's canonical
+`bash scripts/dev-check.sh flutter` exited 0: release FFI build, clean analysis,
+**772 tests / 4 platform skips**. The four-file storage run passed **17 tests**.
+
 This is not completed #84 acceptance: automatic upload/delete/sync invalidation,
 device cache versus pinned versus synced accounting, duplicate/hash analysis,
-oldest-large-file analysis, containing-folder actions and confirmed cleanup with
+containing-folder actions and confirmed cleanup with
 reclaimed-space reporting remain open. Installed-device/frame-time acceptance
 and an atomic account-wide backend snapshot are not established. Existing cache
 controls remain separate; this dashboard offers no deletion or cleanup action.

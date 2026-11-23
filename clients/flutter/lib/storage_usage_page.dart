@@ -129,6 +129,28 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
                 title: Text(file.path),
                 subtitle: Text('${file.bytes} bytes'),
               ),
+            const SizedBox(height: 16),
+            Text(
+              'Oldest large files (up to 20)',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const Text(
+              'Live files at least 10 MiB (10485760 bytes), oldest namespace '
+              'modification date first. Dates shown in UTC; not access time or '
+              'verified content age, and not a safe-delete recommendation.',
+            ),
+            Text(
+              'Large files with unknown modification date: ${usage.unknownLargeDates}',
+            ),
+            if (usage.oldestLarge.isEmpty)
+              const Text('No large live files with a known modification date.'),
+            for (final file in usage.oldestLarge)
+              ListTile(
+                title: Text(file.path),
+                subtitle: Text(
+                  '${file.bytes} bytes · ${file.updatedAt.toIso8601String()} (UTC)',
+                ),
+              ),
           ],
           const SizedBox(height: 16),
           const Text(
@@ -138,7 +160,7 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
             'within a complete snapshot, but concurrent changes during traversal '
             'can produce a mixed-time view. History, trash, quota, physical Usenet '
             'usage, local sync folders, cache and pins are not included. '
-            'No duplicate detection, oldest-file analysis or cleanup actions.',
+            'No duplicate detection or cleanup actions.',
           ),
         ],
       ),

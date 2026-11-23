@@ -267,6 +267,13 @@ small windows. This read-only screen shows:
   for ties, with locally constructed account-relative containing paths. The
   breakdowns show at most 20 groups by bytes/name plus one exact **Other**
   remainder so the displayed group sums still match the full total.
+- Up to 20 oldest large live files, with an inclusive **10 MiB (10485760 bytes)**
+  threshold. Order is ascending `RemoteFile.updatedAt` instant, then size
+  descending and opaque ID ascending. Output dates are UTC namespace modification
+  dates, not last access or verified content age, and not a safe-delete
+  recommendation. Missing/unparseable dates do not enter this list; the screen
+  reports their count among large live files, including when no dated row exists.
+  Directories are excluded regardless of their listed size/date.
 
 Entry and **Refresh storage usage** freshly traverse the same authenticated RAM
 index used by search; successful refresh replaces metadata/membership, including
@@ -298,7 +305,8 @@ until completion. Dart strings cannot promise physical zeroization.
 
 Input inherits search's **100k-node/depth-256**, per-listing **64 MiB**, bounded
 name/parse/traversal worker contracts. The worker retains whole-snapshot grouping
-maps and up to 20 winning entries before returning bounded rows. Input map
+maps and up to 20 winning entries per largest/oldest-large list before returning
+bounded rows. Only winning paths and UTC date rows are constructed. Input map
 freezing/copying and message transfer/spawn remain costs, as do search's HTTP
 collection, global membership, queues and final merges. This is not an
 incremental aggregation or proof of whole-build isolation, installed frame time
@@ -306,7 +314,7 @@ or a measured speedup. The 100k fixture establishes bounds/totals, not device
 performance acceptance.
 
 Not implemented here: device cache/pinned/synced breakdown (see the separate
-**Offline copies & cache** screen), oldest-large files, duplicates, containing
+**Offline copies & cache** screen), duplicates, containing
 folder navigation or cleanup. No action deletes anything. #84 remains open for
 those features and automatic freshness; installed-device acceptance is unrun.
 

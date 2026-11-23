@@ -16,6 +16,14 @@ class StorageFile {
   final int bytes;
 }
 
+/// Namespace modification time, not last access or verified content age.
+class StorageDatedFile extends StorageFile {
+  const StorageDatedFile(super.path, super.bytes, this.updatedAt);
+  final DateTime updatedAt;
+}
+
+const oldestLargeMinimumBytes = 10 * 1024 * 1024;
+
 class StorageUsage {
   StorageUsage(
     this.bytes,
@@ -23,14 +31,19 @@ class StorageUsage {
     List<StorageBucket> folders,
     List<StorageBucket> types,
     List<StorageFile> largest,
+    List<StorageDatedFile> oldestLarge,
+    this.unknownLargeDates,
   ) : folders = List.unmodifiable(folders),
       types = List.unmodifiable(types),
-      largest = List.unmodifiable(largest);
+      largest = List.unmodifiable(largest),
+      oldestLarge = List.unmodifiable(oldestLarge);
   final int bytes;
   final int files;
   final List<StorageBucket> folders;
   final List<StorageBucket> types;
   final List<StorageFile> largest;
+  final List<StorageDatedFile> oldestLarge;
+  final int unknownLargeDates;
 }
 
 /// Only immutable/sendable entries cross this top-level boundary. No Session,
@@ -75,6 +88,8 @@ StorageUsage _aggregate(Map<String, SearchEntry> snapshot) {
   final folders = <String?, ({int bytes, int files})>{};
   final types = <String, ({int bytes, int files})>{};
   final largest = <SearchEntry>[];
+  final oldestLarge = <SearchEntry>[];
+  var unknownLargeDates = 0;
   var bytes = 0;
   var files = 0;
   int compareFiles(SearchEntry a, SearchEntry b) {
@@ -119,6 +134,23 @@ StorageUsage _aggregate(Map<String, SearchEntry> snapshot) {
       largest.add(entry);
     }
     if (largest.length > 20) largest.removeLast();
+    if (size >= oldestLargeMinimumBytes) {
+      final date = entry.file.updatedAt;
+      if (date == null) {
+        unknownLargeDates++;
+      } else {
+        final position = oldestLarge.indexWhere((other) {
+          final time = date.compareTo(other.file.updatedAt!);
+          return (time != 0 ? time : compareFiles(entry, other)) < 0;
+        });
+        if (position >= 0) {
+          oldestLarge.insert(position, entry);
+        } else if (oldestLarge.length < 20) {
+          oldestLarge.add(entry);
+        }
+        if (oldestLarge.length > 20) oldestLarge.removeLast();
+      }
+    }
   }
 
   List<StorageBucket> bounded(List<StorageBucket> buckets) {
@@ -172,5 +204,14 @@ StorageUsage _aggregate(Map<String, SearchEntry> snapshot) {
         StorageBucket(bucket.key, bucket.value.bytes, bucket.value.files),
     ]),
     [for (final entry in largest) StorageFile(path(entry), entry.file.size)],
+    [
+      for (final entry in oldestLarge)
+        StorageDatedFile(
+          path(entry),
+          entry.file.size,
+          entry.file.updatedAt!.toUtc(),
+        ),
+    ],
+    unknownLargeDates,
   );
 }

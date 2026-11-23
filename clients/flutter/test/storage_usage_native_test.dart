@@ -22,6 +22,7 @@ void main() {
       final sealedFolder = bridge.sealName(handle, folder, 'Private folder');
       final sealedName = bridge.sealName(handle, id, 'Private report.TXT');
       var size = 13;
+      String? updatedAt;
       var deleted = false;
       var corrupt = false;
       final requests = <({String method, Uri uri, String body})>[];
@@ -48,6 +49,7 @@ void main() {
                       'parent_id': folder,
                       'name_enc': corrupt ? sealedFolder : sealedName,
                       'size': size,
+                      'updated_at': updatedAt,
                     },
                   ],
           }),
@@ -71,9 +73,29 @@ void main() {
         size = 31; // Fresh listing models replace prior live size.
         await session.search.rebuild();
         expect((await session.search.readSnapshot(runStorageUsage)).bytes, 31);
+        size = oldestLargeMinimumBytes;
+        updatedAt = '2020-01-01T02:00:00+02:00';
+        await session.search.rebuild();
+        usage = await session.search.readSnapshot(runStorageUsage);
+        expect(
+          usage.oldestLarge.single.path,
+          'Private folder/Private report.TXT',
+        );
+        expect(usage.oldestLarge.single.updatedAt, DateTime.utc(2020));
+        expect(usage.unknownLargeDates, 0);
+        for (final date in [null, 'malformed']) {
+          updatedAt = date;
+          await session.search.rebuild();
+          usage = await session.search.readSnapshot(runStorageUsage);
+          expect(usage.oldestLarge, isEmpty);
+          expect(usage.unknownLargeDates, 1);
+        }
         corrupt = true;
         await expectLater(session.search.rebuild(), throwsException);
-        expect((await session.search.readSnapshot(runStorageUsage)).bytes, 31);
+        expect(
+          (await session.search.readSnapshot(runStorageUsage)).bytes,
+          oldestLargeMinimumBytes,
+        );
         corrupt = false;
         deleted = true;
         await session.search.rebuild();
