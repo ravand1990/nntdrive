@@ -48,12 +48,15 @@ void main() {
       final autostart = LinuxLoginAutostart(autostartDirectory: root);
       final file = File(p.join(root.path, LinuxLoginAutostart.fileName));
 
+      expect(await autostart.isEnabled(), isFalse);
       await autostart.apply(enabled: true, executable: '/opt/app/nntdrive');
+      expect(await autostart.isEnabled(), isTrue);
       expect(await file.exists(), isTrue);
       expect(await file.readAsString(), contains('Exec="/opt/app/nntdrive"'));
 
       await autostart.apply(enabled: false, executable: '/opt/app/nntdrive');
       expect(await file.exists(), isFalse);
+      expect(await autostart.isEnabled(), isFalse);
     });
 
     test('creates the autostart directory when missing', () async {
@@ -107,6 +110,32 @@ void main() {
   });
 
   group('windows', () {
+    test('real Windows framework query executes without changing the Run key', () async {
+      expect(await WindowsLoginAutostart().isEnabled(), isA<bool>());
+    }, skip: !Platform.isWindows);
+
+    test('reads the per-user login item without changing it', () async {
+      var output = 'on';
+      var code = 0;
+      final queried = <List<String>>[];
+      final registration = WindowsLoginAutostart(runProcess: (exe, args) async {
+        expect(exe, 'powershell.exe');
+        queried.add(args);
+        return ProcessResult(1, code, output, '');
+      });
+      expect(await registration.isEnabled(), isTrue);
+      expect(queried.single.take(3), ['-NoProfile', '-NonInteractive', '-Command']);
+      expect(queried.single.last, contains("GetValue('NNTDrive')"));
+      output = 'off';
+      expect(await registration.isEnabled(), isFalse);
+      code = 1;
+      await expectLater(registration.isEnabled(), throwsA(isA<LoginAutostartException>()));
+      code = 2;
+      await expectLater(registration.isEnabled(), throwsA(isA<LoginAutostartException>()));
+      code = 0;
+      output = 'unexpected';
+      await expectLater(registration.isEnabled(), throwsA(isA<LoginAutostartException>()));
+    });
     late List<(String, List<String>)> calls;
     late int exitCode;
     late String stderrText;

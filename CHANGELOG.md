@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Features
+
+- Login and remembered-session unlock screens now offer **Start NNTDrive when I sign in** before authentication. The shared per-install choice reads the Windows/Linux login item, applies and remembers changes immediately, survives sign-out and repairs an opted-in item's executable after updates. Unsupported platforms explain the disabled option; failures stay inline with Retry. Startup still opens locked and requires the password; no automatic unlock was added (#218).
+
 ## [0.36.0] - 2026-11-24
 
 ### Features

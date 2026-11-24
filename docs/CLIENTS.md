@@ -650,8 +650,19 @@ activates the existing window; an unavailable/busy settings lock never starts a
 second sync session. Installed Windows/Linux tray and shell-restart acceptance
 is still pending; a release build is not that evidence.
 
-No login autostart, cold-start automatic unlock or mobile background worker is
-registered. A cold process still requires the password. See
+Windows/Linux login startup is opt-in on both the login and remembered-session
+unlock screens (**Start NNTDrive when I sign in**), as well as the account menu.
+It needs no account or password: changes immediately update the per-user OS login
+item, then persist the choice after read-back. All views share the same state;
+sign-out does not clear this install/user setting. Startup reads the current OS
+item and re-registers a remembered opt-in for the current executable after updates.
+Failures show inline Retry on login/unlock; unsupported platforms show a disabled
+option with an explanation. The existing Linux XDG entry and Windows per-user Run
+key mechanisms are unchanged. Installed login-session restart/registration removal
+acceptance remains #171, including this pre-login entry point.
+
+No cold-start automatic unlock or mobile background worker is registered.
+A cold process still requires the password. See
 [background sync](BACKGROUND-SYNC.md) for security boundaries and remaining work.
 
 ## Legacy reference preparation

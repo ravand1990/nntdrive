@@ -1,5 +1,16 @@
 # Project status
 
+## Pre-login desktop startup choice (#218)
+
+Login and remembered-session unlock screens now expose the same install/user
+startup choice as the account menu. Windows/Linux OS state is read before use;
+changes are applied, read back and persisted immediately without account data.
+Sign-out preserves the choice, startup repairs a remembered opt-in for a relocated
+binary, and failures have an inline Retry path. Unsupported platforms explain the
+disabled control. This does not remember passwords or unlock a cold process.
+Real installed Windows/Linux login restart/removal remains #171; widget tests
+and temporary-directory/registry-runner fixtures do not establish that acceptance.
+
 ## Storage dashboard (#84 bounded slices)
 
 **Account → Storage usage** reports logical live-file bytes and count, usage by
