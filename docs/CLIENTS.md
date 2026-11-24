@@ -22,9 +22,38 @@ and do not yet embed this navigation. Resizing/collapse does not create a second
 session or controller; collapse lasts only for this browser view.
 
 The [adaptive client design brief](UI-UX-DESIGN.md) remains the broader contract.
-Favorites/Recent projections, embedded child pages, breadcrumbs/history, grid,
+Favorites/Recent projections, embedded child pages, breadcrumbs/history,
 selection/details and keyboard palette are not part of this bounded slice.
 Installed platform/accessibility/performance acceptance remains unverified.
+
+### List/grid and local ordering (#219 bounded browser slice)
+
+Use **List** or **Grid**, **Sort: Name / Size / Modified**, and
+**Ascending / Descending** above the current folder. Both surfaces lazily build
+icon-based items, with the same open, More actions, favorite, offline-pin,
+availability explanation and Show in folder adapters. No thumbnails or automatic
+content downloads are added. Narrow/enlarged-text rows put actions below the name
+and status; grid columns and tile height adapt to available width and text scale.
+Controls retain labelled 48 dp targets. A filter with no matches offers Clear filter.
+
+Ordering uses the listing's already locally decrypted display names, never a
+server-side plaintext sort. Name comparison is case-insensitive, with exact name
+then opaque ID resolving ties deterministically. Size means listed regular-file
+bytes; directories sort as zero, not recursive totals. Modified means the listed
+namespace modification instant, not last opened or verified content age. Unknown
+or malformed timestamps sort last in both directions. Equal sizes/times use name
+then ID ascending even when the primary direction is descending. The existing
+case-insensitive folder filter preserves this order.
+
+View/order choices live only in this browser view and survive folder navigation,
+not process restart. Each successful refresh replaces the RAM projection; ordering
+is cached until sort/direction or the listing changes, and filtered results are
+reused until the query changes. Rebuilds perform no new HTTP, crypto, filesystem
+inspection or content reads. Initial refresh/decryption and one-time sorting/filtering
+still consume caller-isolate time and full-list RAM; lazy widgets do not make the
+listing incremental or establish installed frame-time performance. Synthetic 10k
+fixtures and real FilesPage wiring/layout tests are not installed-device acceptance.
+The remaining #219 stages stay open; installed acceptance is tracked on #222.
 
 ## Current state
 
