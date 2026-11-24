@@ -104,6 +104,7 @@ class Session {
   final Future<List<RemoteFile>> Function(List<int>) searchListingWorker;
   final SessionOperations operations;
   late final AccountSearch search = AccountSearch(
+    // All automatic refresh work remains owned by this session index.
     handle: handle,
     operations: operations,
     list: (parent) => ApiClient(baseUrl: server, token: token)
@@ -120,6 +121,32 @@ class Session {
   final int handle;
   final String accountId;
   final String email;
+  SyncController? sync;
+
+  ApiClient bindApi(ApiClient api) {
+    api.onAccountChanged = accountChanged;
+    return api;
+  }
+
+  /// Own publication plus invalidation, not transfer byte notifications.
+  Future<Map<String, dynamic>> upload({required String fileId,
+      required String revisionId, required String parentRevision,
+      required String path}) => operations.run(handle, () async {
+    final result = await NativeBridge.instance.uploadAsync(handle: handle,
+      baseUrl: server, token: token, fileId: fileId, revisionId: revisionId,
+      parentRevision: parentRevision, path: path);
+    accountChanged();
+    return result;
+  });
+
+  void accountChanged() {
+    unawaited(search.refreshAfterMutation(inspectStatuses: (snapshot, cancelled) async {
+      final controller = sync;
+      if (controller == null || !controller.loaded) return {};
+      return inspectSearchStatuses(snapshot: snapshot,
+        folders: controller.folders, cancelled: cancelled);
+    }));
+  }
 }
 
 class NntDriveApp extends StatefulWidget {
@@ -382,15 +409,19 @@ class _NntDriveAppState extends State<NntDriveApp> {
         accountId: accountId,
       );
       _activity = activity;
+      final session = Session(server: server, token: token,
+        handle: unlocked['handle'] as int, accountId: accountId,
+        email: email, operations: _fileOperations);
       final sync = SyncController(
         server: server,
         token: token,
         handle: unlocked['handle'] as int,
-        api: _authenticatedApi(server, token),
+        api: session.bindApi(_authenticatedApi(server, token)),
         deviceNameConfirmed: false,
         onRunFinished: (folder, report) =>
             recordSyncRunActivity(activity, folder, report),
       );
+      session.sync = sync;
       _sync = sync;
       sync.addListener(_updateTray);
 
@@ -400,14 +431,7 @@ class _NntDriveAppState extends State<NntDriveApp> {
         _keyfile = unlockKeyfile;
         _accountId = accountId;
         _email = email;
-        _session = Session(
-          server: server,
-          token: token,
-          handle: unlocked['handle'] as int,
-          accountId: accountId,
-          email: email,
-          operations: _fileOperations,
-        );
+        _session = session;
       });
       _deviceReady = false;
       _renamingDevice = false;
@@ -562,7 +586,7 @@ class _NntDriveAppState extends State<NntDriveApp> {
       final session = _session!;
       home = DeviceOnboardingPage(
         key: ValueKey('device:${session.handle}:$_renamingDevice'),
-        naming: DeviceNaming(api: _authenticatedApi(session.server, session.token),
+        naming: DeviceNaming(api: session.bindApi(_authenticatedApi(session.server, session.token)),
           handle: session.handle, server: session.server, accountId: session.accountId),
         operations: _fileOperations, onReady: _deviceConfirmed,
         onSignOut: _signOut, force: _renamingDevice,
@@ -1214,8 +1238,8 @@ class FilesPage extends StatefulWidget {
 }
 
 class _FilesPageState extends State<FilesPage> {
-  late final ApiClient _api = widget.api ??
-      ApiClient(baseUrl: widget.session.server, token: widget.session.token);
+  late final ApiClient _api = widget.session.bindApi(widget.api ??
+      ApiClient(baseUrl: widget.session.server, token: widget.session.token));
   final List<RemoteFile> _path = [];
   List<RemoteFile> _files = [];
   final Map<String, String> _names = {};
@@ -1763,10 +1787,7 @@ class _FilesPageState extends State<FilesPage> {
         isDir: false,
       );
       _showProgress('Encrypting and uploading $name');
-      final result = await NativeBridge.instance.uploadAsync(
-        handle: widget.session.handle,
-        baseUrl: widget.session.server,
-        token: widget.session.token,
+      final result = await widget.session.upload(
         fileId: fileId,
         revisionId: revisionId,
         parentRevision: '',
@@ -1802,10 +1823,7 @@ class _FilesPageState extends State<FilesPage> {
     final revisionId = _uuid.v4();
     _showProgress('Uploading a new version of ${_name(file)}');
     try {
-      final result = await NativeBridge.instance.uploadAsync(
-        handle: widget.session.handle,
-        baseUrl: widget.session.server,
-        token: widget.session.token,
+      final result = await widget.session.upload(
         fileId: file.id,
         revisionId: revisionId,
         parentRevision: file.currentVersion ?? '',

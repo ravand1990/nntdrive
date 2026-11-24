@@ -344,9 +344,9 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
             style: TextStyle(fontWeight: FontWeight.bold),
           ),
           const Text(
-            'Read-only account snapshot. Adopts published index revisions. '
-            'Refresh after upload, delete or sync; mutations are not observed '
-            'continuously.',
+            'Read-only account snapshot. Refreshes after acknowledged local '
+            'account changes and completed sync. Other-device changes need '
+            'entry or manual refresh; this is not continuous observation.',
           ),
           const SizedBox(height: 12),
           if (_busy || (_reading != null && !widget.index.closed)) ...[

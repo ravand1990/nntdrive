@@ -21,6 +21,38 @@ clears displayed names and drains admitted workers before key revocation. No new
 plaintext persistence or network payload is introduced. See [client accounting
 semantics and bounds](CLIENTS.md#storage-usage-84-first-slice).
 
+Local acknowledgement freshness is now wired across session-bound namespace
+writers, browser upload/new-version and native Copy publication, completed sync
+reports (including partial per-item failures) and successful conflict resolution.
+An index without a complete snapshot or active build stays lazy. One session-owned
+queue combines bursts, joins manual builds and coalesces mutations during a build
+into a follow-up. Byte progress/history do not rebuild. Failed builds retain the
+previous complete RAM snapshot and the dashboard's stale guidance without retry
+polling. Close rejects new/follow-up work and drains admitted queues/workers before
+key revocation. No new HTTP fields, plaintext/hash uploads or persistence were
+added; the dashboard remains read-only, and cache/sync-disk observations remain
+independent explicit/entry measurements.
+
+Eight new regressions plus extended Copy/dashboard tests cover coalescing,
+manual overlap, failure/retry, close/drain before dispatch and during a suspended
+listing/upload, all 12 Dart publication methods, real native upload and opaque-only
+Session HTTP, completed partial sync/conflict resolution versus 100 progress events,
+and automatic UI totals/stale retention without extra device measurements. Restoring
+old-style missing API invalidation fails both native publication tests; disabling
+the follow-up loop fails the coalescing regression. Removing native Copy/sync hooks
+fails both corresponding tests, and removing upload invalidation fails the real
+upload refresh test. All sabotages were restored. The final canonical
+`bash scripts/dev-check.sh flutter` exited 0: release FFI build, clean analysis,
+**839 tests / 4 platform skips** on Flutter 3.47.9 / Dart 3.13.7. Initial analysis
+caught four new test lints, fixed before the final run; advisory SDK tag-fetch
+permission/DNS warnings did not fail it.
+
+Remaining #84 scope includes other-device event freshness, broader account/sync-folder
+duplicate review/cleanup and larger-tree continuation/accounting. This remains a
+bounded mixed-time full-tree refresh, not incremental or atomic account observation.
+Ambiguous failed writes and sync failures without reports require manual refresh.
+Installed desktop/mobile acceptance remains #207 and was not run here.
+
 Regression coverage includes exact nested totals, 100k entries/bounded output,
 worker execution/event-turn checks, error/refresh/reopen/close UI, session drain,
 replacement rejection, and real native-name/loopback Session listing assertions.

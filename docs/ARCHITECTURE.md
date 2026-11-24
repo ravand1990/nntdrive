@@ -149,6 +149,17 @@ installed-platform acceptance. Per-folder exclusions keep chosen subtrees out of
 both scanning and the remote snapshot; conflict copies are listed in a review
 panel. Concurrent edits preserve conflict copies.
 
+The unlocked Flutter session also owns the authenticated search RAM snapshot.
+Acknowledged session-bound namespace writes, native browser upload/Copy publication,
+completed sync reports and successful conflict resolution request a coalesced refresh
+after first index use. One owned queue joins manual builds and retains one pending
+follow-up for changes during a build; progress/history events do not trigger it.
+Complete publication drives read-only logical dashboard aggregation, while failures
+retain the last complete snapshot. Close rejects new/queued work and drains admitted
+work before key revocation. This is full-tree local acknowledgement invalidation,
+not polling, other-device event streaming or atomic/incremental account accounting;
+local disk/cache measurements remain independent. See CLIENTS.md.
+
 ## Metadata model
 
 - `accounts`, `devices`, `api_tokens` — identity and scoped bearer tokens

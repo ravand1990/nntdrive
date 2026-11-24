@@ -285,9 +285,10 @@ is suspended coalesce to the latest revision, and obsolete results/errors are
 discarded. The page's own rebuild publication is consumed once, and a manual
 refresh joins an already admitted aggregate before rebuilding.
 
-There is still no polling, SSE or upload/delete/sync mutation invalidation: if
-nothing rebuilds the index, refresh after mutations. An already published session
-snapshot can be displayed offline. A failed rebuild or current-revision aggregate
+There is no polling or SSE. A used session index refreshes after acknowledged
+local account mutations and completed sync (see Local mutation freshness below);
+other-device changes still need entry/manual refresh or subsequent sync. An already
+published session snapshot can be displayed offline. A failed rebuild or current-revision aggregate
 retains previous complete totals with stale guidance, never partial data or guessed
 zero usage; a new successful observation clears the aggregation warning. A failed
 unchanged revision is not retried on history/busy notifications. Close/disposal
@@ -346,8 +347,36 @@ search route still enters directory results and offers file actions only after
 fresh browser listing; the dashboard route only opens the parent. Automated
 widget/native HTTP coverage is not installed-platform acceptance (#207). Remaining
 #84 work includes broader account/sync-folder duplicate review and cleanup, and
-automatic mutation freshness; bounded sync-folder file-length observations are
+other-device event freshness; bounded sync-folder file-length observations are
 described below.
+
+### Local mutation freshness
+
+Once the authenticated search RAM index has a complete snapshot (or is building), session-bound
+API acknowledgements invalidate it after create/bootstrap, rename/move, delete,
+restore/purge/trash clear, favorites, version restore and rewind. Native browser
+uploads/new versions and Copy notify only after successful publication. Completed
+sync reports (including partial per-item failures) and successful conflict resolution
+also invalidate once; byte-progress notifications do not. An unused index stays lazy.
+
+One session-owned queue yields one event turn to combine bursts, joins an existing
+manual build, then runs at most one traversal at a time. Changes during that traversal
+request a coalesced follow-up, so they cannot disappear into an older build. Builds
+reuse exact authenticated name envelopes and inspect current loaded sync evidence;
+the dashboard adopts complete published revisions through its existing aggregation
+queue. Failed builds keep the previous complete snapshot and stale warning, with no
+automatic retry loop. Later mutations or entry/manual refresh can retry. Close stops
+admission/follow-ups, rejects late publication and drains the queue plus admitted
+HTTP/native/status workers before key revocation.
+
+This is local acknowledgement-driven full-tree refresh, not polling, a server event
+subscription, atomic account observation or incremental listing. Remote-device changes
+still require entry/manual refresh or a subsequent completed local sync. Ambiguous
+failed requests may already have committed and require manual refresh; a native sync
+that throws without returning a report does not trigger refresh. Cache/pin and
+sync-disk observations remain explicit/entry refreshes, separate from account bytes.
+There are no new wire fields, name/hash uploads, plaintext persistence or dashboard
+account writes. Full traversal cost and its existing bounds remain unchanged.
 
 ### Device cache measurement
 
@@ -503,7 +532,7 @@ preservation, explicit-only admission, and close/disposal while review is pendin
 Automated Linux filesystem and widget tests do not establish installed acceptance.
 
 Still open on #84: broader account/sync-folder duplicate review and cleanup,
-automatic mutation freshness, and continuation/persistent accounting for larger
+other-device event freshness, and continuation/persistent accounting for larger
 trees. Bounds continue to produce incomplete observations, not complete inventories.
 
 ## What the Rust bridge exports
