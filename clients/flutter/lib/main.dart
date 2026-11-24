@@ -2556,6 +2556,18 @@ class _FilesPageState extends State<FilesPage> {
                       }
                       return (await opened).measureUsage();
                     },
+                    reviewCacheDuplicates: () => widget.operations.run(
+                      widget.session.handle, () async {
+                        final opened = _cacheFuture;
+                        if (opened == null || widget.session.search.closed) {
+                          throw StateError('Cache review unavailable');
+                        }
+                        final cache = await opened;
+                        if (widget.session.search.closed) throw StateError('Session closed');
+                        final result = await _sync.reviewCacheDuplicates(cache);
+                        if (widget.session.search.closed) throw StateError('Session closed');
+                        return result;
+                      }),
                     readSyncUsage: () => widget.operations.run(
                       widget.session.handle, () async {
                         if (widget.session.search.closed) throw StateError('Session closed');

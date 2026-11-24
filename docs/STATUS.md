@@ -161,8 +161,47 @@ expects closed-session guidance for its invalid handle, not a late stale error.
 Earlier checks caught that fixture assumption and a new lint; both were fixed.
 SDK advisory tag-fetch permission/DNS warnings did not fail the final wrapper.
 
+The dashboard now offers explicit read-only **Review exact cache duplicates** for
+already-indexed downloaded revisions only. The existing cache serial queue owns
+a bounded frozen input and top-level isolate; there is no reopen/reconciliation,
+index/pin/LRU/scratch write, HTTP request, new hash/name persistence or logging.
+SHA-256 selects candidates locally; actual byte comparison confirms groups,
+including empty files. Canonical/no-follow root/ancestor/component checks and
+pre/post metadata validation exclude observed missing, linked, nonregular, unsafe
+or changed copies without changing their index rows. Opaque file/revision IDs
+identify results; no authenticated filename mapping is invented.
+
+The default shared budget is 1000 indexed revisions, 256 MiB total content reads
+(including comparison) and 2 cooperative seconds; output is at most 20 groups /
+100 copies. Bounds and rejected copies are explicitly partial. Controller/session
+drain waits for admitted work while close/disposal rejects late publication.
+Entry, refresh and index notifications never start content review. No duplicate
+deletion action, automatic removal, reclaimed estimate or safe-to-delete advice
+is introduced; existing confirmed unpinned-cache cleanup is independent. This is
+not complete account/sync-folder coverage, authenticated revision integrity or
+atomic protection against hostile path swaps. OS stalls can exceed the time
+budget; metadata-resolution limits and mixed-time/stale results remain explicit.
+
+Focused tests cover real exact/different same-length and empty bytes, size drift,
+mid-observation edits, missing/link/directory/root/ancestor substitutions, bounds,
+unchanged index/scratch/pins, queue serialization, worker execution/event turns,
+controller/session drain and widget explicit admission/failure/retry/close/disposal.
+The original implementation fails to compile the new missing-API regression;
+removing the recorded-size guard fails expected excluded count (3 versus 4), and
+caller-side worker sabotage fails the execution-location regression. Forcing all
+candidate digests to collide still passes exact/different/empty grouping through
+byte comparison; additionally accepting mismatched bytes then fails with the
+false group `{a, b, c}` instead of `{a, b}`. All temporary changes were restored.
+Final canonical `bash scripts/dev-check.sh flutter` exited 0: release FFI build,
+clean analysis and **831 tests / 4 platform skips** on pinned Flutter 3.47.9 /
+Dart 3.13.7. The final focused run passed **13 tests**; formatting checked the
+four new files with zero changes. Existing baseline files were not wholesale
+formatted. SDK advisory tag-fetch permission/DNS warnings did not fail the wrapper.
+Installed desktop/mobile acceptance remains #207; automated checks do not establish
+installed acceptance or frame-time performance.
+
 This is not completed #84 acceptance: automatic upload/delete/sync invalidation,
-duplicate/hash analysis and account/sync-folder cleanup remain open. Larger trees
+broader account/sync-folder duplicate analysis and cleanup remain open. Larger trees
 remain explicitly incomplete; there is no continuation/persistent accounting index.
 Installed-device/frame-time acceptance and an atomic account-wide backend snapshot
 are not established. #207 retains installed navigation/cache/cleanup acceptance
