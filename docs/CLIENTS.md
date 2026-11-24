@@ -345,10 +345,11 @@ session-owned: close/replacement rejects late results, admitted HTTP/decryption
 is drained before key revocation, and disposed views do not navigate. The shared
 search route still enters directory results and offers file actions only after
 fresh browser listing; the dashboard route only opens the parent. Automated
-widget/native HTTP coverage is not installed-platform acceptance (#207). Remaining
-#84 work includes broader account/sync-folder duplicate review and cleanup, and
-other-device event freshness; bounded sync-folder file-length observations are
-described below.
+widget/native HTTP coverage is not installed-platform acceptance (#207). The
+[requirement audit](STORAGE-DASHBOARD-ACCEPTANCE.md) maps #84 to these delivered
+bounded contracts; sync-folder duplicate review is a separate extension (#216).
+Other-device event freshness is not implemented; bounded sync-folder file-length
+observations are described below.
 
 ### Local mutation freshness
 
@@ -531,9 +532,12 @@ different/empty and changed copies; verify partial/error output, pin/index/scrat
 preservation, explicit-only admission, and close/disposal while review is pending.
 Automated Linux filesystem and widget tests do not establish installed acceptance.
 
-Still open on #84: broader account/sync-folder duplicate review and cleanup,
-other-device event freshness, and continuation/persistent accounting for larger
-trees. Bounds continue to produce incomplete observations, not complete inventories.
+The bounded dashboard's original requirements and evidence are mapped in the
+[#84 implementation audit](STORAGE-DASHBOARD-ACCEPTANCE.md); installed acceptance
+remains #207. Broader sync-folder duplicate review is retained separately as #216.
+Full remote-account duplicate sweeps/deletion, continuous other-device event
+freshness, continuation and persistent accounting are not implemented by this
+report. Bounds continue to produce incomplete observations, not complete inventories.
 
 ## What the Rust bridge exports
 
