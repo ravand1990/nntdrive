@@ -23,7 +23,8 @@ session or controller; collapse lasts only for this browser view.
 
 The [adaptive client design brief](UI-UX-DESIGN.md) remains the broader contract.
 Favorites/Recent projections, embedded child pages, breadcrumbs/history,
-selection/details and keyboard palette are not part of this bounded slice.
+selection and keyboard palette are not part of this bounded slice; read-only
+details are described below.
 Installed platform/accessibility/performance acceptance remains unverified.
 
 ### List/grid and local ordering (#219 bounded browser slice)
@@ -54,6 +55,35 @@ still consume caller-isolate time and full-list RAM; lazy widgets do not make th
 listing incremental or establish installed frame-time performance. Synthetic 10k
 fixtures and real FilesPage wiring/layout tests are not installed-device acceptance.
 The remaining #219 stages stay open; installed acceptance is tracked on #222.
+
+### Read-only file details (#219 bounded slice)
+
+Use the **Details for <name>** information button on a file or folder in either
+List or Grid. Details opens a dismissible dialog at every width, capped at 560 dp
+and scrollable on narrow/short windows or enlarged text. Close details, Escape,
+system Back or the outside barrier dismiss it. There is not yet a docked wide
+side pane or a selection model; the existing row open/More actions are unchanged.
+
+The dialog reuses the current locally decrypted name and listing fields: type,
+exact regular-file bytes, favorite and namespace modification time in UTC (Unknown
+when absent). Listed size is not verified manifest content size, and folders show
+**Not calculated**, never their metadata size as a recursive total. Namespace time
+may include rename/favorite changes; it is neither last access nor verified content
+age. Local/sync labels and explanations are frozen from the browser's existing
+evidence with conflict/error/equality semantics unchanged. Unknown is not synced.
+Pins refer only to observed device pin evidence for the listed revision, not a
+content-integrity or durability guarantee; absent evidence explicitly includes an
+unavailable cache. Folder pins are not applicable.
+
+Opening details does not list HTTP, download/preview, inspect disk, hash, open a
+journal/cache or invoke native inspection. Existing browser refresh/cache loading
+is separate. Details is an explicitly possibly stale snapshot, not continuous
+status: close and refresh to recheck. Browser refresh, destination/child navigation
+and controller notifications dismiss it; retained callbacks for replaced listing
+objects cannot reopen old metadata. No plaintext persistence, protocol, mutation,
+permission or crypto changes were added. Automated layout/dismissal and production
+wiring tests do not establish installed Windows/Linux/Android or screen-reader
+acceptance (#222). #219 and all remaining stage criteria stay open.
 
 ## Current state
 

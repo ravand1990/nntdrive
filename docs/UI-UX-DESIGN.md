@@ -224,6 +224,21 @@ No deployment, crypto format migration, permission change or release is authoriz
 by this brief. A shell extraction should remain revertible without changing stored
 data, key handles, preferences or the wire protocol.
 
+## Bounded implementation progress (not stage completion)
+
+The browser navigation and lazy List/Grid/local-ordering increments are now
+implemented; see CLIENTS.md and STATUS.md for their exact boundaries. The bounded
+read-only details increment supplies explicit information buttons on both
+surfaces and a scrollable, width-constrained dialog at all breakpoints. It does
+**not** yet implement the proposed docked 320 dp pane. This deliberately bounded
+alternative retains the full browser width and existing route/Back behavior.
+Details freezes existing decrypted listing metadata and device display evidence,
+adds no automatic preview/download/inspection or mutation, and dismisses on
+refresh/navigation/controller changes rather than retaining misleading evidence.
+Long-name/200% text and production wiring/dismissal/staleness tests are automated
+evidence only. Selection, breadcrumbs/history, keyboard/palette and all remaining
+Stage 1/2/3 criteria remain on #219; installed acceptance remains #222.
+
 ## First-party references (read 2026-11-24)
 
 - G1: [Google Drive web keyboard/navigation, selection, views and action shortcuts](https://support.google.com/drive/answer/2563044?hl=en).
