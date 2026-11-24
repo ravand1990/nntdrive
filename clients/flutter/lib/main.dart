@@ -19,6 +19,7 @@ import 'device_name.dart';
 import 'keyfile_refresh.dart';
 import 'key_rotation.dart';
 import 'app_layout.dart';
+import 'session_navigation.dart';
 import 'app_theme.dart';
 import 'activity_log.dart';
 import 'activity_page.dart';
@@ -1330,7 +1331,82 @@ class _FilesPageState extends State<FilesPage> {
     super.dispose();
   }
 
+  void _selectDestination(SessionDestination destination) {
+    // Every destination supersedes any still-resolving browser root.
+    ++_navigationGeneration;
+    switch (destination) {
+      case SessionDestination.global:
+        _openBrowserRoot(global: true);
+      case SessionDestination.devices:
+        _openBrowserRoot(global: false);
+      case SessionDestination.sync:
+        _openSync();
+      case SessionDestination.activity:
+        _openActivity();
+      case SessionDestination.search:
+        _openAccountSearch();
+      case SessionDestination.trash:
+        _openTrash();
+      case SessionDestination.settings:
+        _showAccountMenu();
+      case SessionDestination.manageDevices:
+        _showDevices();
+    }
+  }
+
+  int _navigationGeneration = 0;
+
+  Future<void> _openBrowserRoot({required bool global}) async {
+    if (widget.session.search.closed) return;
+    final intent = _navigationGeneration;
+    final generation = _refreshGeneration;
+    bool current() => mounted && !widget.session.search.closed &&
+        intent == _navigationGeneration && generation == _refreshGeneration;
+    try {
+      await widget.operations.run(widget.session.handle, () async {
+        RemoteFile? target;
+        String? name;
+        if (global) {
+          final roots = await _api.listRoots();
+          if (!current()) return;
+          final root = roots.where((root) => root.isGlobal).single;
+          final files = await _api.listFiles();
+          if (!current()) return;
+          target = files.where((file) => file.id == root.nodeId &&
+              file.parentId == null && file.isDir).single;
+          name = NativeBridge.instance.openName(
+              widget.session.handle, target.id, target.nameEnc);
+        }
+        if (!current()) return;
+        final selectedTarget = target;
+        setState(() {
+          _path.clear();
+          if (selectedTarget != null) {
+            _path.add(selectedTarget);
+            _names[selectedTarget.id] = name!;
+          }
+          _files = [];
+          _search = '';
+          _folderFilter.clear();
+        });
+        await _refreshNow(redactErrors: true);
+      });
+    } on ApiException catch (e) {
+      if (!current()) return;
+      if (e.status == 401) {
+        widget.onSignOut();
+      } else {
+        _showError('Location unavailable. Refresh and retry.');
+      }
+    } catch (_) {
+      if (current()) {
+        _showError('Location unavailable. Refresh and retry.');
+      }
+    }
+  }
+
   Future<void> _openAccountSearch() async {
+    ++_navigationGeneration;
     final index = widget.session.search;
     final entry = await Navigator.of(context).push<SearchEntry>(MaterialPageRoute(
       builder: (_) => AccountSearchPage(index: index,
@@ -1394,6 +1470,7 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   Future<void> _openActivity() async {
+    ++_navigationGeneration;
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => ActivityPage(
         log: _activity,
@@ -1413,6 +1490,7 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   Future<void> _openSync({String? openOverviewFor}) async {
+    ++_navigationGeneration;
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) =>
           SyncPage(controller: _sync, openOverviewFor: openOverviewFor),
@@ -1421,6 +1499,7 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   Future<void> _openTrash() async {
+    ++_navigationGeneration;
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => TrashPage(
         load: _api.trash,
@@ -1567,6 +1646,7 @@ class _FilesPageState extends State<FilesPage> {
 
   void _open(RemoteFile file) {
     if (file.isDir) {
+      ++_navigationGeneration;
       setState(() => _path.add(file));
       _refresh();
       return;
@@ -1579,6 +1659,7 @@ class _FilesPageState extends State<FilesPage> {
   /// open.
   void _up() {
     if (_path.isEmpty) return;
+    ++_navigationGeneration;
     setState(() => _path.removeLast());
     _refresh();
   }
@@ -2474,6 +2555,7 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   Future<void> _showAccountMenu() async {
+    ++_navigationGeneration;
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -2686,6 +2768,7 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   Future<void> _showDevices() async {
+    ++_navigationGeneration;
     try {
       final devices = await _api.devices();
       final roots = await widget.operations.run(widget.session.handle, () =>
@@ -2788,19 +2871,26 @@ class _FilesPageState extends State<FilesPage> {
         : _files.where((f) => _name(f).toLowerCase().contains(_search.toLowerCase())).toList();
     final space = _currentSpace;
     final spaceNotice = staleSpaceWriteNotice(space);
-    return Scaffold(
+    return SessionNavigation(
+      selected: _path.isEmpty ? SessionDestination.devices
+          : space?.isGlobal == true ? SessionDestination.global : null,
+      onSelected: _selectDestination,
+      child: Scaffold(
       appBar: AppBar(
+        toolbarHeight: MediaQuery.textScalerOf(context).scale(56),
         leading: _path.isEmpty
             ? null
             : IconButton(onPressed: _up, icon: const Icon(Icons.arrow_back), tooltip: 'Up one folder'),
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(_path.isEmpty ? 'My files' : _name(_path.last)),
+            Text(_path.isEmpty ? 'My files' : _name(_path.last),
+              maxLines: 1, overflow: TextOverflow.ellipsis),
             if (me != null)
               Text(
                 '${_formatBytes(me.used)}${me.quota == null ? '' : ' of ${_formatBytes(me.quota!)}'} · end-to-end encrypted',
                 style: theme.textTheme.bodySmall,
+                maxLines: 1, overflow: TextOverflow.ellipsis,
               ),
           ],
         ),
@@ -2832,7 +2922,7 @@ class _FilesPageState extends State<FilesPage> {
           ),
         ],
         bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(52),
+          preferredSize: Size.fromHeight(MediaQuery.textScalerOf(context).scale(52)),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
             child: TextField(
@@ -2848,7 +2938,7 @@ class _FilesPageState extends State<FilesPage> {
           ),
         ),
       ),
-      body: _backScope(AppContentFrame(child: Column(
+      body: _backScope(Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (space != null && spaceNotice != null)
@@ -2922,7 +3012,7 @@ class _FilesPageState extends State<FilesPage> {
               ),
           ),
         ],
-      ))),
+      )),
       floatingActionButton: FloatingActionButton(
         onPressed: () => showModalBottomSheet<void>(
           context: context,
@@ -2960,6 +3050,7 @@ class _FilesPageState extends State<FilesPage> {
         ),
         tooltip: 'New',
         child: const Icon(Icons.add),
+      ),
       ),
     );
   }
