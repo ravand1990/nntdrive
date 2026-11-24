@@ -4,6 +4,14 @@ For a dated, source-linked comparison with consumer cloud clients, see
 [Cloud storage parity review](CLOUD-PARITY.md). That review separates integrated
 features, remaining implementation gaps and installed-device acceptance.
 
+## UI/UX design direction (#219)
+
+The [adaptive client design brief](UI-UX-DESIGN.md) records a source-linked
+Drive/OneDrive/iCloud comparison, proposed navigation and component inventory,
+and the staged verification contract. It is a design prerequisite, not usage
+instructions for a shipped sidebar, grid or keyboard palette. The existing
+screens below remain current until each implementing slice lands.
+
 ## Current state
 
 | Platform | Source | Build status | Crypto/content |
