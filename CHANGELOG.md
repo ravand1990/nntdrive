@@ -12,6 +12,8 @@ release workflow refuses to publish if the entry is missing.
 
 ### Features
 
+- Added bounded adaptive navigation around the file browser (#219): a labelled, collapsible 240 dp sidebar at 1200 dp, a 72 dp rail at 600–1199 dp, and a scrollable destination menu below 600 dp or with enlarged text. Global opens the freshly listed authenticated root; Devices opens the existing account-root listing (including Global), with separate Manage devices and existing Sync, Activity, Search, Trash and account/settings adapters. Child pages still use existing routes; this is not an embedded session shell, breadcrumb/history implementation or completed redesign. Favorites/Recent remain unimplemented, not dummy destinations.
+
 - Login and remembered-session unlock screens now offer **Start NNTDrive when I sign in** before authentication. The shared per-install choice reads the Windows/Linux login item, applies and remembers changes immediately, survives sign-out and repairs an opted-in item's executable after updates. Unsupported platforms explain the disabled option; failures stay inline with Retry. Startup still opens locked and requires the password; no automatic unlock was added (#218).
 
 ## [0.36.0] - 2026-11-24

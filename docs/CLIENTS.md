@@ -4,13 +4,27 @@ For a dated, source-linked comparison with consumer cloud clients, see
 [Cloud storage parity review](CLOUD-PARITY.md). That review separates integrated
 features, remaining implementation gaps and installed-device acceptance.
 
-## UI/UX design direction (#219)
+## Adaptive browser navigation (#219 prerequisite)
 
-The [adaptive client design brief](UI-UX-DESIGN.md) records a source-linked
-Drive/OneDrive/iCloud comparison, proposed navigation and component inventory,
-and the staged verification contract. It is a design prerequisite, not usage
-instructions for a shipped sidebar, grid or keyboard palette. The existing
-screens below remain current until each implementing slice lands.
+The Files browser uses a 240 dp labelled sidebar at widths of at least 1200 dp;
+Collapse navigation changes it to a 72 dp rail. Widths of 600–1199 dp use a rail
+with a labelled destination menu. Below 600 dp, or above 130% text, use **Browse
+& navigate** for the same scrollable destinations. The browser uses the remaining
+window width instead of the readable-page 840 dp cap.
+
+**Global** freshly lists and authenticates the account's Global root. **Devices**
+returns to the existing account-root listing, including Global and device spaces;
+it is not a device-only view. **Manage devices** separately opens the existing
+device-session/revocation dialog. **Sync**, **Activity**, **Search** and **Trash**
+open their existing pages; **Settings** opens the existing account/settings sheet.
+App-bar adapters remain available. Child pages retain their normal Back routes
+and do not yet embed this navigation. Resizing/collapse does not create a second
+session or controller; collapse lasts only for this browser view.
+
+The [adaptive client design brief](UI-UX-DESIGN.md) remains the broader contract.
+Favorites/Recent projections, embedded child pages, breadcrumbs/history, grid,
+selection/details and keyboard palette are not part of this bounded slice.
+Installed platform/accessibility/performance acceptance remains unverified.
 
 ## Current state
 

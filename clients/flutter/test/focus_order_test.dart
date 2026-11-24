@@ -118,13 +118,15 @@ void main() {
 
     final names = <String>[];
     final centers = <Offset>[];
-    // Enough stops for every app-bar action, the filter field, both rows, their
-    // action buttons, the trash entry and the primary "New" button.
-    for (var i = 0; i < 14; i++) {
+    // Walk through the new browser navigation as well, but keep this contract
+    // scoped to the existing browser Scaffold (toolbar, filter, rows and New).
+    // The sidebar is a separate navigation region, not a file-row action.
+    for (var i = 0; i < 40; i++) {
       await tester.sendKeyEvent(LogicalKeyboardKey.tab);
       await tester.pumpAndSettle();
       final context = FocusManager.instance.primaryFocus?.context;
       if (context == null) break;
+      if (context.findAncestorWidgetOfExactType<Scaffold>() == null) continue;
       final box = context.findRenderObject();
       if (box is! RenderBox || !box.hasSize) continue;
       final center = box.localToGlobal(box.size.center(Offset.zero));

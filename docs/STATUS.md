@@ -1,14 +1,26 @@
 # Project status
 
-## UI/UX redesign design prerequisite (#219)
+## Adaptive browser navigation prerequisite (#219)
 
-[The adaptive client design brief](UI-UX-DESIGN.md) compares documented Google
-Drive, OneDrive and iCloud/Finder interaction patterns and records the proposed
-navigation, component, E2EE and verification contracts. This is documentation
-only: the persistent shell, breadcrumb/history, new browser interactions and
-visual/mobile rework are not implemented by this slice. Existing client behavior
-and the remaining #219 criteria are unchanged; no installed usability or large-
-folder responsiveness is claimed.
+The browser now has callback-based adaptive navigation: a collapsible labelled
+sidebar at 1200 dp, a rail at 600–1199 dp (leaving at least 528 dp content), and
+**Browse & navigate** below 600 dp or above 130% text. The latter opens a
+scrollable labelled menu rather than squeezing nine tabs into a phone toolbar.
+Global freshly resolves its authenticated opaque root. Devices returns to the
+existing account-root listing, which includes Global; Manage devices is a
+separate session/revocation dialog. Sync, Activity, Search, Trash and Settings
+reuse existing owners and routes. The browser alone no longer has the 840 dp
+readable-content cap; other pages retain their existing frames.
+
+This is browser chrome only: child routes do not retain the sidebar, and no new
+session/controller/navigation history is created. Favorites/Recent projections,
+embedded child pages, breadcrumbs/history, selection/grid/details/keyboard work
+and the broader #219 redesign remain unfinished. Collapse is view-local, not a
+persisted preference. Widget fixtures are not installed Windows/Linux/Android,
+accessibility or large-folder performance acceptance.
+
+[The adaptive client design brief](UI-UX-DESIGN.md) remains the broader design
+contract; this bounded prerequisite does not complete any runtime stage.
 
 ## Pre-login desktop startup choice (#218)
 
