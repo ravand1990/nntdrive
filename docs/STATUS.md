@@ -1,5 +1,15 @@
 # Project status
 
+## UI/UX redesign design prerequisite (#219)
+
+[The adaptive client design brief](UI-UX-DESIGN.md) compares documented Google
+Drive, OneDrive and iCloud/Finder interaction patterns and records the proposed
+navigation, component, E2EE and verification contracts. This is documentation
+only: the persistent shell, breadcrumb/history, new browser interactions and
+visual/mobile rework are not implemented by this slice. Existing client behavior
+and the remaining #219 criteria are unchanged; no installed usability or large-
+folder responsiveness is claimed.
+
 ## Pre-login desktop startup choice (#218)
 
 Login and remembered-session unlock screens now expose the same install/user
