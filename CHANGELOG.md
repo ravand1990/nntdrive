@@ -6,6 +6,8 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-11-24
+
 ### Features
 
 - Authenticated search RAM and the open logical Storage usage dashboard now refresh after acknowledged local namespace/content changes (including upload/new version, Copy, rename/move, delete/restore, favorites and rewind) and completed sync/conflict resolution. Refreshes remain lazy until the index is used, serialize with manual builds, coalesce bursts and retain the last complete snapshot with stale guidance on failure. Close rejects queued work and drains admitted workers before key revocation. No polling, new HTTP fields, plaintext persistence or automatic cache/sync-disk measurement was added. This supersedes the local-mutation freshness limitations below; other-device events, broader duplicate review/cleanup and large-tree accounting remain open on #84, installed acceptance on #207.
