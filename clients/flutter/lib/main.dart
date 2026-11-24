@@ -1406,6 +1406,7 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   Future<void> _openAccountSearch() async {
+    ++_navigationGeneration;
     final index = widget.session.search;
     final entry = await Navigator.of(context).push<SearchEntry>(MaterialPageRoute(
       builder: (_) => AccountSearchPage(index: index,
@@ -1469,6 +1470,7 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   Future<void> _openActivity() async {
+    ++_navigationGeneration;
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => ActivityPage(
         log: _activity,
@@ -1488,6 +1490,7 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   Future<void> _openSync({String? openOverviewFor}) async {
+    ++_navigationGeneration;
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) =>
           SyncPage(controller: _sync, openOverviewFor: openOverviewFor),
@@ -1496,6 +1499,7 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   Future<void> _openTrash() async {
+    ++_navigationGeneration;
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => TrashPage(
         load: _api.trash,
@@ -2551,6 +2555,7 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   Future<void> _showAccountMenu() async {
+    ++_navigationGeneration;
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -2763,6 +2768,7 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   Future<void> _showDevices() async {
+    ++_navigationGeneration;
     try {
       final devices = await _api.devices();
       final roots = await widget.operations.run(widget.session.handle, () =>

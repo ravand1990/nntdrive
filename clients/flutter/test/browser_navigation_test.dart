@@ -188,6 +188,26 @@ void main() {
     });
   }
 
+  for (final tooltip in ['Sync folders', 'Trash', 'Account']) {
+    testWidgets('app-bar $tooltip supersedes suspended Global', (tester) async {
+      final fixture = await showNavigation(tester);
+      final gate = Completer<void>();
+      fixture.api.rootsGate = gate;
+      await tester.tap(find.byKey(const ValueKey('navigation-global')));
+      await tester.pump();
+      expect(fixture.api.rootsCalls, 1);
+      await tester.tap(find.byTooltip(tooltip));
+      await tester.pumpAndSettle();
+      gate.complete();
+      await tester.pumpAndSettle();
+      Navigator.of(tester.element(find.byType(FilesPage, skipOffstage: false))).pop();
+      await tester.pumpAndSettle();
+      expect(find.text('My files'), findsOneWidget);
+      expect(fixture.api.parents.where((id) => id == fixture.api.folder!.id), isEmpty);
+      expect(browserBackScope(tester).canPop, isTrue);
+    });
+  }
+
   testWidgets('production browser chrome uses real roots and existing route owners', (tester) async {
     SharedPreferences.setMockInitialValues({});
     tester.view.physicalSize = const Size(1440, 900);
