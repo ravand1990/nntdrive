@@ -38,6 +38,7 @@ import 'session_operations.dart';
 import 'local_availability.dart';
 import 'browser_views.dart';
 import 'browser_file_details.dart';
+import 'browser_commands.dart';
 import 'file_rename.dart';
 import 'file_move.dart';
 import 'file_copy.dart';
@@ -1242,6 +1243,105 @@ class _FilesPageState extends State<FilesPage> {
   bool _browserDescending = false;
   BrowserListing _browserListing = BrowserListing(const [], (_) => '');
   final _folderFilter = TextEditingController();
+  final _folderFilterFocus = FocusNode();
+  final _browserFocus = FocusNode();
+  DialogRoute<String>? _commandsRoute;
+
+  bool get _browserCommandsReady => mounted && !_loading && _error == null &&
+      !widget.session.search.closed && ModalRoute.of(context)?.isCurrent == true;
+
+  bool get _admitBrowserKey {
+    if (!_browserCommandsReady) return false;
+    final focused = FocusManager.instance.primaryFocus?.context;
+    return focused == null || (focused.widget is! EditableText &&
+        focused.findAncestorWidgetOfExactType<EditableText>() == null);
+  }
+
+  List<BrowserCommand> get _browserCommands => [
+    const BrowserCommand('refresh', 'Refresh folder', binding: 'F5'),
+    const BrowserCommand('filter', 'Focus folder filter', binding: 'Ctrl/Cmd+Shift+F'),
+    const BrowserCommand('search', 'Search all files', binding: 'Ctrl/Cmd+F'),
+    const BrowserCommand('commands', 'Command palette', binding: 'Ctrl/Cmd+K'),
+    const BrowserCommand('help', 'Shortcut help', binding: 'Ctrl/Cmd+/'),
+    BrowserCommand('up', 'Up one folder', binding: 'Alt+Up',
+        disabledReason: _path.isEmpty ? 'Already at the browser root' : null),
+    const BrowserCommand('global', 'Global location'),
+    const BrowserCommand('devices', 'Devices location'),
+    const BrowserCommand('sync', 'Sync folders'),
+    const BrowserCommand('activity', 'Activity'),
+    const BrowserCommand('trash', 'Trash'),
+    const BrowserCommand('settings', 'Settings / account'),
+  ];
+
+  void _dismissCommands() {
+    final route = _commandsRoute;
+    _commandsRoute = null;
+    if (route != null && route.isActive) route.navigator?.removeRoute(route);
+  }
+
+  void _onSearchLifecycle() {
+    if (mounted && widget.session.search.closed) {
+      _dismissCommands();
+      setState(() {});
+    }
+  }
+
+  Future<void> _showCommands({bool help = false}) async {
+    if (!_browserCommandsReady) return;
+    final generation = _refreshGeneration;
+    final navigation = _navigationGeneration;
+    final route = DialogRoute<String>(context: context,
+      builder: (_) => BrowserCommandPalette(commands: _browserCommands, help: help));
+    _commandsRoute = route;
+    final result = await Navigator.of(context).push(route);
+    if (!identical(_commandsRoute, route)) return;
+    _commandsRoute = null;
+    if (generation != _refreshGeneration || navigation != _navigationGeneration ||
+        !_browserCommandsReady) {
+      return;
+    }
+    _browserFocus.requestFocus();
+    if (result != null) _runBrowserCommand(result);
+  }
+
+  void _runBrowserCommand(String id) {
+    if (!_browserCommandsReady ||
+        !_browserCommands.any((command) => command.id == id && command.disabledReason == null)) {
+      return;
+    }
+    switch (id) {
+      case 'refresh': _refresh();
+      case 'filter': _folderFilterFocus.requestFocus();
+      case 'search': _openAccountSearch();
+      case 'commands': _showCommands();
+      case 'help': _showCommands(help: true);
+      case 'up': _up();
+      case 'global': _selectDestination(SessionDestination.global);
+      case 'devices': _selectDestination(SessionDestination.devices);
+      case 'sync': _openSync();
+      case 'activity': _openActivity();
+      case 'trash': _openTrash();
+      case 'settings': _selectDestination(SessionDestination.settings);
+    }
+  }
+
+  Map<ShortcutActivator, Intent> get _browserKeys => {
+    for (final meta in [false, true]) ...{
+      BrowserKeyActivator(LogicalKeyboardKey.keyK, control: !meta, meta: meta,
+        admit: () => _admitBrowserKey): const BrowserCommandIntent('commands'),
+      BrowserKeyActivator(LogicalKeyboardKey.slash, control: !meta, meta: meta,
+        admit: () => _admitBrowserKey): const BrowserCommandIntent('help'),
+      BrowserKeyActivator(LogicalKeyboardKey.keyF, control: !meta, meta: meta,
+        admit: () => _admitBrowserKey): const BrowserCommandIntent('search'),
+      BrowserKeyActivator(LogicalKeyboardKey.keyF, control: !meta, meta: meta, shift: true,
+        admit: () => _admitBrowserKey): const BrowserCommandIntent('filter'),
+    },
+    BrowserKeyActivator(LogicalKeyboardKey.f5, admit: () => _admitBrowserKey):
+      const BrowserCommandIntent('refresh'),
+    BrowserKeyActivator(LogicalKeyboardKey.arrowUp, alt: true, admit: () => _admitBrowserKey):
+      const BrowserCommandIntent('up'),
+  };
+
   late final SyncController _sync;
   late final ActivityLog _activity = widget.activity ??
       ActivityLog(
@@ -1255,6 +1355,8 @@ class _FilesPageState extends State<FilesPage> {
   DialogRoute<void>? _detailsRoute;
 
   void _dismissDetails() {
+    // Both transient browser observations share refresh/navigation invalidation.
+    _dismissCommands();
     final route = _detailsRoute;
     _detailsRoute = null;
     if (route != null && route.isActive) route.navigator?.removeRoute(route);
@@ -1333,6 +1435,7 @@ class _FilesPageState extends State<FilesPage> {
     _sync = widget.sync;
     _syncLoaded = _sync.loaded;
     _sync.addListener(_onSyncChanged);
+    widget.session.search.addListener(_onSearchLifecycle);
     _refresh();
   }
 
@@ -1359,6 +1462,16 @@ class _FilesPageState extends State<FilesPage> {
   @override
   void dispose() {
     _sync.removeListener(_onSyncChanged);
+    widget.session.search.removeListener(_onSearchLifecycle);
+    final commands = _commandsRoute;
+    _commandsRoute = null;
+    if (commands != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (commands.isActive) commands.navigator?.removeRoute(commands);
+      });
+    }
+    _folderFilterFocus.dispose();
+    _browserFocus.dispose();
     // Home can be replaced beneath a dialog (for example on sign-out). Wait
     // until the navigator's current build/disposal lock has been released.
     final details = _detailsRoute;
@@ -2922,7 +3035,17 @@ class _FilesPageState extends State<FilesPage> {
         _browserSort, _browserDescending, _search);
     final space = _currentSpace;
     final spaceNotice = staleSpaceWriteNotice(space);
-    return SessionNavigation(
+    return Shortcuts(
+      shortcuts: _browserKeys,
+      child: Actions(
+        actions: <Type, Action<Intent>>{
+          BrowserCommandIntent: CallbackAction<BrowserCommandIntent>(
+            onInvoke: (intent) {
+              if (_admitBrowserKey) _runBrowserCommand(intent.id);
+              return null;
+            }),
+        },
+        child: Focus(focusNode: _browserFocus, autofocus: true, child: SessionNavigation(
       selected: _path.isEmpty ? SessionDestination.devices
           : space?.isGlobal == true ? SessionDestination.global : null,
       onSelected: _selectDestination,
@@ -2978,6 +3101,7 @@ class _FilesPageState extends State<FilesPage> {
             padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
             child: TextField(
               controller: _folderFilter,
+              focusNode: _folderFilterFocus,
               onChanged: (v) => setState(() => _search = v),
               decoration: InputDecoration(
                 isDense: true,
@@ -2994,6 +3118,19 @@ class _FilesPageState extends State<FilesPage> {
         children: [
           if (space != null && spaceNotice != null)
             SpaceWriteNotice(root: space, message: spaceNotice),
+          Align(alignment: Alignment.centerLeft, child: Wrap(children: [
+            TextButton.icon(
+              onPressed: _browserCommandsReady ? () => _showCommands() : null,
+              style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
+              icon: const Icon(Icons.keyboard_command_key),
+              label: const Tooltip(message: 'Commands (Ctrl/Cmd+K)', child: Text('Commands')),
+            ),
+            TextButton(
+              onPressed: _browserCommandsReady ? () => _showCommands(help: true) : null,
+              style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
+              child: const Text('Shortcut help'),
+            ),
+          ])),
           BrowserViewControls(
             view: _browserView, sort: _browserSort, descending: _browserDescending,
             onView: (value) => setState(() => _browserView = value),
@@ -3067,7 +3204,7 @@ class _FilesPageState extends State<FilesPage> {
         child: const Icon(Icons.add),
       ),
       ),
-    );
+    ))));
   }
 }
 

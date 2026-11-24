@@ -173,8 +173,9 @@ be actionable and redacted, never raw diagnostics, keys or provider responses.
 
 ### Proposed keyboard map
 
-Expose shortcuts in the command palette and menu labels; these are **not
-implemented shortcuts**. Use `Actions`/`Shortcuts` with focus-scoped enablement.
+Expose shortcuts in the command palette and menu labels. This is the broader map;
+only the bounded browser-level subset described below is implemented. Use
+`Actions`/`Shortcuts` with focus-scoped enablement.
 
 | Intent | Desktop binding | Safety/availability |
 |---|---|---|
@@ -183,6 +184,7 @@ implemented shortcuts**. Use `Actions`/`Shortcuts` with focus-scoped enablement.
 | Move / Copy | Ctrl+Shift+M / Ctrl+Shift+C | Destination picker; Copy is an explicit operation, not plaintext clipboard export. |
 | Select all / clear | Ctrl+A / Escape | Focused file view only; Escape closes transient UI before clearing selection. |
 | Search / refresh | Ctrl+F / F5 | Search opens account search; folder filtering stays explicitly labelled. |
+| Focus folder filter | Ctrl+Shift+F | Ready browser only, outside text editing. |
 | Commands / shortcut help | Ctrl+K / Ctrl+/ | Same command registry and disabled reasons as visible controls. |
 | History / parent | Alt+Left, Alt+Right / Alt+Up | Back/Forward versus authenticated parent; no path-string resolution. |
 | Context menu | Shift+F10 | Focused item/selection; same actions as pointer menu. |
@@ -236,7 +238,16 @@ Details freezes existing decrypted listing metadata and device display evidence,
 adds no automatic preview/download/inspection or mutation, and dismisses on
 refresh/navigation/controller changes rather than retaining misleading evidence.
 Long-name/200% text and production wiring/dismissal/staleness tests are automated
-evidence only. Selection, breadcrumbs/history, keyboard/palette and all remaining
+evidence only.
+
+The bounded browser command palette/help now delegates Refresh, focus folder
+filter, account Search, authenticated parent Up and current location/page adapters.
+Ctrl/Cmd+K, Ctrl/Cmd+/, Ctrl/Cmd+F, Ctrl/Cmd+Shift+F, F5 and Alt+Up are the only
+registered browser bindings; both Ctrl/Cmd variants are accepted, not an installed
+macOS promise. Editing/IME, modal/covered routes, loading/errors and closed/stale
+views are excluded. It is not the proposed selection/action registry: item open,
+rename, delete, move, copy, select-all/clear and context-menu keys remain unfinished
+without selection. Breadcrumb/history bindings, selection and all remaining
 Stage 1/2/3 criteria remain on #219; installed acceptance remains #222.
 
 ## First-party references (read 2026-11-24)

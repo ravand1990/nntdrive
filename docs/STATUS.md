@@ -14,7 +14,7 @@ readable-content cap; other pages retain their existing frames.
 
 This is browser chrome only: child routes do not retain the sidebar, and no new
 session/controller/navigation history is created. Favorites/Recent projections,
-embedded child pages, breadcrumbs/history, selection/keyboard work
+embedded child pages, breadcrumbs/history, selection/item-keyboard work
 and the broader #219 redesign remain unfinished. Collapse is view-local, not a
 persisted preference. Widget fixtures are not installed Windows/Linux/Android,
 accessibility or large-folder performance acceptance.
@@ -75,6 +75,39 @@ exited 0 with clean analysis, the native release build and **893 tests passed /
 passed **51 tests**. Disposal beneath an open dialog and retained disposed callbacks
 are covered as well. No installed screenshots, accessibility, performance or OS acceptance is claimed
 (#222). Parent #219 remains open; no stage is declared complete.
+
+## Browser command palette and safe shortcuts (#219 bounded slice)
+
+Production FilesPage exposes searchable **Commands** (Ctrl/Cmd+K) and in-app
+**Shortcut help** (Ctrl/Cmd+/). One bounded browser-level inventory dispatches
+the current Refresh (F5), focus folder filter (Ctrl/Cmd+Shift+F), account Search
+(Ctrl/Cmd+F), authenticated-path Up (Alt+Up) and existing Global/Devices,
+Sync/Activity/Trash/Settings adapters. Up explains its disabled root state.
+Search, Up/Down, Enter, Tab, Escape and pointer activation work in a scrollable
+width-capped dialog with at least 48 dp rows and enlarged-text wrapping.
+
+Shortcuts use focus-scoped Shortcuts/Actions and reject keys before consumption
+while editing/IME, under modal/covered routes, or in loading/error/closed/disposed
+views. Repeats are excluded. Refresh/navigation/controller changes and close
+dismiss obsolete palettes; generation checks revalidate returned commands. Existing
+production operation/session-drain adapters stay authoritative; there are no new
+mutations, protocol/crypto changes, selection or persisted queries.
+
+Real native sealed-name FilesPage regressions cover palette/keyboard dispatch,
+authenticated location and page adapters, text/IME/modal/covered-route guards,
+loading/error/controller/close/disposal invalidation, disabled parent and empty
+queries, native text select-all/delete, narrow 200% scrollability and row heights.
+Original production fails the new palette tests. Removing keyboard wiring and
+palette-result dispatch independently fails the production regression; both were
+restored. The canonical locked `flutter-exec` focused run passed clean analysis,
+new-file format checks and **69 tests** across commands, navigation, details, views,
+item actions, accessibility, focus order and session navigation (including eight
+new production FilesPage command regressions). The complete canonical
+`bash scripts/dev-check.sh flutter` also exited 0: clean analysis, native release
+build and **901 tests passed / 5 skipped**. Independent static diff review found
+no blocking issues. Installed OS/keyboard/screen-reader/performance evidence
+is not claimed (#222). Item open/rename/delete/move/copy/select-all/clear/context-menu
+keys, breadcrumbs/history, selection and remaining #219 stages are unfinished.
 
 ## Pre-login desktop startup choice (#218)
 
