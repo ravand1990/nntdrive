@@ -14,13 +14,43 @@ readable-content cap; other pages retain their existing frames.
 
 This is browser chrome only: child routes do not retain the sidebar, and no new
 session/controller/navigation history is created. Favorites/Recent projections,
-embedded child pages, breadcrumbs/history, selection/grid/details/keyboard work
+embedded child pages, breadcrumbs/history, selection/details/keyboard work
 and the broader #219 redesign remain unfinished. Collapse is view-local, not a
 persisted preference. Widget fixtures are not installed Windows/Linux/Android,
 accessibility or large-folder performance acceptance.
 
 [The adaptive client design brief](UI-UX-DESIGN.md) remains the broader design
 contract; this bounded prerequisite does not complete any runtime stage.
+
+## Browser list/grid and local ordering (#219 bounded slice)
+
+The real FilesPage now exposes lazy List/Grid surfaces and labelled Name, Size,
+Modified and direction controls over one decrypted listing. Open, actions,
+favorite/offline markers, live availability and confined reveal reuse the existing
+adapters. Width/text-aware layouts wrap controls and put narrow item actions below
+metadata. Opaque IDs stay authoritative; no thumbnails, packages, protocol or
+crypto changes were introduced. Ordering is cached across unrelated rebuilds,
+filters preserve ordering, and unknown modification times remain last in either
+direction. Size treats directories as zero; Modified is namespace time, not access
+or content-integrity evidence. Choices are view-local, not persisted.
+
+Focused pinned-wrapper verification passed clean Flutter analysis and 41 tests
+across browser views, existing item actions, browser navigation, accessibility and
+focus order. Coverage includes two 10k lazy-build/ordinary-scroll fixtures,
+deterministic ordering/filtering/timezone/unknown-date cases, grid callbacks and
+badges/status/reveal, real FilesPage sort/filter/navigation and 320/600/1024/1440 dp
+layouts at 200% text. Forcing production grid wiring back to List and replacing
+sort with name-only behavior each failed their regression, then were restored.
+The parent then ran the complete canonical `bash scripts/dev-check.sh flutter`:
+clean analysis, native release build and 883 tests passed / 5 skipped (exit 0).
+Independent diff review found no blockers. Exact-head hosted checks are recorded
+on the slice PR, not inferred from the local run. Installed screenshots, screen readers and
+frame-time performance remain unverified (#222); widget laziness is not
+a smoothness benchmark. An initial synthetic jump-to-end probe timed out; the
+passing 10k fixtures cover lazy construction and ordinary scrolling, not fast
+arbitrary seeks. Full-list refresh/decryption plus sort/filter CPU and RAM
+remain caller-side work. #219 stays open for its remaining browser, visual and
+mobile stages; no selection, navigation history or details were added here.
 
 ## Pre-login desktop startup choice (#218)
 

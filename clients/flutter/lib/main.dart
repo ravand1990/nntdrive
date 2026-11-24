@@ -36,7 +36,7 @@ import 'desktop_lifecycle.dart';
 import 'secure_keyfile.dart';
 import 'session_operations.dart';
 import 'local_availability.dart';
-import 'local_availability_widgets.dart';
+import 'browser_views.dart';
 import 'file_rename.dart';
 import 'file_move.dart';
 import 'file_copy.dart';
@@ -1236,6 +1236,10 @@ class _FilesPageState extends State<FilesPage> {
   bool _loading = true;
   String? _error;
   String _search = '';
+  BrowserView _browserView = BrowserView.list;
+  BrowserSort _browserSort = BrowserSort.name;
+  bool _browserDescending = false;
+  BrowserListing _browserListing = BrowserListing(const [], (_) => '');
   final _folderFilter = TextEditingController();
   late final SyncController _sync;
   late final ActivityLog _activity = widget.activity ??
@@ -1620,6 +1624,7 @@ class _FilesPageState extends State<FilesPage> {
         for (final root in _sync.accountRoots) {
           if (keep.contains(root.nodeId)) _names[root.nodeId] = accountRootLabel(root);
         }
+        _browserListing = BrowserListing(_files, _name);
       });
     } on ApiException catch (e) {
       if (!mounted || generation != _refreshGeneration) return;
@@ -2866,9 +2871,8 @@ class _FilesPageState extends State<FilesPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final me = _me;
-    final filtered = _search.isEmpty
-        ? _files
-        : _files.where((f) => _name(f).toLowerCase().contains(_search.toLowerCase())).toList();
+    final filtered = _browserListing.visible(
+        _browserSort, _browserDescending, _search);
     final space = _currentSpace;
     final spaceNotice = staleSpaceWriteNotice(space);
     return SessionNavigation(
@@ -2943,71 +2947,34 @@ class _FilesPageState extends State<FilesPage> {
         children: [
           if (space != null && spaceNotice != null)
             SpaceWriteNotice(root: space, message: spaceNotice),
+          BrowserViewControls(
+            view: _browserView, sort: _browserSort, descending: _browserDescending,
+            onView: (value) => setState(() => _browserView = value),
+            onSort: (value) => setState(() => _browserSort = value),
+            onDirection: () => setState(() => _browserDescending = !_browserDescending),
+          ),
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : _error != null
                     ? _ErrorView(error: _error!, onRetry: _refresh)
                     : filtered.isEmpty
-                        ? const _EmptyView()
+                        ? (_search.isEmpty ? const _EmptyView() : Center(child: TextButton(
+                            onPressed: () => setState(() { _search = ''; _folderFilter.clear(); }),
+                            style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
+                            child: const Text('No matching files. Clear filter'),
+                          )))
                         : RefreshIndicator(
                       onRefresh: _refresh,
-                      child: ListView.separated(
-                        itemCount: filtered.length,
-                        separatorBuilder: (_, __) => const Divider(height: 1),
-                        itemBuilder: (context, i) {
-                          final f = filtered[i];
-                          final local = _availability[f.id] ?? LocalAvailability.unknown;
-                          return ListTile(
-                            leading: Icon(
-                              f.isDir
-                                  ? Icons.folder_outlined
-                                  : Icons.insert_drive_file_outlined,
-                              semanticLabel: f.isDir ? 'Folder' : 'File',
-                            ),
-                            title: Text(_name(f)),
-                            subtitle: LocalAvailabilityLabel(
-                              state: local,
-                              details: f.isDir ? 'Folder' : _formatBytes(f.size),
-                            ),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                if (f.favorite)
-                                  const Padding(
-                                    padding: EdgeInsets.symmetric(horizontal: 4),
-                                    // Colour alone never carries this state.
-                                    child: Icon(Icons.star,
-                                        size: 18, semanticLabel: 'Favourite'),
-                                  ),
-                                if (!f.isDir &&
-                                    _offlinePins.contains(
-                                        _pinKey(f.id, f.currentVersion ?? '')))
-                                  const Padding(
-                                    padding: EdgeInsets.symmetric(horizontal: 4),
-                                    child: Icon(Icons.offline_pin,
-                                        size: 18, semanticLabel: 'Kept offline'),
-                                  ),
-                                LocalRevealButton(
-                                  state: local,
-                                  onReveal: () => _revealLocal(f),
-                                ),
-                                IconButton(
-                                  tooltip: 'More actions for ${_name(f)}',
-                                  icon: const Icon(Icons.more_vert),
-                                  // Material 3 icon buttons default to a 40dp
-                                  // container; keep the row target at 48dp.
-                                  style: IconButton.styleFrom(
-                                    minimumSize: const Size(48, 48),
-                                    tapTargetSize: MaterialTapTargetSize.padded,
-                                  ),
-                                  onPressed: () => _itemActions(f),
-                                ),
-                              ],
-                            ),
-                            onTap: () => _open(f),
-                          );
-                        },
+                      child: BrowserFilesView(
+                        files: filtered,
+                        view: _browserView,
+                        nameFor: _name,
+                        availabilityFor: (f) => _availability[f.id] ?? LocalAvailability.unknown,
+                        pinned: (f) => _offlinePins.contains(_pinKey(f.id, f.currentVersion ?? '')),
+                        onOpen: _open,
+                        onActions: _itemActions,
+                        onReveal: _revealLocal,
                       ),
               ),
           ),
