@@ -37,6 +37,7 @@ import 'secure_keyfile.dart';
 import 'session_operations.dart';
 import 'local_availability.dart';
 import 'browser_views.dart';
+import 'browser_file_details.dart';
 import 'file_rename.dart';
 import 'file_move.dart';
 import 'file_copy.dart';
@@ -1251,6 +1252,32 @@ class _FilesPageState extends State<FilesPage> {
   bool _syncLoaded = false;
   Map<String, LocalAvailability> _availability = {};
   int _refreshGeneration = 0;
+  DialogRoute<void>? _detailsRoute;
+
+  void _dismissDetails() {
+    final route = _detailsRoute;
+    _detailsRoute = null;
+    if (route != null && route.isActive) route.navigator?.removeRoute(route);
+  }
+
+  void _showDetails(RemoteFile file) {
+    if (!mounted || _loading || _error != null || widget.session.search.closed ||
+        !_files.any((entry) => identical(entry, file))) {
+      return;
+    }
+    _dismissDetails();
+    final details = BrowserFileDetails.observed(
+      file: file,
+      name: _name(file),
+      availability: _availability[file.id] ?? LocalAvailability.unknown,
+      pinned: _offlinePins.contains(_pinKey(file.id, file.currentVersion ?? '')),
+    );
+    final route = DialogRoute<void>(context: context, builder: (_) => details);
+    _detailsRoute = route;
+    Navigator.of(context).push(route).whenComplete(() {
+      if (identical(_detailsRoute, route)) _detailsRoute = null;
+    });
+  }
 
   /// Opened lazily: the first listing refresh or offline action opens it, and
   /// until then no cache directory is created on a device that never uses one.
@@ -1311,6 +1338,7 @@ class _FilesPageState extends State<FilesPage> {
 
   void _onSyncChanged() {
     if (!mounted) return;
+    _dismissDetails();
     // The controller belongs to the session and loads independently of this
     // page. Reinspect availability once its configured roots have arrived.
     final justLoaded = _sync.loaded && !_syncLoaded;
@@ -1331,12 +1359,22 @@ class _FilesPageState extends State<FilesPage> {
   @override
   void dispose() {
     _sync.removeListener(_onSyncChanged);
+    // Home can be replaced beneath a dialog (for example on sign-out). Wait
+    // until the navigator's current build/disposal lock has been released.
+    final details = _detailsRoute;
+    _detailsRoute = null;
+    if (details != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (details.isActive) details.navigator?.removeRoute(details);
+      });
+    }
     _folderFilter.dispose();
     super.dispose();
   }
 
   void _selectDestination(SessionDestination destination) {
     // Every destination supersedes any still-resolving browser root.
+    _dismissDetails();
     ++_navigationGeneration;
     switch (destination) {
       case SessionDestination.global:
@@ -1410,6 +1448,7 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   Future<void> _openAccountSearch() async {
+    _dismissDetails();
     ++_navigationGeneration;
     final index = widget.session.search;
     final entry = await Navigator.of(context).push<SearchEntry>(MaterialPageRoute(
@@ -1474,6 +1513,7 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   Future<void> _openActivity() async {
+    _dismissDetails();
     ++_navigationGeneration;
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => ActivityPage(
@@ -1494,6 +1534,7 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   Future<void> _openSync({String? openOverviewFor}) async {
+    _dismissDetails();
     ++_navigationGeneration;
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) =>
@@ -1503,6 +1544,7 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   Future<void> _openTrash() async {
+    _dismissDetails();
     ++_navigationGeneration;
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => TrashPage(
@@ -1584,6 +1626,7 @@ class _FilesPageState extends State<FilesPage> {
   Future<void> _refresh() => _fileOperation(_refreshNow);
 
   Future<void> _refreshNow({bool redactErrors = false}) async {
+    _dismissDetails();
     final generation = ++_refreshGeneration;
     final parentIds = _path.map((entry) => entry.id).toList();
     setState(() {
@@ -1651,6 +1694,7 @@ class _FilesPageState extends State<FilesPage> {
 
   void _open(RemoteFile file) {
     if (file.isDir) {
+      _dismissDetails();
       ++_navigationGeneration;
       setState(() => _path.add(file));
       _refresh();
@@ -1664,6 +1708,7 @@ class _FilesPageState extends State<FilesPage> {
   /// open.
   void _up() {
     if (_path.isEmpty) return;
+    _dismissDetails();
     ++_navigationGeneration;
     setState(() => _path.removeLast());
     _refresh();
@@ -2560,6 +2605,7 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   Future<void> _showAccountMenu() async {
+    _dismissDetails();
     ++_navigationGeneration;
     await showModalBottomSheet<void>(
       context: context,
@@ -2773,6 +2819,7 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   Future<void> _showDevices() async {
+    _dismissDetails();
     ++_navigationGeneration;
     try {
       final devices = await _api.devices();
@@ -2975,6 +3022,7 @@ class _FilesPageState extends State<FilesPage> {
                         onOpen: _open,
                         onActions: _itemActions,
                         onReveal: _revealLocal,
+                        onDetails: _showDetails,
                       ),
               ),
           ),

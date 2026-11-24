@@ -160,6 +160,7 @@ class BrowserFilesView extends StatelessWidget {
     required this.onOpen,
     required this.onActions,
     required this.onReveal,
+    required this.onDetails,
   });
   final List<RemoteFile> files;
   final BrowserView view;
@@ -169,6 +170,7 @@ class BrowserFilesView extends StatelessWidget {
   final ValueChanged<RemoteFile> onOpen;
   final ValueChanged<RemoteFile> onActions;
   final ValueChanged<RemoteFile> onReveal;
+  final ValueChanged<RemoteFile> onDetails;
 
   @override
   Widget build(BuildContext context) {
@@ -184,6 +186,7 @@ class BrowserFilesView extends StatelessWidget {
         onOpen: () => onOpen(file),
         onActions: () => onActions(file),
         onReveal: () => onReveal(file),
+        onDetails: () => onDetails(file),
       );
     }
 
@@ -231,13 +234,14 @@ class BrowserFileTile extends StatelessWidget {
     required this.onOpen,
     required this.onActions,
     required this.onReveal,
+    required this.onDetails,
   });
   final RemoteFile file;
   final String name;
   final LocalAvailability local;
   final bool pinned;
   final bool grid;
-  final VoidCallback onOpen, onActions, onReveal;
+  final VoidCallback onOpen, onActions, onReveal, onDetails;
 
   @override
   Widget build(BuildContext context) {
@@ -262,6 +266,12 @@ class BrowserFileTile extends StatelessWidget {
             semanticLabel: 'Kept offline',
           ),
         LocalRevealButton(state: local, onReveal: onReveal),
+        IconButton(
+          tooltip: 'Details for $name',
+          icon: const Icon(Icons.info_outline),
+          style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
+          onPressed: onDetails,
+        ),
         IconButton(
           tooltip: 'More actions for $name',
           icon: const Icon(Icons.more_vert),

@@ -14,7 +14,7 @@ readable-content cap; other pages retain their existing frames.
 
 This is browser chrome only: child routes do not retain the sidebar, and no new
 session/controller/navigation history is created. Favorites/Recent projections,
-embedded child pages, breadcrumbs/history, selection/details/keyboard work
+embedded child pages, breadcrumbs/history, selection/keyboard work
 and the broader #219 redesign remain unfinished. Collapse is view-local, not a
 persisted preference. Widget fixtures are not installed Windows/Linux/Android,
 accessibility or large-folder performance acceptance.
@@ -51,6 +51,30 @@ passing 10k fixtures cover lazy construction and ordinary scrolling, not fast
 arbitrary seeks. Full-list refresh/decryption plus sort/filter CPU and RAM
 remain caller-side work. #219 stays open for its remaining browser, visual and
 mobile stages; no selection, navigation history or details were added here.
+
+## Read-only browser details (#219 bounded slice)
+
+Both production List/Grid surfaces now expose explicit labelled Details controls.
+A scrollable dialog capped at 560 dp reuses existing decrypted listing metadata
+and frozen local/sync/pin display evidence; opening adds no HTTP, content download,
+filesystem/native inspection, cache/journal open or mutation. Exact listed file
+bytes are not authenticated manifest sizes, folder totals are not calculated,
+UTC modification is namespace time (not access/content age), and absent evidence
+never becomes synced. Pins remain separate from equality/durability. Refresh,
+navigation and controller notifications dismiss the observation; callbacks from
+replaced listing objects are refused. The dialog adapts to available width and
+200% text but does not implement a docked wide details pane or selection model.
+
+Automated verification covers production file/folder List/Grid wiring, frozen
+metadata/evidence, long names, 320/600/1024/1440 dp at normal/200% text, Close,
+Escape/system Back/barrier dismissal and refresh/navigation/controller staleness.
+Missing production and missing grid wiring each fail the production regression
+before restoration. The final pinned canonical `bash scripts/dev-check.sh flutter`
+exited 0 with clean analysis, the native release build and **893 tests passed /
+5 skipped**. The focused details/views/actions/navigation/accessibility/focus suite
+passed **51 tests**. Disposal beneath an open dialog and retained disposed callbacks
+are covered as well. No installed screenshots, accessibility, performance or OS acceptance is claimed
+(#222). Parent #219 remains open; no stage is declared complete.
 
 ## Pre-login desktop startup choice (#218)
 

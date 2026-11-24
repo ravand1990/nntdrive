@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nntdrive/api.dart';
 import 'package:nntdrive/browser_views.dart';
+import 'package:nntdrive/browser_file_details.dart';
 import 'package:nntdrive/local_availability.dart';
 import 'package:nntdrive/main.dart';
 import 'package:nntdrive/native.dart';
@@ -33,6 +34,12 @@ class BrowserApi extends ApiClient {
     parents.add(parentId);
     return parentId == null ? List.of(entries) : [];
   }
+}
+
+class BrowserSync extends SyncController {
+  BrowserSync({required super.server, required super.token,
+      required super.handle, required super.api});
+  void evidenceChanged() => notifyListeners();
 }
 
 void main() {
@@ -127,6 +134,7 @@ void main() {
                 onOpen: (f) => opened = f.id,
                 onActions: (_) {},
                 onReveal: (_) {},
+                onDetails: (_) {},
               ),
             ),
           ),
@@ -191,6 +199,7 @@ void main() {
                       onOpen: (f) => calls.add('open:${f.id}'),
                       onActions: (f) => calls.add('actions:${f.id}'),
                       onReveal: (f) => calls.add('reveal:${f.id}'),
+                      onDetails: (f) => calls.add('details:${f.id}'),
                     ),
                   ),
                 ],
@@ -205,9 +214,14 @@ void main() {
           'More actions for A very long filename with multiple words and suffix.txt',
         );
         expect(tester.getSize(more).shortestSide, greaterThanOrEqualTo(48));
+        final details = find.byTooltip(
+          'Details for A very long filename with multiple words and suffix.txt',
+        );
+        expect(tester.getSize(details).shortestSide, greaterThanOrEqualTo(48));
+        await tester.tap(details);
         await tester.tap(more);
         await tester.tap(find.textContaining('A very long filename'));
-        expect(calls, ['actions:opaque', 'open:opaque']);
+        expect(calls, ['details:opaque', 'actions:opaque', 'open:opaque']);
         final reveal = tester.widget<IconButton>(
           find.widgetWithIcon(IconButton, Icons.folder_open_outlined),
         );
@@ -246,6 +260,7 @@ void main() {
               onOpen: (_) {},
               onActions: (_) {},
               onReveal: (f) => calls.add(f.id),
+              onDetails: (_) {},
             ),
           ),
         ),
@@ -302,7 +317,7 @@ void main() {
         email: 'test@example.invalid',
         operations: operations,
       );
-      final sync = SyncController(
+      final sync = BrowserSync(
         server: api.baseUrl,
         token: 'test',
         handle: handle,
@@ -327,6 +342,23 @@ void main() {
       );
       await tester.pumpAndSettle();
       final before = api.parents.length;
+      Future<void> checkDetails() async {
+        for (final name in ['Alpha', 'Zebra']) {
+          await tester.tap(find.byTooltip('Details for $name'));
+          await tester.pumpAndSettle();
+          expect(find.byType(BrowserFileDetails), findsOneWidget);
+          expect(find.text('File details'), findsOneWidget);
+          expect(find.text(name), findsWidgets);
+          expect(find.text(name == 'Alpha' ? '99 bytes'
+              : 'Not calculated for folders (not an aggregate).'), findsOneWidget);
+          expect(api.parents.length, before,
+              reason: 'Opening details must not list or download');
+          await tester.tap(find.text('Close details'));
+          await tester.pumpAndSettle();
+          expect(find.byType(BrowserFileDetails), findsNothing);
+        }
+      }
+      await checkDetails();
       expect(
         tester.getTopLeft(find.text('Alpha')).dy,
         lessThan(tester.getTopLeft(find.text('Zebra')).dy),
@@ -334,6 +366,7 @@ void main() {
       await tester.tap(find.text('Grid'));
       await tester.pumpAndSettle();
       expect(find.byType(GridView), findsOneWidget);
+      await checkDetails();
       await tester.tap(find.byTooltip('Sort files'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Size').last);
@@ -386,8 +419,34 @@ void main() {
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField), '');
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Zebra'));
+      final oldView = tester.widget<BrowserFilesView>(find.byType(BrowserFilesView));
+      final oldFile = oldView.files.firstWhere((f) => f.id == ids[1]);
+      await tester.tap(find.byTooltip('Details for Alpha'));
       await tester.pumpAndSettle();
+      api.entries[1] = file(ids[1], size: 777,
+          sealed: bridge.sealName(handle, ids[1], 'Changed'));
+      final refresh = tester.widget<RefreshIndicator>(
+          find.byType(RefreshIndicator, skipOffstage: false));
+      await refresh.onRefresh();
+      await tester.pumpAndSettle();
+      expect(find.byType(BrowserFileDetails), findsNothing);
+      oldView.onDetails(oldFile);
+      await tester.pumpAndSettle();
+      expect(find.byType(BrowserFileDetails), findsNothing,
+          reason: 'Stale callbacks must not resurrect replaced listing entries');
+      await tester.tap(find.byTooltip('Details for Changed'));
+      await tester.pumpAndSettle();
+      expect(find.text('777 bytes'), findsOneWidget);
+      // The production controller notification must invalidate frozen evidence.
+      sync.evidenceChanged();
+      await tester.pumpAndSettle();
+      expect(find.byType(BrowserFileDetails), findsNothing);
+      final currentView = tester.widget<BrowserFilesView>(find.byType(BrowserFilesView));
+      await tester.tap(find.byTooltip('Details for Changed'));
+      await tester.pumpAndSettle();
+      currentView.onOpen(currentView.files.firstWhere((f) => f.id == ids[0]));
+      await tester.pumpAndSettle();
+      expect(find.byType(BrowserFileDetails), findsNothing);
       expect(api.parents, contains(ids[0]));
       expect(find.byTooltip('Up one folder'), findsOneWidget);
       await tester.tap(find.byTooltip('Up one folder'));
@@ -411,6 +470,16 @@ void main() {
       }
       tester.view.resetPhysicalSize();
       tester.view.resetDevicePixelRatio();
+      final disposedView = tester.widget<BrowserFilesView>(find.byType(BrowserFilesView));
+      disposedView.onDetails(disposedView.files.first);
+      await tester.pumpAndSettle();
+      expect(find.byType(BrowserFileDetails), findsOneWidget);
+      await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+      await tester.pumpAndSettle();
+      expect(find.byType(BrowserFileDetails), findsNothing);
+      disposedView.onDetails(disposedView.files.first);
+      await tester.pumpAndSettle();
+      expect(find.byType(BrowserFileDetails), findsNothing);
       await tester.pumpWidget(const SizedBox());
       sync.dispose();
       bridge.lock(handle);
