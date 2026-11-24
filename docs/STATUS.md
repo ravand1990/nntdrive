@@ -232,13 +232,18 @@ formatted. SDK advisory tag-fetch permission/DNS warnings did not fail the wrapp
 Installed desktop/mobile acceptance remains #207; automated checks do not establish
 installed acceptance or frame-time performance.
 
-This is not completed #84 acceptance: automatic upload/delete/sync invalidation,
-broader account/sync-folder duplicate analysis and cleanup remain open. Larger trees
-remain explicitly incomplete; there is no continuation/persistent accounting index.
-Installed-device/frame-time acceptance and an atomic account-wide backend snapshot
-are not established. #207 retains installed navigation/cache/cleanup acceptance
-and adds sync-root file-length comparisons, denied/missing/linked/overlapping
-roots, partial output, offline refresh and sign-out during measurement.
+The [#84 requirement audit](STORAGE-DASHBOARD-ACCEPTANCE.md) now maps the original
+scope to integrated bounded behavior. Local upload/delete/completed-sync invalidation
+is implemented by #215; installed acceptance remains #207 and broader explicit
+sync-folder duplicate review is retained separately as #216. Larger trees remain
+explicitly incomplete; there is no continuation/persistent accounting index or
+continuous other-device subscription. Installed-device/frame-time acceptance and
+an atomic account-wide backend snapshot are not established. #207 retains
+installed navigation/cache/cleanup acceptance and adds sync-root file-length
+comparisons, denied/missing/linked/overlapping roots, partial output, offline
+refresh and sign-out during measurement. Fresh audit runs passed 54 targeted
+account/native/navigation/duplicate/cleanup/mutation tests and 21 measurement/page
+tests through the pinned wrapper; this is not another full-suite or installed run.
 
 ## Cache limit and device free space (#199 first slice)
 
