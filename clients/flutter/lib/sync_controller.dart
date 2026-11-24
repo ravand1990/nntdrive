@@ -1081,6 +1081,9 @@ class SyncController extends ChangeNotifier {
       }, (event) => _onSyncProgress(folder, event));
       folder.lastReport = report;
       folder.lastSync = DateTime.now().toIso8601String();
+      // Completed reports may include partial acknowledged namespace/content
+      // changes even with per-item errors. Never invalidate on byte progress.
+      api.accountChanged();
       final errors = report['errors'];
       folder.lastError = (errors is List && errors.isNotEmpty)
           ? errors.map((e) => e.toString()).join('\n')
@@ -1337,6 +1340,7 @@ class SyncController extends ChangeNotifier {
         'copy': copy,
         'choice': choice,
       }, (event) => _onSyncProgress(folder, event));
+      api.accountChanged();
       folder.lastError = null;
       lastStatus =
           'Conflict resolved; both versions remain recoverable in synced files.';

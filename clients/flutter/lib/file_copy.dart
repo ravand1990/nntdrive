@@ -4,7 +4,7 @@ import 'native.dart';
 
 Future<Map<String, dynamic>> copyRemoteFile({required ApiClient api,
     required int handle, required RemoteFile file, required String? parentId}) async {
-  return NativeBridge.instance.copyFileAsync(handle, {
+  final result = await NativeBridge.instance.copyFileAsync(handle, {
     'baseUrl': api.baseUrl, 'token': api.token,
     'source': {'id': file.id, 'parent_id': file.parentId,
       'name_enc': file.nameEnc, 'is_dir': file.isDir, 'size': file.size,
@@ -12,6 +12,8 @@ Future<Map<String, dynamic>> copyRemoteFile({required ApiClient api,
       'current_version': file.currentVersion},
     'parent_id': parentId,
   });
+  api.accountChanged();
+  return result;
 }
 
 class CopyFileButton extends StatelessWidget {

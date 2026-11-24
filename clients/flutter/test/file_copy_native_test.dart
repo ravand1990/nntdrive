@@ -64,6 +64,8 @@ void main() {
       await request.response.close();
     });
     final api = ApiClient(baseUrl: 'http://127.0.0.1:${server.port}', token: 'fixture-token');
+    var accountChanges = 0;
+    api.onAccountChanged = () => accountChanges++;
     final dir = await Directory.systemTemp.createTemp('copy-native-');
     final empty = await File('${dir.path}/empty').writeAsBytes([]);
     Future<Map<String, dynamic>> copy({int? using, RemoteFile? file}) => copyRemoteFile(
@@ -73,6 +75,7 @@ void main() {
         fileId: id, revisionId: revision, parentRevision: '', path: empty.path);
       expect(manifest, isNotEmpty);
       final result = await copy();
+      expect(accountChanges, 1);
       expect(writes, hasLength(1));
       final body = writes.single;
       expect(result['id'], body['id']);
@@ -128,6 +131,7 @@ void main() {
       await expectLater(copy(), throwsA(isA<NativeException>().having((e) => e.message,
         'ambiguous outcome', contains('lost response may already have committed'))));
       expect(writes, hasLength(6));
+      expect(accountChanges, 2, reason: 'Rejected and unacknowledged Copy must not refresh');
       final noHttp = reads;
       await expectLater(copy(file: RemoteFile(id, null, source.nameEnc, false, 0, false, 1, null)),
         throwsA(isA<NativeException>()));

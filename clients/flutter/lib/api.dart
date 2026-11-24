@@ -386,6 +386,18 @@ class ApiClient {
 
   final String _baseUrl;
   String? token;
+  /// Session-local invalidation only; never sends names or grouping keys.
+  void Function()? onAccountChanged;
+
+  /// Native publishers use the same acknowledgement boundary as Dart writers.
+  void accountChanged() => onAccountChanged?.call();
+
+  Future<Map<String, dynamic>> _mutate(String method, String path,
+      {Map<String, dynamic>? body}) async {
+    final result = await _send(method, path, body: body);
+    accountChanged();
+    return result;
+  }
 
   String get baseUrl => _baseUrl;
 
@@ -490,7 +502,7 @@ class ApiClient {
     required String nameEnc,
     required bool isDir,
   }) =>
-      _send('POST', '/files', body: {
+      _mutate('POST', '/files', body: {
         'id': id,
         'parent_id': parentId,
         'name_enc': nameEnc,
@@ -507,7 +519,7 @@ class ApiClient {
     required String nodeId,
     required String nameEnc,
   }) =>
-      _send('POST', '/roots', body: {
+      _mutate('POST', '/roots', body: {
         'kind': kind,
         'node_id': nodeId,
         'name_enc': nameEnc,
@@ -522,7 +534,7 @@ class ApiClient {
   }
 
   Future<void> deleteFile(String id) =>
-      _send('PATCH', '/files/$id', body: {'deleted': true});
+      _mutate('PATCH', '/files/$id', body: {'deleted': true});
 
   Future<TrashListing> trash() async {
     final j = await _send('GET', '/trash');
@@ -546,17 +558,17 @@ class ApiClient {
     } else if (parentId != null) {
       body['parent_id'] = parentId;
     }
-    return _send('POST', '/files/$id/restore', body: body);
+    return _mutate('POST', '/files/$id/restore', body: body);
   }
 
   /// Permanently remove one trashed item and everything inside it.
   ///
   /// This drops the account's metadata and versions only; articles already
   /// posted to Usenet cannot be retracted.
-  Future<void> purgeFile(String id) => _send('DELETE', '/trash/$id');
+  Future<void> purgeFile(String id) => _mutate('DELETE', '/trash/$id');
 
   /// Permanently remove every trashed item in the account.
-  Future<void> emptyTrash() => _send('DELETE', '/trash');
+  Future<void> emptyTrash() => _mutate('DELETE', '/trash');
 
   /// What a rewind to [before] would change.
   ///
@@ -585,7 +597,7 @@ class ApiClient {
     required DateTime before,
     required List<RewindItem> items,
   }) async {
-    final j = await _send('POST', '/rewind', body: {
+    final j = await _mutate('POST', '/rewind', body: {
       'before': before.toUtc().toIso8601String(),
       'scope': scopeId,
       'items': items
@@ -596,11 +608,11 @@ class ApiClient {
   }
 
   Future<void> setFavorite(String id, bool favorite) =>
-      _send('PATCH', '/files/$id', body: {'favorite': favorite});
+      _mutate('PATCH', '/files/$id', body: {'favorite': favorite});
 
   Future<void> renameFile(String id, String nameEnc,
           {required String? parentId, required List<RemoteFile> siblings}) =>
-      _send('POST', '/files/$id/rename', body: {
+      _mutate('POST', '/files/$id/rename', body: {
         'name_enc': nameEnc,
         'parent_id': parentId,
         'siblings': siblings.map((f) => {'id': f.id, 'name_enc': f.nameEnc}).toList(),
@@ -608,7 +620,7 @@ class ApiClient {
 
   Future<void> moveFileChecked(RemoteFile source, String? parentId,
           List<RemoteFile> siblings) =>
-      _send('POST', '/files/${source.id}/move-checked', body: {
+      _mutate('POST', '/files/${source.id}/move-checked', body: {
         'parent_id': parentId,
         'source_parent_id': source.parentId,
         'source_name_enc': source.nameEnc,
@@ -616,7 +628,7 @@ class ApiClient {
       });
 
   Future<void> moveFile(String id, String? parentId) =>
-      _send('POST', '/files/$id/move', body: {'parent_id': parentId});
+      _mutate('POST', '/files/$id/move', body: {'parent_id': parentId});
 
   Future<AccountInfo> me() async {
     final j = await _send('GET', '/me');
@@ -694,7 +706,7 @@ class ApiClient {
   Future<RestoreVersionResult> restoreVersion(
       String fileId, String revisionId) async {
     final j =
-        await _send('POST', '/files/$fileId/versions/$revisionId/restore');
+        await _mutate('POST', '/files/$fileId/versions/$revisionId/restore');
     return RestoreVersionResult.fromJson(j);
   }
 

@@ -55,7 +55,7 @@ Future<void> settled(WidgetTester tester) async {
 }
 
 void main() {
-  testWidgets('published upload and deletion metadata automatically replace totals', (tester) async {
+  testWidgets('local mutation refresh automatically replaces totals and retains them offline', (tester) async {
     final f = Fixture();
     addTearDown(f.index.dispose);
     var cacheReads = 0;
@@ -72,18 +72,23 @@ void main() {
     await settled(tester);
     expect(find.text('Total: 12 bytes · 1 files'), findsOneWidget);
     f.size = 43;
-    await tester.runAsync(f.index.rebuild);
+    await tester.runAsync(f.index.refreshAfterMutation);
     await settled(tester);
     expect(find.text('Total: 43 bytes · 1 files'), findsOneWidget);
     expect(f.lists, 2);
     f.empty = true;
-    await tester.runAsync(f.index.rebuild);
+    await tester.runAsync(f.index.refreshAfterMutation);
     await settled(tester);
     expect(find.text('Total: 0 bytes · 0 files'), findsOneWidget);
     expect(f.lists, 3);
+    f.offline = true;
+    await tester.runAsync(f.index.refreshAfterMutation);
+    await settled(tester);
+    expect(find.text('Total: 0 bytes · 0 files'), findsOneWidget);
+    expect(find.textContaining('Previous totals may be stale'), findsOneWidget);
     f.index.remember(const SearchFilter(text: 'private'));
     await settled(tester);
-    expect(f.lists, 3);
+    expect(f.lists, 4);
     expect(cacheReads, 1);
     expect(syncReads, 1);
     await tester.pumpWidget(const SizedBox());

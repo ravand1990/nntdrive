@@ -246,6 +246,34 @@ class AccountSearch extends ChangeNotifier {
   int _epoch = 0;
   int _query = 0;
   Future<void>? _build;
+  Future<void>? _mutationRefresh;
+  bool _mutationPending = false;
+
+  /// Local acknowledged mutations only. Keep unused indexes lazy, coalesce a
+  /// burst into one traversal and mutations during a traversal into a follow-up.
+  /// Own the queue (including an existing manual build) through session drain.
+  Future<void> refreshAfterMutation({SearchStatusInspector? inspectStatuses}) {
+    if (_closed || (!ready && !building)) return Future<void>.value();
+    _mutationPending = true;
+    return _mutationRefresh ??= operations.run(handle, () async {
+      // One event turn combines acknowledgements without a periodic timer.
+      await Future<void>.delayed(Duration.zero);
+      final existing = _build;
+      if (existing != null) {
+        try { await existing; } catch (_) { /* Retain the complete snapshot. */ }
+      }
+      while (!_closed && _mutationPending) {
+        _mutationPending = false;
+        try {
+          await rebuild(inspectStatuses: inspectStatuses);
+        } catch (_) {
+          // No retry loop: a later mutation or explicit refresh can retry.
+        }
+      }
+    }).then<void>((_) {}, onError: (Object _) {}).whenComplete(() {
+      _mutationRefresh = null;
+    });
+  }
 
   void _check(int epoch) {
     if (_closed || epoch != _epoch) throw const SearchUnavailable();
