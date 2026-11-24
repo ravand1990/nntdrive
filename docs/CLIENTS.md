@@ -22,9 +22,9 @@ and do not yet embed this navigation. Resizing/collapse does not create a second
 session or controller; collapse lasts only for this browser view.
 
 The [adaptive client design brief](UI-UX-DESIGN.md) remains the broader contract.
-Favorites/Recent projections, embedded child pages, breadcrumbs/history,
-selection and keyboard palette are not part of this bounded slice; read-only
-details are described below.
+Favorites/Recent projections, embedded child pages, breadcrumbs/history and
+selection are unfinished; the bounded keyboard palette and read-only details
+are described below.
 Installed platform/accessibility/performance acceptance remains unverified.
 
 ### List/grid and local ordering (#219 bounded browser slice)
@@ -84,6 +84,43 @@ objects cannot reopen old metadata. No plaintext persistence, protocol, mutation
 permission or crypto changes were added. Automated layout/dismissal and production
 wiring tests do not establish installed Windows/Linux/Android or screen-reader
 acceptance (#222). #219 and all remaining stage criteria stay open.
+
+### Browser commands and keyboard shortcuts (#219 bounded slice)
+
+Use **Commands** above the listing, or **Ctrl/Cmd+K**, for a searchable, session-local
+browser command palette. Type a label/binding, use Up/Down to change the highlighted
+row and Enter to invoke it, or Tab to a row and activate it. Escape, Back, Close or
+the outside barrier dismisses it. **Shortcut help** (also **Ctrl/Cmd+/**) lists the
+same inventory and unfinished commands. Rows retain at least 48 dp targets; the
+width-capped dialog scrolls, including its header/search on short windows.
+
+| Binding | Available browser command |
+|---|---|
+| Ctrl/Cmd+K | Command palette |
+| Ctrl/Cmd+/ | Shortcut help |
+| Ctrl/Cmd+F | Account Search (not the folder filter) |
+| Ctrl/Cmd+Shift+F | Focus the explicitly labelled current-folder filter |
+| F5 | Existing folder Refresh |
+| Alt+Up | Existing authenticated-path Up; disabled at browser root |
+
+The palette also delegates Global/Devices, Sync, Activity, Trash and
+Settings/account to the current production adapters. Devices retains the existing
+account-root listing semantics. No new writer, backend endpoint, key handle,
+selection model or plaintext persistence is introduced; Search/Refresh/navigation
+keep their existing session ownership and guards. Direct browser shortcuts reject
+text editing (including IME), modal/covered routes, loading/error/closed/disposed
+pages and repeat admission. Refresh/navigation/controller changes or session close
+invalidate an open palette; a result from an obsolete view cannot dispatch.
+Successful selection and Escape restore browser focus (filter selection focuses
+its field). A field's own select-all/delete/copy/paste behavior is not replaced.
+
+Item open/rename/delete/move/copy/select-all/clear-selection/context-menu keys remain
+**unfinished without selection**, not disabled promises of implemented actions.
+Breadcrumb/history Alt+Left/Right is also unfinished; Alt+Up is parent navigation,
+not visit history. No destructive browser shortcut is registered. Ctrl and Cmd
+variants are exercised in widget tests, not an installed macOS delivery claim.
+Installed Windows/Linux/Android keyboard, screen-reader and performance acceptance
+remain #222; the wider Stage 1/2/3 redesign remains open on #219.
 
 ## Current state
 
