@@ -1,0 +1,9 @@
+# Build the repository-owned base with scripts/dev-check.sh build first.
+FROM nntdrive-toolchain-rust:local
+USER root
+ENV RUSTUP_TOOLCHAIN=nightly-2026-11-20 CARGO_HOME=/opt/rust/cargo
+RUN rustup toolchain install nightly-2026-11-20 --profile minimal --component rustfmt \
+    && cargo install cargo-fuzz --version 0.13.2 --locked --root /opt/fuzz-cargo \
+    && chmod -R a+rX /opt/fuzz-cargo /opt/rust
+ENV PATH=/opt/fuzz-cargo/bin:$PATH
+WORKDIR /src

@@ -1,0 +1,36 @@
+[package]
+name = "nntdrive-parser-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+nntdrive-nntp = { path = "../crates/nntp" }
+
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "yenc"
+path = "fuzz_targets/yenc.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "nzb"
+path = "fuzz_targets/nzb.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "article"
+path = "fuzz_targets/article.rs"
+test = false
+doc = false
+bench = false
