@@ -46,6 +46,7 @@ import 'cache_settings.dart';
 import 'preview.dart';
 import 'preview_page.dart';
 import 'login_autostart.dart';
+import 'login_autostart_settings.dart';
 import 'move_dialog.dart';
 import 'folder_picker.dart';
 import 'discard_on_back.dart';
@@ -151,7 +152,7 @@ class Session {
 
 class NntDriveApp extends StatefulWidget {
   const NntDriveApp({super.key, required this.prefs, this.instance, this.apiFactory,
-    this.updateCheck, this.androidUpdateCheck, this.keyfileVault});
+    this.updateCheck, this.androidUpdateCheck, this.keyfileVault, this.loginAutostart});
   final SharedPreferences prefs;
   final DesktopInstance? instance;
   /// Transport seam for exercising unlock/onboarding/session lifecycle together.
@@ -161,6 +162,7 @@ class NntDriveApp extends StatefulWidget {
   final Future<AndroidUpdateInfo?> Function()? androidUpdateCheck;
   /// Credential-store seam; defaults to this platform's OS keyring.
   final KeyfileVault? keyfileVault;
+  final LoginAutostart? loginAutostart;
 
   @override
   State<NntDriveApp> createState() => _NntDriveAppState();
@@ -187,7 +189,15 @@ class _NntDriveAppState extends State<NntDriveApp> {
   ActivityLog? _activity;
   DesktopLifecycle? _desktop;
   String? _desktopError;
-  String? _loginAutostartError;
+  late final LoginAutostartSettings _autostart = LoginAutostartSettings(
+    prefs: widget.prefs,
+    registration: widget.loginAutostart ?? platformLoginAutostart(),
+    executable: Platform.resolvedExecutable,
+  );
+
+  void _autostartChanged() {
+    if (mounted) setState(() {});
+  }
   String? _trayState;
   String? _shutdownError;
   bool _ending = false;
@@ -229,6 +239,8 @@ class _NntDriveAppState extends State<NntDriveApp> {
 
   @override
   void dispose() {
+    _autostart.removeListener(_autostartChanged);
+    _autostart.dispose();
     unawaited(_keyfileVault.dispose());
     _updates.dispose();
     _androidUpdates.dispose();
@@ -248,9 +260,11 @@ class _NntDriveAppState extends State<NntDriveApp> {
     _keyfile = widget.prefs.getString('keyfile');
     _accountId = widget.prefs.getString('accountId');
     _email = widget.prefs.getString('email');
+    _autostart.addListener(_autostartChanged);
     unawaited(_loadStoredKeyfile());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _automaticUpdates?.start();
+      if (mounted) unawaited(_autostart.initialize());
       if (widget.instance != null) unawaited(_startDesktop());
     });
   }
@@ -293,44 +307,11 @@ class _NntDriveAppState extends State<NntDriveApp> {
       },
     );
     await _desktop!.start();
-    await _repairLoginAutostart();
     _updateTray();
     if (mounted) setState(() {});
   }
 
-  /// Re-applies a remembered login item so a moved or updated binary is
-  /// registered again. Failures stay visible in the account menu instead of
-  /// blocking startup.
-  Future<void> _repairLoginAutostart() async {
-    if (widget.prefs.getBool(loginAutostartPreferenceKey) != true) return;
-    try {
-      await platformLoginAutostart()
-          .apply(enabled: true, executable: Platform.resolvedExecutable);
-      _loginAutostartError = null;
-    } catch (e) {
-      _loginAutostartError = e.toString();
-    }
-  }
-
-  /// Applies and remembers the user's login-autostart choice. Returns the
-  /// failure text so the page can report it, or null when it was applied.
-  Future<String?> _setLoginAutostart(bool enabled) async {
-    final autostart = platformLoginAutostart();
-    if (!autostart.supported) {
-      return 'Starting with the system is not supported on this platform.';
-    }
-    String? failure;
-    try {
-      await autostart.apply(
-          enabled: enabled, executable: Platform.resolvedExecutable);
-      await widget.prefs.setBool(loginAutostartPreferenceKey, enabled);
-    } catch (e) {
-      failure = e.toString();
-    }
-    _loginAutostartError = failure;
-    if (mounted) setState(() {});
-    return failure;
-  }
+  Future<String?> _setLoginAutostart(bool enabled) => _autostart.setEnabled(enabled);
 
   void _updateTray() {
     if (_desktop?.ready != true) return;
@@ -605,9 +586,8 @@ class _NntDriveAppState extends State<NntDriveApp> {
         onSignOut: _signOut,
         onRenameDevice: _renameDevice,
         onRotateAccountKey: _rotateAccountKey,
-        loginAutostartEnabled:
-            widget.prefs.getBool(loginAutostartPreferenceKey) ?? false,
-        loginAutostartError: _loginAutostartError,
+        loginAutostartEnabled: _autostart.enabled,
+        loginAutostartError: _autostart.error,
         onSetLoginAutostart: _setLoginAutostart,
       );
     } else if (_token != null && _keyfile != null && _accountId != null && _email != null) {
@@ -626,9 +606,11 @@ class _NntDriveAppState extends State<NntDriveApp> {
           password: password,
         ),
         onSignOut: _signOut,
+        startupControl: LoginAutostartControl(settings: _autostart),
       );
     } else {
-      home = LoginPage(initialServer: _server, onAuthenticated: _completeAuth);
+      home = LoginPage(initialServer: _server, onAuthenticated: _completeAuth,
+        startupControl: LoginAutostartControl(settings: _autostart));
     }
     return MaterialApp(
       navigatorKey: _navigatorKey,
@@ -673,7 +655,9 @@ class _NntDriveAppState extends State<NntDriveApp> {
 }
 
 class LoginPage extends StatefulWidget {
-  const LoginPage({super.key, required this.initialServer, required this.onAuthenticated});
+  const LoginPage({super.key, required this.initialServer, required this.onAuthenticated,
+    this.startupControl});
+  final Widget? startupControl;
   final String initialServer;
   final Future<void> Function({
     required String server,
@@ -1069,6 +1053,7 @@ class _LoginPageState extends State<LoginPage> {
                   Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
                 ],
                 const SizedBox(height: 22),
+                if (widget.startupControl != null) widget.startupControl!,
                 Text(
                   'Your password never leaves this device. The server receives only an Argon2id verifier and ciphertext.',
                   style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
@@ -1092,7 +1077,9 @@ class UnlockPage extends StatefulWidget {
     required this.token,
     required this.onUnlocked,
     required this.onSignOut,
+    this.startupControl,
   });
+  final Widget? startupControl;
   final String server;
   final String email;
   final String keyfileJson;
@@ -1180,6 +1167,7 @@ class _UnlockPageState extends State<UnlockPage> {
                     onPressed: widget.onSignOut,
                     child: const Text('Use another account / server'),
                   ),
+                  if (widget.startupControl != null) widget.startupControl!,
                 ],
               ),
             ),
@@ -2634,7 +2622,7 @@ class _FilesPageState extends State<FilesPage> {
                 title: const Text('Start when I sign in'),
                 subtitle: Text(widget.loginAutostartError ??
                     (widget.loginAutostartEnabled
-                        ? 'On — sync resumes after you sign in'
+                        ? 'On — starts locked; your password is still required'
                         : 'Off — you open NNTDrive yourself')),
                 onTap: () async {
                   final enable = !widget.loginAutostartEnabled;

@@ -20,6 +20,9 @@ abstract class LoginAutostart {
   /// Whether this platform can register a login item at all.
   bool get supported;
 
+  /// Reads the OS login item without requiring account credentials.
+  Future<bool> isEnabled();
+
   /// Adds or removes the login item for [executable].
   ///
   /// Throws [LoginAutostartException] when the platform refuses or the value
@@ -90,6 +93,16 @@ class LinuxLoginAutostart implements LoginAutostart {
   File get entryFile => File(p.join(directory.path, fileName));
 
   @override
+  Future<bool> isEnabled() async {
+    final file = entryFile;
+    if (!await file.exists()) return false;
+    final entry = await file.readAsLines();
+    return entry.any((line) => line.startsWith('Exec=')) &&
+        !entry.contains('Hidden=true') &&
+        !entry.contains('X-GNOME-Autostart-enabled=false');
+  }
+
+  @override
   Future<void> apply({
     required bool enabled,
     required String executable,
@@ -131,6 +144,26 @@ class WindowsLoginAutostart implements LoginAutostart {
   bool get supported => true;
 
   @override
+  Future<bool> isEnabled() async {
+    // reg.exe uses exit 1 for both missing values and access failures. Read via
+    // the framework API instead, with explicit absence and failure outcomes.
+    final result = await _run('powershell.exe', [
+      '-NoProfile', '-NonInteractive', '-Command',
+      r"$ErrorActionPreference='Stop'; try { "
+      r"$key=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Software\Microsoft\Windows\CurrentVersion\Run'); "
+      r"try { $value=if($null -eq $key){$null}else{$key.GetValue('NNTDrive')}; "
+      r"if($null -eq $value -or [string]::IsNullOrWhiteSpace([string]$value)){'off'}else{'on'} "
+      r"} finally { if($null -ne $key){$key.Dispose()} } "
+      r"} catch { exit 2 }",
+    ]);
+    final state = result.stdout.toString().trim();
+    if (result.exitCode != 0 || !{'on', 'off'}.contains(state)) {
+      throw const LoginAutostartException('Could not read the login item.');
+    }
+    return state == 'on';
+  }
+
+  @override
   Future<void> apply({
     required bool enabled,
     required String executable,
@@ -156,6 +189,9 @@ class UnsupportedLoginAutostart implements LoginAutostart {
 
   @override
   bool get supported => false;
+
+  @override
+  Future<bool> isEnabled() async => false;
 
   @override
   Future<void> apply({

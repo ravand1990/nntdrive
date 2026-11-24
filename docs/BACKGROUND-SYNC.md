@@ -6,8 +6,10 @@ This is a **partial background-service delivery**. Windows/Linux now have a
 same-process close-to-tray lifecycle: hiding retains the unlocked session and its
 single sync controller/timer. Tray actions provide Open, generic sync state,
 Pause/Resume and Quit. Closing only hides when a restore path is available;
-otherwise it drains and quits. This does **not** implement autostart, automatic
-unlock, an independent service, or mobile scheduling.
+otherwise it drains and quits. The tray lifecycle does **not** implement automatic
+unlock, an independent service, or mobile scheduling. Separately, Windows/Linux
+login startup is an explicit opt-in on login/unlock and in the account menu; it
+opens the app locked and still requires the password (installed acceptance #171).
 
 The unlock screen explains that sync is paused while the vault is locked.
 Native regressions reject missing/revoked process-local handles before journal
