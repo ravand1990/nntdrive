@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 
 import 'account_search.dart';
+import 'cache_duplicates.dart';
 import 'storage_usage.dart';
 import 'download_cache.dart';
 import 'sync_disk_usage.dart';
 
 class StorageUsagePage extends StatefulWidget {
   const StorageUsagePage({super.key, required this.index, this.readCacheUsage,
-    this.clearUnpinnedCache, this.readSyncUsage,
+    this.clearUnpinnedCache, this.readSyncUsage, this.reviewCacheDuplicates,
     this.aggregate = runStorageUsage});
   /// Production remains the top-level worker; injection permits lifecycle gates.
   final Future<StorageUsage> Function(Map<String, SearchEntry>) aggregate;
@@ -21,6 +22,8 @@ class StorageUsagePage extends StatefulWidget {
   /// Uses the opened cache's serial API; the owner rejects late session
   /// admission and drains admitted cleanup.
   final Future<CacheCleanup> Function()? clearUnpinnedCache;
+  /// Explicit only; owner admits/drains the already opened cache worker.
+  final Future<CacheDuplicateReview> Function()? reviewCacheDuplicates;
 
   @override
   State<StorageUsagePage> createState() => _StorageUsagePageState();
@@ -33,6 +36,24 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
   MeasuredCacheUsage? _cacheUsage;
   bool _cacheFailed = false;
   bool _clearing = false;
+  bool _reviewing = false;
+  bool _reviewFailed = false;
+  CacheDuplicateReview? _duplicates;
+
+  Future<void> _reviewDuplicates() async {
+    final reader = widget.reviewCacheDuplicates;
+    if (!mounted || _busy || _clearing || _reviewing || widget.index.closed || reader == null) return;
+    setState(() { _reviewing = true; _reviewFailed = false; _duplicates = null; });
+    try {
+      final result = await reader();
+      if (!mounted || widget.index.closed) return;
+      setState(() => _duplicates = result);
+    } catch (_) {
+      if (mounted && !widget.index.closed) setState(() => _reviewFailed = true);
+    } finally {
+      if (mounted) setState(() => _reviewing = false);
+    }
+  }
   String? _cleanupReport;
   bool _busy = false;
   bool _failed = false;
@@ -90,6 +111,8 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
         _syncUsage = null;
         _revision = null;
         _cleanupReport = null;
+        _duplicates = null;
+        _reviewFailed = false;
       }
     });
     final revision = widget.index.snapshotRevision;
@@ -136,7 +159,7 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
   }
 
   Future<void> _refresh() async {
-    if (_busy || _clearing || widget.index.closed) return;
+    if (_busy || _clearing || _reviewing || widget.index.closed) return;
     setState(() => _busy = true);
     try {
       // Local accounting must still finish when account listing is offline.
@@ -178,7 +201,7 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
   }
 
   Future<void> _clearUnpinned() async {
-    if (_busy || _clearing || widget.index.closed ||
+    if (_busy || _clearing || _reviewing || widget.index.closed ||
         widget.clearUnpinnedCache == null) {
       return;
     }
@@ -206,6 +229,8 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
       setState(() {
         _cacheFailed = true;
         _cleanupReport = null;
+        _duplicates = null;
+        _reviewFailed = false;
       });
       try {
         final result = await widget.clearUnpinnedCache!();
@@ -252,6 +277,7 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
     widget.index.removeListener(_changed);
     _usage = null;
     _cacheUsage = null;
+    _duplicates = null;
     super.dispose();
   }
 
@@ -269,7 +295,7 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
         actions: [
           IconButton(
             tooltip: 'Refresh storage usage',
-            onPressed: _busy || _clearing || widget.index.closed ? null : _refresh,
+            onPressed: _busy || _clearing || _reviewing || widget.index.closed ? null : _refresh,
             icon: const Icon(Icons.refresh),
           ),
         ],
@@ -290,7 +316,7 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
           if (_busy) const Text('Refreshing device cache…'),
           if (widget.clearUnpinnedCache != null)
             OutlinedButton(
-              onPressed: _busy || _clearing || widget.index.closed ||
+              onPressed: _busy || _clearing || _reviewing || widget.index.closed ||
                   cache == null || _cacheFailed ? null : _clearUnpinned,
               child: Text(_clearing ? 'Cache cleanup pending…' : 'Clear unpinned cache'),
             ),
@@ -394,7 +420,7 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
             'within a complete snapshot, but concurrent changes during traversal '
             'can produce a mixed-time view. History, trash, quota, physical Usenet '
             'usage, local sync folders, cache and pins are not included. '
-            'No duplicate detection or account/sync-folder cleanup actions.',
+            'No account or sync-folder duplicate detection or cleanup actions.',
           ),
           const SizedBox(height: 16),
           const Text(
@@ -428,6 +454,45 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
             'local path swaps, and not continuously updated. Refresh to recheck. '
             'No sync-folder cleanup or duplicate detection.',
           ),
+          const SizedBox(height: 16),
+          const Text('Indexed downloaded revisions · exact duplicate review',
+            style: TextStyle(fontWeight: FontWeight.bold)),
+          const Text('Explicit read-only local review, not a complete account or '
+            'sync-folder scan. SHA-256 selects candidates locally; byte comparison '
+            'confirms displayed groups, including empty files. No names, hashes or '
+            'content are uploaded or persisted by review. No deletion action, '
+            'reclaimed-space estimate or safe-to-delete advice.'),
+          if (widget.reviewCacheDuplicates != null)
+            FilledButton.tonal(
+              onPressed: _busy || _clearing || _reviewing || widget.index.closed
+                ? null : _reviewDuplicates,
+              child: Text(_reviewing ? 'Reviewing cached copies…' : 'Review exact cache duplicates'),
+            )
+          else const Text('Cache review unavailable.'),
+          if (_reviewFailed) const Text('Cache review failed. Retry explicitly; no files were changed.'),
+          if (_duplicates != null) ...[
+            Text(_duplicates!.partial
+              ? 'Partial review: coverage or displayed results are incomplete.'
+              : 'Review completed within the indexed-copy scope.'),
+            Text('${_duplicates!.examined} indexed revisions examined · '
+              '${_duplicates!.excluded} unsafe, missing or changed copies excluded · '
+              '${_duplicates!.bytesRead} content bytes read'),
+            if (_duplicates!.groups.isEmpty)
+              const Text('No exact groups confirmed in this observation; not proof that no duplicates exist.'),
+            for (final item in _duplicates!.groups.indexed) ...[
+              Text('Exact group ${item.$1 + 1} · ${item.$2.first.sizeBytes} bytes per copy'),
+              for (final entry in item.$2)
+                Text('File ${entry.fileId} · revision ${entry.revisionId}'
+                  '${entry.pinned ? ' · pinned' : ''}'),
+            ],
+          ],
+          const Text('Bounds: 1000 indexed revisions, 256 MiB total content reads '
+            '(including comparison), 2 seconds between operations, 20 groups and '
+            '100 displayed copies. OS calls can take longer. Opaque IDs identify '
+            'cached revisions, not authenticated display names. Results are '
+            'mixed-time observations, may already be stale and are not atomic '
+            'against hostile filesystem swaps. Rerun explicitly after changes; '
+            'ordinary refresh does not scan duplicate content.'),
         ],
       ),
     );

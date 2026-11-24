@@ -29,6 +29,8 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
+import 'cache_duplicates.dart';
+
 /// Cap for the whole cache. Chosen to be useful and still small enough that a
 /// desktop or phone does not lose meaningful space to downloaded copies.
 const int downloadCacheDefaultLimitBytes = 2 * 1024 * 1024 * 1024;
@@ -300,6 +302,20 @@ class DownloadCache {
       pinnedCopies: pinnedCopies,
       excludedCopies: excluded,
     );
+  });
+
+  /// Explicit read-only content review, held in the existing cache queue until
+  /// its worker finishes. No reopen, reconciliation, pin/timestamp/index writes.
+  Future<CacheDuplicateReview> reviewDuplicates({
+    DuplicateLimits limits = const DuplicateLimits(),
+    CacheDuplicateRunner runner = runCacheDuplicateReview,
+  }) => _serial(() async {
+    _requireOpen();
+    if (_corruptIndex || _entries.length > downloadCacheMaxEntries) {
+      throw StateError('Cache review unavailable');
+    }
+    final frozen = List<CachedDownload>.unmodifiable(_entries.values);
+    return runner(root.path, frozen, limits);
   });
 
   static String _key(String fileId, String revisionId) =>

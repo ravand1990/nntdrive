@@ -15,6 +15,8 @@ import 'package:uuid/uuid.dart';
 
 import 'account_roots.dart';
 import 'api.dart';
+import 'cache_duplicates.dart';
+import 'download_cache.dart';
 import 'local_availability.dart';
 import 'sync_disk_usage.dart';
 import 'native.dart';
@@ -1181,6 +1183,19 @@ class SyncController extends ChangeNotifier {
       'excluded': folder.excluded,
     };
     return consume == null ? inspectRunner(handle, request) : consume(request);
+  }
+
+  /// Explicit cache content review; controller drain owns the serial worker.
+  Future<CacheDuplicateReview> reviewCacheDuplicates(DownloadCache cache, {
+    CacheDuplicateRunner runner = runCacheDuplicateReview,
+  }) {
+    if (_stopped) return Future.error(StateError('Session is closing'));
+    return _operations.run(0, () async {
+      if (_stopped) throw StateError('Session is closing');
+      final result = await cache.reviewDuplicates(runner: runner);
+      if (_stopped) throw StateError('Session is closing');
+      return result;
+    });
   }
 
   Future<SyncDiskUsage>? _diskUsageFuture;

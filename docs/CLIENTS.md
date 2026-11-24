@@ -345,8 +345,9 @@ is drained before key revocation, and disposed views do not navigate. The shared
 search route still enters directory results and offers file actions only after
 fresh browser listing; the dashboard route only opens the parent. Automated
 widget/native HTTP coverage is not installed-platform acceptance (#207). Remaining
-#84 work includes duplicates, account/sync-folder cleanup and automatic mutation
-freshness; bounded sync-folder file-length observations are described below.
+#84 work includes broader account/sync-folder duplicate review and cleanup, and
+automatic mutation freshness; bounded sync-folder file-length observations are
+described below.
 
 ### Device cache measurement
 
@@ -460,9 +461,50 @@ links, denied/missing and overlapping roots, partial budget output, offline
 refresh and sign-out while measurement is pending. No installed acceptance is
 claimed by Linux filesystem and widget fixtures.
 
-Still open on #84: duplicate/hash review, account/sync-folder cleanup and automatic
-freshness. Trees exceeding these bounds remain incomplete; no continuation scan
-or persistent accounting index is implemented.
+### Explicit exact downloaded-cache review
+
+**Review exact cache duplicates** is an explicit read-only action at the end of
+Storage usage. Entry, ordinary refresh and search-index notifications do not
+read duplicate content. It uses only the already opened cache's in-memory index
+and existing serial queue; it never calls `open()`/reconciliation, walks cache
+or sync directories, changes pins/LRU timestamps, writes an index, or cleans up
+scratch/orphan copies. Cache mutations wait until the admitted worker finishes.
+Controller plus session admission/drain own the complete await; closed sessions
+and disposed views discard late results. Session-memory opaque file/revision IDs
+label copies (and the frozen pin flag), not guessed authenticated filenames.
+
+A separate top-level isolate checks canonical root/ancestors/components without
+following links, accepts only regular indexed copies of the recorded size, hashes
+contents with local SHA-256, then **byte-compares** hash/size candidates. Equal
+hashes alone are not proof. Pre/post size/type/modification/change metadata checks
+and final result revalidation reject observed changes. Empty files can form exact
+groups. Missing, linked, nonregular, unreadable or changed copies are excluded,
+without modifying their index rows. No new HTTP, telemetry, hash/content/name
+persistence or logging is introduced; encrypted formats remain unchanged.
+
+Production bounds are **1000 indexed revisions, 256 MiB of all content reads
+(including both sides of byte comparison), 2 seconds cooperatively checked between
+operations, 20 groups and 100 displayed copies**. Read buffers are at most 64 KiB;
+input copying is bounded by the existing 5000-row cache index. Any scan/read/time
+or display bound, or rejected copy, produces explicitly partial coverage. No
+confirmed groups is not proof that no duplicates exist. OS calls may stall beyond
+the clock bound; pre/post checks are not atomic protection against hostile local
+path swaps or edits that evade filesystem metadata resolution. Results are
+mixed-time, may already be stale, and require explicit rerun after changes.
+
+This is **indexed downloaded revisions only**, not a complete account, revision
+history or sync-folder scan, authenticated manifest/revision integrity, physical
+storage accounting or safe-to-delete advice. There is no duplicate deletion action,
+automatic removal, pin change, or reclaimed/free-space estimate. Existing explicit
+unpinned-cache cleanup remains separate and does not consume duplicate groups.
+Installed desktop/mobile review acceptance remains with #207: compare known exact,
+different/empty and changed copies; verify partial/error output, pin/index/scratch
+preservation, explicit-only admission, and close/disposal while review is pending.
+Automated Linux filesystem and widget tests do not establish installed acceptance.
+
+Still open on #84: broader account/sync-folder duplicate review and cleanup,
+automatic mutation freshness, and continuation/persistent accounting for larger
+trees. Bounds continue to produce incomplete observations, not complete inventories.
 
 ## What the Rust bridge exports
 
