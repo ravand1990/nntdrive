@@ -43,11 +43,24 @@ class SessionNavigation extends StatefulWidget {
 
 class _SessionNavigationState extends State<SessionNavigation> {
   bool _collapsed = false;
+  final _compactScroll = ScrollController();
 
-  Future<void> _menu() async {
+  @override
+  void dispose() {
+    _compactScroll.dispose();
+    super.dispose();
+  }
+
+  Future<void> _menu({
+    List<SessionDestination> destinations = SessionDestination.values,
+  }) async {
     final destination = await showModalBottomSheet<SessionDestination>(
       context: context,
       showDragHandle: true,
+      isScrollControlled: true,
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * 0.9,
+      ),
       builder: (context) => SafeArea(
         child: ListView(
           shrinkWrap: true,
@@ -55,23 +68,129 @@ class _SessionNavigationState extends State<SessionNavigation> {
             bottom: MediaQuery.viewInsetsOf(context).bottom,
           ),
           children: [
-            for (final destination in SessionDestination.values)
-              ListTile(
-                key: ValueKey('menu-${destination.name}'),
-                minVerticalPadding: 12,
-                leading: Icon(destination.icon),
-                title: Text(destination.label),
-                subtitle: destination.description == destination.label
-                    ? null
-                    : Text(destination.description),
-                selected: widget.selected == destination,
-                onTap: () => Navigator.pop(context, destination),
+            for (final destination in destinations)
+              Tooltip(
+                message: destination.description,
+                child: ListTile(
+                  key: ValueKey('menu-${destination.name}'),
+                  minTileHeight: 48,
+                  minVerticalPadding: 12,
+                  leading: Icon(destination.icon),
+                  title: Text(destination.label),
+                  // Keep enlarged labels reachable above a short open keyboard;
+                  // the full description remains discoverable via the tooltip.
+                  subtitle:
+                      destination.description == destination.label ||
+                          MediaQuery.textScalerOf(context).scale(14) / 14 > 1.3
+                      ? null
+                      : Text(destination.description),
+                  selected: widget.selected == destination,
+                  onTap: () => Navigator.pop(context, destination),
+                ),
               ),
           ],
         ),
       ),
     );
     if (mounted && destination != null) widget.onSelected(destination);
+  }
+
+  static const _files = [SessionDestination.global, SessionDestination.devices];
+  static const _more = [
+    SessionDestination.trash,
+    SessionDestination.settings,
+    SessionDestination.manageDevices,
+  ];
+
+  Widget _compactNavigation(double width) {
+    final scale = MediaQuery.textScalerOf(context).scale(14) / 14;
+    // Keep full labels and 48dp targets even on very narrow/enlarged layouts.
+    // Horizontal scrolling avoids stealing multiple rows from the browser.
+    final itemWidth = (width / 5).clamp(72.0 * scale, double.infinity);
+    final colors = Theme.of(context).colorScheme;
+    Widget item(
+      String name,
+      String label,
+      IconData icon,
+      bool selected,
+      VoidCallback onPressed,
+    ) => SizedBox(
+      width: itemWidth,
+      child: Semantics(
+        key: ValueKey('navigation-$name'),
+        selected: selected,
+        child: Tooltip(
+          message: label,
+          child: TextButton(
+            style: TextButton.styleFrom(
+              minimumSize: const Size(48, 48),
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+              backgroundColor: selected ? colors.secondaryContainer : null,
+              foregroundColor: selected
+                  ? colors.onSecondaryContainer
+                  : colors.onSurface,
+            ),
+            onPressed: onPressed,
+            child: scale > 1.3
+                ? Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(icon),
+                      const SizedBox(width: 4),
+                      Flexible(child: Text(label, textAlign: TextAlign.center)),
+                    ],
+                  )
+                : Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(icon),
+                      Text(label, textAlign: TextAlign.center),
+                    ],
+                  ),
+          ),
+        ),
+      ),
+    );
+    return Scrollbar(
+      key: const ValueKey('navigation-compact'),
+      controller: _compactScroll,
+      thumbVisibility: true,
+      child: SingleChildScrollView(
+        controller: _compactScroll,
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.only(bottom: 6),
+        child: Row(
+          children: [
+            item(
+              'files',
+              'Files',
+              Icons.folder_outlined,
+              _files.contains(widget.selected),
+              () => _menu(destinations: _files),
+            ),
+            for (final destination in [
+              SessionDestination.search,
+              SessionDestination.sync,
+              SessionDestination.activity,
+            ])
+              item(
+                destination.name,
+                destination.label,
+                destination.icon,
+                widget.selected == destination,
+                () => widget.onSelected(destination),
+              ),
+            item(
+              'more',
+              'More',
+              Icons.more_horiz,
+              _more.contains(widget.selected),
+              () => _menu(destinations: _more),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -187,19 +306,7 @@ class _SessionNavigationState extends State<SessionNavigation> {
                       ],
                     ),
                   ),
-                  if (compact)
-                    SizedBox(
-                      width: double.infinity,
-                      child: TextButton.icon(
-                        key: const ValueKey('navigation-compact'),
-                        style: TextButton.styleFrom(
-                          minimumSize: const Size(48, 48),
-                        ),
-                        onPressed: _menu,
-                        icon: const Icon(Icons.menu),
-                        label: const Text('Browse & navigate'),
-                      ),
-                    ),
+                  if (compact) _compactNavigation(constraints.maxWidth),
                 ],
               ),
             ),

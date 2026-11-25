@@ -4,8 +4,12 @@
 
 The browser now has callback-based adaptive navigation: a collapsible labelled
 sidebar at 1200 dp, a rail at 600–1199 dp (leaving at least 528 dp content), and
-**Browse & navigate** below 600 dp or above 130% text. The latter opens a
-scrollable labelled menu rather than squeezing nine tabs into a phone toolbar.
+**Files / Search / Sync / Activity / More** below 600 dp or above 130% text.
+Files opens a Global/Devices chooser without a default navigation; More retains
+Trash/Settings/Manage devices. The single-row strip scrolls horizontally when
+needed, retaining full labels, selected semantics, keyboard focus and 48 dp targets.
+Keyboard padding is consumed once and the child stays in its original element
+slot across every breakpoint.
 Global freshly resolves its authenticated opaque root. Devices returns to the
 existing account-root listing, which includes Global; Manage devices is a
 separate session/revocation dialog. Sync, Activity, Search, Trash and Settings
@@ -21,6 +25,23 @@ accessibility or large-folder performance acceptance.
 
 [The adaptive client design brief](UI-UX-DESIGN.md) remains the broader design
 contract; this bounded prerequisite does not complete any runtime stage.
+
+The compact-bottom-navigation increment passed **42 focused tests** across
+`session_navigation_test.dart`, `browser_navigation_test.dart` and
+`browser_views_test.dart`. These cover direct callbacks, Files chooser admission,
+all real More destinations, selected semantics, keyboard traversal, 240 dp / 200%
+text with a 300 dp keyboard inset, existing browser 200% layouts, and real
+native-sealed-name FilesPage route/session/controller identity. New component and
+production regressions fail against the original strip; disconnecting the
+production `onSelected` adapter independently fails the FilesPage regression.
+All temporary sabotage was restored. The final canonical
+`bash scripts/dev-check.sh flutter` exited 0: native release build, clean analysis,
+**917 tests passed / 5 skipped**. An earlier full run exposed a 4 dp enlarged
+browser overflow; placing compact enlarged icons beside labels fixed it. A later
+run hit an unrelated storage-usage snapshot timing assertion; its isolated retry
+and the subsequent complete canonical run passed. Pinned SDK tag-fetch advisory
+errors did not prevent that final check. Installed screen-reader, screenshots,
+keyboard/gesture and performance acceptance remain #222, not these widget tests.
 
 ## Browser list/grid and local ordering (#219 bounded slice)
 
