@@ -1,5 +1,33 @@
 # Project status
 
+## Appearance and browser density (#219 bounded Stage 2 slice)
+
+Account/Settings now opens explicit System/Light/Dark selection and installation-local
+Comfortable/Compact browser spacing. Existing `theme` persistence is retained;
+`browserDensity` uses stable string values and defaults unknown/missing values to
+Comfortable. Compact changes actual list padding and grid gaps/tile height without
+global compact visual density or smaller 48 dp actions. No remote/backend/crypto
+change, account setting, or new dependency was added.
+
+Twelve new tests cover production NntDriveApp unlock/onboarding → FilesPage →
+account dialog wiring, all theme choices and OS brightness, persistence/app
+recreation, invalid density fallback, stable browser/session/controller and listing
+identity, retained filter/Grid/current folder, actual list/grid size differences at
+320/800 dp and 100/200% text, and scrollable 200% dialog/48 dp targets. Independently
+disconnecting production density forwarding fails (expected Compact, got Comfortable);
+disconnecting the theme callback fails (expected persisted Dark index 2, got null).
+Both sabotages were restored. An initial recreation fixture expected onboarding
+even after prior confirmation; it now accepts the real remembered-confirmation path.
+
+The restored focused appearance/browser-view suite and clean analysis exited 0.
+The canonical `bash scripts/dev-check.sh flutter` exited 0 with pinned Flutter
+3.47.9 / Dart 3.13.7, release native build, clean analysis and **939 tests passed /
+5 skipped**. The SDK's advisory offline Git tag-fetch failure did not prevent the
+check. Automated injected transport/native name fixtures are not installed
+Windows/Linux/Android visual, OS brightness, screen-reader or performance acceptance
+(#222). This is not completion of Stage 2, other #219 stages, selection or the
+broader redesign.
+
 ## Adaptive browser navigation prerequisite (#219)
 
 The browser now has callback-based adaptive navigation: a collapsible labelled

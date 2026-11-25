@@ -36,6 +36,25 @@ selection are unfinished; the bounded keyboard palette and read-only details
 are described below.
 Installed platform/accessibility/performance acceptance remains unverified.
 
+### Appearance and browser density (#219 bounded Stage 2 slice)
+
+Open **Account → Appearance** (also through **Settings**) and select **System**,
+**Light** or **Dark** directly. System follows the OS brightness. Changes apply
+immediately; Close, Back or the outside barrier dismisses the dialog without
+undoing them. The existing integer `theme` preference remains compatible.
+
+The same dialog offers **Comfortable** (default) and **Compact** browser density.
+This nonsecret installation-local `browserDensity` preference survives app restart
+and sign-out; it is not an account/remote setting. Missing or unknown values use
+Comfortable. Compact reduces list vertical padding, narrow row padding and grid
+gaps/tile height, not text size or global Material visual density. All item actions
+retain 48 dp targets; grid columns/height continue adapting to text scale. The
+dialog scrolls on short/narrow windows. Appearance rebuilds retain the browser
+element/session/controller, folder, filter and List/Grid/order state; they do not
+refresh/decrypt the listing. These automated layout/wiring checks are not installed
+screen-reader, screenshot or performance acceptance (#222). Remaining Stage 2 and
+all other unfinished #219 criteria stay open.
+
 ### List/grid and local ordering (#219 bounded browser slice)
 
 Use **List** or **Grid**, **Sort: Name / Size / Modified**, and

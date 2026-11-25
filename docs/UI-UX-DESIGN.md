@@ -228,6 +228,17 @@ data, key handles, preferences or the wire protocol.
 
 ## Bounded implementation progress (not stage completion)
 
+The bounded Stage 2 appearance increment replaces the account theme cycle with
+an explicit scrollable System/Light/Dark selection dialog and Comfortable/Compact
+browser density. Both preferences are install-local and apply immediately through
+NntDriveApp without replacing the FilesPage/session/controller. Compact changes
+actual list padding and grid gaps/height, never global visual density, text size
+or the 48 dp item targets. Unknown/missing density falls back to Comfortable.
+Production persistence/recreation/theme-following and 320/800 dp / 200% layout
+fixtures pass, and separate missing-theme/density-adapter sabotages fail. See
+STATUS.md for canonical evidence. No other token/screen redesign, selection or
+stage completion is implied; installed acceptance remains #222.
+
 The loading/empty/error increment now wires a static theme-surface skeleton into
 production FilesPage rather than the central spinner. It exposes one Loading
 folder semantic announcement with decorative noninteractive rows, no animation

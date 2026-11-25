@@ -38,6 +38,7 @@ import 'session_operations.dart';
 import 'local_availability.dart';
 import 'browser_listing_states.dart';
 import 'browser_views.dart';
+import 'appearance.dart';
 import 'browser_file_details.dart';
 import 'browser_commands.dart';
 import 'browser_breadcrumbs.dart';
@@ -177,6 +178,7 @@ class _NntDriveAppState extends State<NntDriveApp> {
   ApiClient _authenticatedApi(String server, String token) =>
       widget.apiFactory?.call(server, token) ?? ApiClient(baseUrl: server, token: token);
   late ThemeMode _themeMode;
+  late BrowserDensity _browserDensity;
   late String _server;
   String? _token;
   String? _keyfile;
@@ -259,7 +261,11 @@ class _NntDriveAppState extends State<NntDriveApp> {
   @override
   void initState() {
     super.initState();
-    _themeMode = ThemeMode.values[widget.prefs.getInt('theme') ?? 0];
+    final theme = widget.prefs.getInt('theme') ?? 0;
+    _themeMode = theme >= 0 && theme < ThemeMode.values.length
+        ? ThemeMode.values[theme] : ThemeMode.system;
+    _browserDensity = BrowserDensity.fromPreference(
+        widget.prefs.getString('browserDensity'));
     _server = widget.prefs.getString('server') ?? 'http://127.0.0.1:8080';
     _token = widget.prefs.getString('token');
     _keyfile = widget.prefs.getString('keyfile');
@@ -277,6 +283,11 @@ class _NntDriveAppState extends State<NntDriveApp> {
   void _setTheme(ThemeMode mode) {
     setState(() => _themeMode = mode);
     widget.prefs.setInt('theme', mode.index);
+  }
+
+  void _setBrowserDensity(BrowserDensity density) {
+    setState(() => _browserDensity = density);
+    widget.prefs.setString('browserDensity', density.name);
   }
 
   /// Adopts the wrapped keyfile from the OS credential store, after a
@@ -588,6 +599,8 @@ class _NntDriveAppState extends State<NntDriveApp> {
         api: widget.apiFactory?.call(_session!.server, _session!.token),
         themeMode: _themeMode,
         onTheme: _setTheme,
+        browserDensity: _browserDensity,
+        onBrowserDensity: _setBrowserDensity,
         onSignOut: _signOut,
         onRenameDevice: _renameDevice,
         onRotateAccountKey: _rotateAccountKey,
@@ -1194,6 +1207,8 @@ class FilesPage extends StatefulWidget {
     required this.onTheme,
     required this.onSignOut,
     this.api,
+    this.browserDensity = BrowserDensity.comfortable,
+    this.onBrowserDensity,
     this.activity,
     this.onRenameDevice,
     this.onRotateAccountKey,
@@ -1210,6 +1225,8 @@ class FilesPage extends StatefulWidget {
   final AutomaticUpdateChecks<Object> updates;
   final ThemeMode themeMode;
   final ValueChanged<ThemeMode> onTheme;
+  final BrowserDensity browserDensity;
+  final ValueChanged<BrowserDensity>? onBrowserDensity;
   final VoidCallback onSignOut;
 
   /// Test seam: a page built by a test talks to this client instead of
@@ -3021,14 +3038,16 @@ class _FilesPageState extends State<FilesPage> {
             ),
             ListTile(
               leading: const Icon(Icons.contrast),
-              title: const Text('Toggle theme'),
+              title: const Text('Appearance'),
               onTap: () {
                 Navigator.pop(context);
-                widget.onTheme(switch (widget.themeMode) {
-                  ThemeMode.system => ThemeMode.light,
-                  ThemeMode.light => ThemeMode.dark,
-                  ThemeMode.dark => ThemeMode.system,
-                });
+                showDialog<void>(context: this.context, builder: (_) =>
+                  AppearanceDialog(
+                    themeMode: widget.themeMode,
+                    density: widget.browserDensity,
+                    onTheme: widget.onTheme,
+                    onDensity: (density) => widget.onBrowserDensity?.call(density),
+                  ));
               },
             ),
             if (widget.onRenameDevice != null) ListTile(
@@ -3306,6 +3325,7 @@ class _FilesPageState extends State<FilesPage> {
                         : RefreshIndicator(
                       onRefresh: _refresh,
                       child: BrowserFilesView(
+                        density: widget.browserDensity,
                         files: filtered,
                         view: _browserView,
                         nameFor: _name,
