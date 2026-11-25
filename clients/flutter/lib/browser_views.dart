@@ -163,6 +163,8 @@ class BrowserFilesView extends StatelessWidget {
     required this.onActions,
     required this.onReveal,
     required this.onDetails,
+    this.isSelected,
+    this.onToggleSelection,
   });
   final List<RemoteFile> files;
   final BrowserDensity density;
@@ -174,6 +176,8 @@ class BrowserFilesView extends StatelessWidget {
   final ValueChanged<RemoteFile> onActions;
   final ValueChanged<RemoteFile> onReveal;
   final ValueChanged<RemoteFile> onDetails;
+  final bool Function(RemoteFile)? isSelected;
+  final ValueChanged<RemoteFile>? onToggleSelection;
 
   @override
   Widget build(BuildContext context) {
@@ -191,6 +195,9 @@ class BrowserFilesView extends StatelessWidget {
         onActions: () => onActions(file),
         onReveal: () => onReveal(file),
         onDetails: () => onDetails(file),
+        selected: isSelected?.call(file) ?? false,
+        onToggleSelection: onToggleSelection == null
+            ? null : () => onToggleSelection!(file),
       );
     }
 
@@ -242,6 +249,8 @@ class BrowserFileTile extends StatelessWidget {
     required this.onActions,
     required this.onReveal,
     required this.onDetails,
+    this.selected = false,
+    this.onToggleSelection,
   });
   final RemoteFile file;
   final BrowserDensity density;
@@ -250,6 +259,8 @@ class BrowserFileTile extends StatelessWidget {
   final bool pinned;
   final bool grid;
   final VoidCallback onOpen, onActions, onReveal, onDetails;
+  final bool selected;
+  final VoidCallback? onToggleSelection;
 
   @override
   Widget build(BuildContext context) {
@@ -262,7 +273,13 @@ class BrowserFileTile extends StatelessWidget {
       state: local,
       details: file.isDir ? 'Folder' : _bytes(file.size),
     );
-    final actions = Wrap(
+    final actions = onToggleSelection != null
+        ? Semantics(label: 'Select $name', child: SizedBox(
+            width: 48, height: 48,
+            child: Checkbox(value: selected,
+                onChanged: (_) => onToggleSelection!()),
+          ))
+        : Wrap(
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
         if (file.favorite)
@@ -295,23 +312,26 @@ class BrowserFileTile extends StatelessWidget {
       message: name,
       child: Text(name, maxLines: 2, overflow: TextOverflow.ellipsis),
     );
-    return LayoutBuilder(
-      builder: (context, constraints) {
+    return Semantics(
+      selected: onToggleSelection == null ? null : selected,
+      child: LayoutBuilder(builder: (context, constraints) {
         if (!grid && constraints.maxWidth >= 520 && scale <= 1.3) {
           return ListTile(
+            selected: selected,
             minVerticalPadding: density == BrowserDensity.compact ? 4 : 12,
             minTileHeight: 48,
             leading: icon,
             title: title,
             subtitle: status,
             trailing: actions,
-            onTap: onOpen,
+            onTap: onToggleSelection ?? onOpen,
           );
         }
         return Card(
+          color: selected ? Theme.of(context).colorScheme.secondaryContainer : null,
           margin: grid ? EdgeInsets.zero : const EdgeInsets.all(4),
           child: InkWell(
-            onTap: onOpen,
+            onTap: onToggleSelection ?? onOpen,
             child: Padding(
               padding: EdgeInsets.all(density == BrowserDensity.compact ? 8 : 12),
               child: Column(
@@ -334,7 +354,7 @@ class BrowserFileTile extends StatelessWidget {
             ),
           ),
         );
-      },
+      }),
     );
   }
 }

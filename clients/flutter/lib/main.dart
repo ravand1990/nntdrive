@@ -1273,7 +1273,7 @@ class _FilesPageState extends State<FilesPage> {
   Future<void> _visitLocation(List<String> ids, {int? historyIndex}) async {
     if (!mounted || widget.session.search.closed) return;
     _dismissDetails();
-    final intent = ++_navigationGeneration;
+    final intent = _advanceNavigation();
     final generation = _refreshGeneration;
     bool current() => mounted && !widget.session.search.closed &&
         intent == _navigationGeneration && generation == _refreshGeneration;
@@ -1350,6 +1350,89 @@ class _FilesPageState extends State<FilesPage> {
   BrowserSort _browserSort = BrowserSort.name;
   bool _browserDescending = false;
   BrowserListing _browserListing = BrowserListing(const [], (_) => '');
+  // Original opaque models, scoped to one listing and filter; never persisted.
+  final Map<String, RemoteFile> _selectedFiles = {};
+  Map<String, RemoteFile> _listingFilesById = {};
+  bool _selectionMode = false;
+  int _selectionGeneration = 0;
+
+  void _clearSelection({bool exit = true}) {
+    if (!mounted) return;
+    setState(() {
+      ++_selectionGeneration;
+      _selectedFiles.clear();
+      if (exit) _selectionMode = false;
+    });
+  }
+
+  int _advanceNavigation() {
+    _clearSelection();
+    return ++_navigationGeneration;
+  }
+
+  bool Function() get _selectionAdmission {
+    final generation = _refreshGeneration;
+    final navigation = _navigationGeneration;
+    final selection = _selectionGeneration;
+    return () => _browserCommandsReady && _selectionMode &&
+        generation == _refreshGeneration && navigation == _navigationGeneration &&
+        selection == _selectionGeneration;
+  }
+
+  ValueChanged<RemoteFile>? get _selectionCallback {
+    if (!_selectionMode) return null;
+    final admit = _selectionAdmission;
+    return (file) {
+      if (!admit() || !identical(_listingFilesById[file.id], file)) return;
+      setState(() {
+        if (_selectedFiles.remove(file.id) == null) _selectedFiles[file.id] = file;
+      });
+    };
+  }
+
+  Widget _selectionControls(List<RemoteFile> visible) {
+    if (!_selectionMode) {
+      final generation = _refreshGeneration;
+      final navigation = _navigationGeneration;
+      final selection = _selectionGeneration;
+      final onSelect = _browserCommandsReady && visible.isNotEmpty ? () {
+          if (!_browserCommandsReady || generation != _refreshGeneration ||
+              navigation != _navigationGeneration || selection != _selectionGeneration) {
+            return;
+          }
+          _dismissDetails();
+          setState(() { ++_selectionGeneration; _selectionMode = true; });
+        } : null;
+      return IconButton(tooltip: 'Select items', onPressed: onSelect,
+        style: IconButton.styleFrom(minimumSize: const Size(48, 48)),
+        icon: const Icon(Icons.checklist));
+    }
+    final admit = _selectionAdmission;
+    final file = _selectedFiles.length == 1 ? _selectedFiles.values.single : null;
+    Widget button(String label, VoidCallback action) => TextButton(
+      style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
+      onPressed: () { if (admit()) action(); }, child: Text(label));
+    return Row(children: [
+      Padding(padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: Semantics(liveRegion: true, child: Text('${_selectedFiles.length} selected'))),
+      Expanded(child: Scrollbar(child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(children: [
+          Tooltip(message: 'Select all entries in the loaded filtered folder view, not the account',
+            child: button('Select all visible', () => setState(() {
+              _selectedFiles..clear()..addEntries(visible.map((f) => MapEntry(f.id, f)));
+            }))),
+          button('Clear selection', () => _clearSelection(exit: false)),
+          if (file != null) button('Selection details', () {
+            if (_selectedFiles.length == 1 && identical(_selectedFiles[file.id], file)) {
+              _showDetails(file);
+            }
+          }),
+          button('Exit selection', _clearSelection),
+        ]),
+      ))),
+    ]);
+  }
   final _folderFilter = TextEditingController();
   final _folderFilterFocus = FocusNode();
   final _browserFocus = FocusNode();
@@ -1395,7 +1478,7 @@ class _FilesPageState extends State<FilesPage> {
     if (mounted && widget.session.search.closed) {
       _dismissDetails();
       setState(() {
-        ++_navigationGeneration;
+        _advanceNavigation();
         _search = '';
         _folderFilter.clear();
         _listingHistory..clear()..add([]);
@@ -1403,6 +1486,7 @@ class _FilesPageState extends State<FilesPage> {
         _path.clear();
         _names.clear();
         _files = [];
+        _listingFilesById = {};
         _browserListing = BrowserListing(const [], (_) => '');
       });
     }
@@ -1647,6 +1731,8 @@ class _FilesPageState extends State<FilesPage> {
   @override
   void dispose() {
     _sync.removeListener(_onSyncChanged);
+    _selectedFiles.clear();
+    _listingFilesById.clear();
     widget.session.search.removeListener(_onSearchLifecycle);
     final commands = _commandsRoute;
     _commandsRoute = null;
@@ -1673,7 +1759,7 @@ class _FilesPageState extends State<FilesPage> {
   void _selectDestination(SessionDestination destination) {
     // Every destination supersedes any still-resolving browser root.
     _dismissDetails();
-    ++_navigationGeneration;
+    _advanceNavigation();
     switch (destination) {
       case SessionDestination.global:
         _openBrowserRoot(global: true);
@@ -1747,7 +1833,7 @@ class _FilesPageState extends State<FilesPage> {
 
   Future<void> _openAccountSearch() async {
     _dismissDetails();
-    ++_navigationGeneration;
+    _advanceNavigation();
     final index = widget.session.search;
     final entry = await Navigator.of(context).push<SearchEntry>(MaterialPageRoute(
       builder: (_) => AccountSearchPage(index: index,
@@ -1764,7 +1850,7 @@ class _FilesPageState extends State<FilesPage> {
   Future<void> _navigateIndexedEntry(SearchEntry entry, {required bool containingOnly}) async {
     final index = widget.session.search;
     if (!mounted || index.closed) return;
-    final intent = ++_navigationGeneration;
+    final intent = _advanceNavigation();
     bool current() => mounted && !index.closed && intent == _navigationGeneration;
     try {
       await widget.operations.run(widget.session.handle, () async {
@@ -1821,7 +1907,7 @@ class _FilesPageState extends State<FilesPage> {
 
   Future<void> _openActivity() async {
     _dismissDetails();
-    ++_navigationGeneration;
+    _advanceNavigation();
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => ActivityPage(
         log: _activity,
@@ -1842,7 +1928,7 @@ class _FilesPageState extends State<FilesPage> {
 
   Future<void> _openSync({String? openOverviewFor}) async {
     _dismissDetails();
-    ++_navigationGeneration;
+    _advanceNavigation();
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) =>
           SyncPage(controller: _sync, openOverviewFor: openOverviewFor),
@@ -1852,7 +1938,7 @@ class _FilesPageState extends State<FilesPage> {
 
   Future<void> _openTrash() async {
     _dismissDetails();
-    ++_navigationGeneration;
+    _advanceNavigation();
     await Navigator.of(context).push(MaterialPageRoute<void>(
       builder: (_) => TrashPage(
         load: _api.trash,
@@ -1934,6 +2020,7 @@ class _FilesPageState extends State<FilesPage> {
 
   Future<void> _refreshNow({int? historyIndex}) async {
     _dismissDetails();
+    _clearSelection();
     final generation = ++_refreshGeneration;
     final navigation = _navigationGeneration;
     bool current() => mounted && !widget.session.search.closed &&
@@ -1969,6 +2056,7 @@ class _FilesPageState extends State<FilesPage> {
         _availability = availability;
         _me = me;
         _files = files;
+        _listingFilesById = {for (final file in files) file.id: file};
         // Keep the folders on the trail named: the app-bar title and up control
         // read from here, and a listing only carries the current folder's
         // entries. Drop names for anything no longer on screen or on the trail.
@@ -2026,11 +2114,13 @@ class _FilesPageState extends State<FilesPage> {
   /// Keeps Android back inside the folder trail. The route itself stays
   /// poppable only at the account root, so back then exits the app normally.
   Widget _backScope(Widget child) => PopScope(
-        canPop: _path.isEmpty && _detailsPane == null,
+        canPop: _path.isEmpty && _detailsPane == null && !_selectionMode,
         onPopInvokedWithResult: (didPop, Object? result) {
           if (didPop) return;
           if (_detailsPane != null) {
             _dismissDetails();
+          } else if (_selectionMode) {
+            _clearSelection();
           } else {
             _up();
           }
@@ -2919,7 +3009,7 @@ class _FilesPageState extends State<FilesPage> {
 
   Future<void> _showAccountMenu() async {
     _dismissDetails();
-    ++_navigationGeneration;
+    _advanceNavigation();
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -3135,7 +3225,7 @@ class _FilesPageState extends State<FilesPage> {
 
   Future<void> _showDevices() async {
     _dismissDetails();
-    ++_navigationGeneration;
+    _advanceNavigation();
     try {
       final devices = await _api.devices();
       final roots = await widget.operations.run(widget.session.handle, () =>
@@ -3308,7 +3398,10 @@ class _FilesPageState extends State<FilesPage> {
             child: TextField(
               controller: _folderFilter,
               focusNode: _folderFilterFocus,
-              onChanged: (v) => setState(() => _search = v),
+              onChanged: (v) {
+                _clearSelection(exit: false);
+                setState(() => _search = v);
+              },
               decoration: InputDecoration(
                 isDense: true,
                 hintText: 'Filter this folder',
@@ -3334,8 +3427,10 @@ class _FilesPageState extends State<FilesPage> {
               icon: const Icon(Icons.arrow_forward)),
             Expanded(child: BrowserBreadcrumbs(names: _path.map(_name).toList(),
               onVisit: _breadcrumbVisitor)),
+            if (!_selectionMode) _selectionControls(filtered),
           ]),
-          Align(alignment: Alignment.centerLeft, child: Wrap(children: [
+          if (_selectionMode) _selectionControls(filtered)
+          else Align(alignment: Alignment.centerLeft, child: Wrap(children: [
             TextButton.icon(
               onPressed: _browserCommandsReady ? () => _showCommands() : null,
               style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
@@ -3400,6 +3495,8 @@ class _FilesPageState extends State<FilesPage> {
                         onActions: _itemActions,
                         onReveal: _revealLocal,
                         onDetails: _detailsCallback,
+                        isSelected: (file) => identical(_selectedFiles[file.id], file),
+                        onToggleSelection: _selectionCallback,
                       ),
               ),
           ),
