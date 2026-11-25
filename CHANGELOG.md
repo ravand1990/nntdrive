@@ -6,6 +6,8 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-11-25
+
 ### Documentation
 
 - Added the #219 adaptive-client design brief: a first-party Drive/OneDrive/iCloud interaction comparison, proposed shell/navigation and component contracts, E2EE constraints and staged verification. This is design documentation only, not an implemented UI redesign; the runtime stages remain open.
