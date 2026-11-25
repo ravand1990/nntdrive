@@ -114,6 +114,84 @@ void main() {
     return (api: api, signOuts: () => signOuts);
   }
 
+  testWidgets('compact FilesPage direct adapters preserve routes and session owners', (tester) async {
+    final fixture = await showNavigation(tester);
+    tester.view.physicalSize = const Size(390, 900);
+    await tester.pumpAndSettle();
+    final state = tester.state(find.byType(FilesPage));
+    final page = tester.widget<FilesPage>(find.byType(FilesPage));
+    Future<void> back() async {
+      Navigator.of(tester.element(find.byType(FilesPage, skipOffstage: false))).pop();
+      await tester.pumpAndSettle();
+      expect(tester.state(find.byType(FilesPage)), same(state));
+    }
+    Future<void> menu(String group, String name) async {
+      await tester.tap(find.byKey(ValueKey('navigation-$group')));
+      await tester.pumpAndSettle();
+      final item = find.byKey(ValueKey('menu-$name'));
+      await tester.scrollUntilVisible(item, 100, scrollable: find.byType(Scrollable).last);
+      await tester.tap(item);
+      await tester.pumpAndSettle();
+    }
+    final calls = fixture.api.listCalls;
+    await tester.tap(find.byKey(const ValueKey('navigation-files')));
+    await tester.pumpAndSettle();
+    expect(fixture.api.rootsCalls, 0);
+    expect(fixture.api.listCalls, calls);
+    await tester.tap(find.byKey(const ValueKey('menu-global')));
+    await tester.pumpAndSettle();
+    expect(fixture.api.parents.last, fixture.api.folder!.id);
+    expect(find.text('Authenticated Global'), findsNWidgets(2));
+    await menu('files', 'devices');
+    expect(fixture.api.parents.last, isNull);
+    expect(find.text('My files'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('navigation-sync')));
+    await tester.pumpAndSettle();
+    expect(tester.widget<SyncPage>(find.byType(SyncPage)).controller, same(page.sync));
+    expect(find.byType(SessionNavigation), findsNothing,
+      reason: 'child pages remain separate routes, not an embedded shell');
+    await back();
+    await tester.tap(find.byKey(const ValueKey('navigation-activity')));
+    await tester.pumpAndSettle();
+    final log = tester.widget<ActivityPage>(find.byType(ActivityPage)).log;
+    await back();
+    await tester.tap(find.byKey(const ValueKey('navigation-activity')));
+    await tester.pumpAndSettle();
+    expect(tester.widget<ActivityPage>(find.byType(ActivityPage)).log, same(log));
+    await back();
+    await tester.runAsync(() => tester.tap(find.byKey(const ValueKey('navigation-search'))));
+    for (var i = 0; i < 100; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 10)));
+      await tester.pump(const Duration(milliseconds: 20));
+      if (!page.session.search.building) break;
+    }
+    await tester.pumpAndSettle();
+    expect(tester.widget<AccountSearchPage>(find.byType(AccountSearchPage)).index,
+      same(page.session.search));
+    await back();
+    await menu('more', 'trash');
+    expect(find.byType(TrashPage), findsOneWidget);
+    await back();
+    await menu('more', 'settings');
+    expect(find.text('Storage usage'), findsOneWidget);
+    await back();
+    await menu('more', 'manageDevices');
+    expect(find.byType(AlertDialog), findsOneWidget);
+    await tester.tap(find.text('Close'));
+    await tester.pumpAndSettle();
+    for (final width in [1440.0, 1024.0, 390.0]) {
+      tester.view.physicalSize = Size(width, 900);
+      await tester.pumpAndSettle();
+      expect(tester.state(find.byType(FilesPage)), same(state));
+      final current = tester.widget<FilesPage>(find.byType(FilesPage));
+      expect(current.session, same(page.session));
+      expect(current.sync, same(page.sync));
+      expect(current.operations, same(page.operations));
+    }
+    expect(fixture.signOuts(), 0);
+    expect(tester.takeException(), isNull);
+  });
+
   for (final source in ['listRoots', 'preliminary listFiles']) {
     for (final status in [401, 500]) {
       testWidgets('Global $source $status preserves auth handling and redaction', (tester) async {

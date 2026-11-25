@@ -8,9 +8,18 @@ features, remaining implementation gaps and installed-device acceptance.
 
 The Files browser uses a 240 dp labelled sidebar at widths of at least 1200 dp;
 Collapse navigation changes it to a 72 dp rail. Widths of 600–1199 dp use a rail
-with a labelled destination menu. Below 600 dp, or above 130% text, use **Browse
-& navigate** for the same scrollable destinations. The browser uses the remaining
-window width instead of the readable-page 840 dp cap.
+with a labelled destination menu. Below 600 dp, or above 130% text, use the direct
+**Files / Search / Sync / Activity / More** bottom destinations. Files opens a
+chooser for **Global** and **Devices**; it does not assume Global or navigate until
+a location is chosen. More exposes **Trash**, **Settings** and **Manage devices**.
+At very narrow widths or enlarged text, horizontally scroll the labelled strip
+(the scrollbar and keyboard focus reveal the remaining destinations); full labels,
+tooltips and at least 48 dp targets are retained rather than shrinking text.
+Files is selected for Global/Devices, More for its other destinations, and direct
+page destinations reflect only the supplied current selection. An unknown browser
+location has no invented selection. The strip stays above the keyboard, consuming
+the bottom keyboard inset once before the child Scaffold. The browser uses the
+remaining window width instead of the readable-page 840 dp cap.
 
 **Global** freshly lists and authenticates the account's Global root. **Devices**
 returns to the existing account-root listing, including Global and device spaces;

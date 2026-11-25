@@ -1,3 +1,5 @@
+import 'dart:ui' show Tristate;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -74,6 +76,152 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  testWidgets('compact direct destinations, chooser and honest selection', (
+    tester,
+  ) async {
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final selected = <SessionDestination>[];
+    final semantics = tester.ensureSemantics();
+    for (final destination in SessionDestination.values) {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SessionNavigation(
+            selected: destination,
+            onSelected: selected.add,
+            child: const Scaffold(body: Text('Browser')),
+          ),
+        ),
+      );
+      tester.view.physicalSize = const Size(390, 900);
+      tester.view.devicePixelRatio = 1;
+      await tester.pumpAndSettle();
+      final group = switch (destination) {
+        SessionDestination.global || SessionDestination.devices => 'files',
+        SessionDestination.search => 'search',
+        SessionDestination.sync => 'sync',
+        SessionDestination.activity => 'activity',
+        _ => 'more',
+      };
+      for (final name in ['files', 'search', 'sync', 'activity', 'more']) {
+        final item = find.byKey(ValueKey('navigation-$name'));
+        expect(
+          tester
+              .getSemantics(item)
+              .getSemanticsData()
+              .flagsCollection.isSelected,
+          name == group ? Tristate.isTrue : Tristate.isFalse,
+        );
+      }
+    }
+    semantics.dispose();
+    await tester.tap(find.byKey(const ValueKey('navigation-files')));
+    await tester.pumpAndSettle();
+    expect(selected, isEmpty, reason: 'Files must not assume Global');
+    expect(find.byKey(const ValueKey('menu-global')), findsOneWidget);
+    expect(find.byKey(const ValueKey('menu-devices')), findsOneWidget);
+    expect(find.byKey(const ValueKey('menu-trash')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('menu-devices')));
+    await tester.pumpAndSettle();
+    expect(selected, [SessionDestination.devices]);
+    for (final destination in [
+      SessionDestination.search,
+      SessionDestination.sync,
+      SessionDestination.activity,
+    ]) {
+      await tester.tap(find.byKey(ValueKey('navigation-${destination.name}')));
+      await tester.pumpAndSettle();
+      expect(selected.last, destination);
+      expect(find.byType(BottomSheet), findsNothing);
+    }
+  });
+
+  testWidgets(
+    'compact keyboard traversal discovers and activates every destination',
+    (tester) async {
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final selected = <SessionDestination>[];
+      await show(tester, 240, scale: 2, onSelected: selected.add);
+      final reached = <String>[];
+      for (var i = 0; i < 30; i++) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pumpAndSettle();
+        final context = FocusManager.instance.primaryFocus?.context;
+        String? name;
+        context?.visitAncestorElements((element) {
+          final key = element.widget.key;
+          if (key is ValueKey<String> &&
+              key.value.startsWith('navigation-') &&
+              key.value != 'navigation-compact') {
+            name = key.value;
+            return false;
+          }
+          return true;
+        });
+        if (name != null && !reached.contains(name)) {
+          reached.add(name!);
+          expect(find.byKey(ValueKey(name!)).hitTestable(), findsOneWidget);
+          if (name == 'navigation-search') {
+            await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+            await tester.pumpAndSettle();
+          }
+        }
+        if (reached.length == 5) break;
+      }
+      expect(reached, [
+        'navigation-files',
+        'navigation-search',
+        'navigation-sync',
+        'navigation-activity',
+        'navigation-more',
+      ]);
+      expect(selected, [SessionDestination.search]);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'very narrow 200 percent compact labels and targets stay reachable',
+    (tester) async {
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await show(tester, 240, scale: 2);
+      tester.view.physicalSize = const Size(240, 600);
+      tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+      addTearDown(tester.view.resetViewInsets);
+      await tester.pumpAndSettle();
+      final bar = find.byKey(const ValueKey('navigation-compact'));
+      expect(tester.getRect(bar).bottom, lessThanOrEqualTo(300));
+      expect(
+        tester.getSize(find.byType(Scaffold)).height,
+        closeTo(300 - tester.getSize(bar).height, 1),
+      );
+      for (final name in ['files', 'search', 'sync', 'activity', 'more']) {
+        final item = find.byKey(ValueKey('navigation-$name'));
+        await tester.ensureVisible(item);
+        await tester.pumpAndSettle();
+        expect(tester.getSize(item).width, greaterThanOrEqualTo(48));
+        expect(tester.getSize(item).height, greaterThanOrEqualTo(48));
+        expect(item.hitTestable(), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      }
+      await tester.tap(find.byKey(const ValueKey('navigation-more')));
+      await tester.pumpAndSettle();
+      for (final name in ['trash', 'settings', 'manageDevices']) {
+        final item = find.byKey(ValueKey('menu-$name'));
+        await tester.scrollUntilVisible(
+          item,
+          100,
+          scrollable: find.byType(Scrollable).last,
+        );
+        expect(tester.getSize(item).height, greaterThanOrEqualTo(48));
+        expect(item.hitTestable(), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      }
+    },
+  );
+
   for (final (width, scale, mode) in [
     (1440.0, 1.0, 'sidebar'),
     (1024.0, 1.0, 'rail'),
@@ -104,7 +252,11 @@ void main() {
         );
       }
       if (mode == 'compact') {
-        await tester.tap(find.byKey(const ValueKey('navigation-compact')));
+        await tester.ensureVisible(
+          find.byKey(const ValueKey('navigation-more')),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('navigation-more')));
         await tester.pumpAndSettle();
         await tester.scrollUntilVisible(
           find.byKey(const ValueKey('menu-manageDevices')),
@@ -174,20 +326,34 @@ void main() {
       selected.clear();
       await show(tester, width, onSelected: selected.add);
       for (final destination in SessionDestination.values) {
-        if (width < 1200) {
+        final direct =
+            width < 600 &&
+            [
+              SessionDestination.search,
+              SessionDestination.sync,
+              SessionDestination.activity,
+            ].contains(destination);
+        if (width < 1200 && !direct) {
           await tester.tap(
             width < 600
-                ? find.byKey(const ValueKey('navigation-compact'))
+                ? find.byKey(
+                    ValueKey(
+                      destination == SessionDestination.global ||
+                              destination == SessionDestination.devices
+                          ? 'navigation-files'
+                          : 'navigation-more',
+                    ),
+                  )
                 : find.byTooltip('Navigation destinations'),
           );
           await tester.pumpAndSettle();
         }
         final item = find.byKey(
           ValueKey(
-            '${width < 1200 ? 'menu' : 'navigation'}-${destination.name}',
+            '${width < 1200 && !direct ? 'menu' : 'navigation'}-${destination.name}',
           ),
         );
-        if (width < 1200) {
+        if (width < 1200 && !direct) {
           await tester.scrollUntilVisible(
             item,
             100,

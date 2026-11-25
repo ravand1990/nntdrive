@@ -83,7 +83,7 @@ They require widget/layout evidence before being treated as final values:
 | At least 1200 dp (including 1440) | 240 dp labelled sidebar, user-collapsible to a 72 dp rail | Flexible file area; optional 320 dp details pane only while the file area retains at least 480 dp. |
 | 900–1199 dp (including 1024) | 72 dp rail by default; labelled destinations through an overlay | Full remaining file area; details in a dismissible overlay rather than squeezing the list. |
 | 600–899 dp tablet/narrow desktop | Rail only if minimum content width and text scale allow; otherwise compact navigation | One content pane; details as sheet/route. |
-| Below 600 dp phone/short landscape | Bottom destinations: Files, Search, Sync, Activity, More | Files contains Global/Devices/Favorites/Recent; More exposes Trash/Settings. All desktop destinations remain reachable, not nine cramped bottom tabs. |
+| Below 600 dp phone/short landscape | Bottom destinations: Files, Search, Sync, Activity, More | Implemented bounded Files chooser contains Global/Devices; More exposes Trash/Settings/Manage devices. Favorites/Recent remain proposed, not dummy entries. All real destinations remain reachable. |
 
 At enlarged text scale prefer compact navigation earlier; never shrink labels or
 hit targets to satisfy a breakpoint. Allow toolbar wrapping and scrollable
@@ -227,6 +227,22 @@ by this brief. A shell extraction should remain revertible without changing stor
 data, key handles, preferences or the wire protocol.
 
 ## Bounded implementation progress (not stage completion)
+
+Compact navigation now implements Files/Search/Sync/Activity/More over the existing
+browser adapters, not an app-wide embedded shell. Files explicitly chooses Global
+or Devices, More contains the remaining real destinations, and grouped selected
+semantics reflect only the supplied location. A horizontally scrollable labelled
+strip with a visible scrollbar retains 48 dp controls at narrow/200% text; enlarged
+icons sit beside labels to preserve browser height. Focus traversal reveals offscreen
+controls. Menu labels wrap, with descriptions available as tooltips (inline at
+normal text). Keyboard insets are consumed once and breakpoint changes preserve
+the child element slot/session. No Favorites/Recent projection or selection was
+added. Component and real FilesPage regressions fail against original behavior,
+and disconnected production wiring fails separately. The restored focused suite
+passed 42 tests; the final pinned canonical check passed clean analysis, native
+release build and 917 tests / 5 skips (see STATUS.md for retry evidence). Installed
+accessibility, screenshots and performance remain #222; all broader #219 stages
+remain open.
 
 The browser navigation and lazy List/Grid/local-ordering increments are now
 implemented; see CLIENTS.md and STATUS.md for their exact boundaries. The bounded
