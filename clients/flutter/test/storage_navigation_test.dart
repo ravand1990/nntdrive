@@ -207,7 +207,7 @@ void main() {
         } else {
           expect(
             find.text(rootFile ? 'My files' : 'Fresh folder'),
-            findsOneWidget,
+            rootFile ? findsOneWidget : findsNWidgets(2),
           );
           expect(find.text('Private.txt'), findsOneWidget);
           expect(find.text('Old folder'), findsNothing);

@@ -39,6 +39,7 @@ import 'local_availability.dart';
 import 'browser_views.dart';
 import 'browser_file_details.dart';
 import 'browser_commands.dart';
+import 'browser_breadcrumbs.dart';
 import 'file_rename.dart';
 import 'file_move.dart';
 import 'file_copy.dart';
@@ -1232,6 +1233,95 @@ class _FilesPageState extends State<FilesPage> {
   late final ApiClient _api = widget.session.bindApi(widget.api ??
       ApiClient(baseUrl: widget.session.server, token: widget.session.token));
   final List<RemoteFile> _path = [];
+  // Session/view-local opaque identities only; never persisted display paths.
+  final List<List<String>> _listingHistory = [[]];
+  int _historyIndex = 0;
+  int? _resolvingIntent;
+  bool get _resolvingLocation => _resolvingIntent == _navigationGeneration;
+
+  void _rememberLocation({int? historyIndex}) {
+    if (historyIndex != null) {
+      _historyIndex = historyIndex;
+      return;
+    }
+    final ids = _path.map((entry) => entry.id).toList();
+    if (listEquals(ids, _listingHistory[_historyIndex])) return;
+    _listingHistory.removeRange(_historyIndex + 1, _listingHistory.length);
+    _listingHistory.add(List.unmodifiable(ids));
+    if (_listingHistory.length > 100) _listingHistory.removeAt(0);
+    _historyIndex = _listingHistory.length - 1;
+  }
+
+  Future<void> _visitLocation(List<String> ids, {int? historyIndex}) async {
+    if (!mounted || widget.session.search.closed) return;
+    _dismissDetails();
+    final intent = ++_navigationGeneration;
+    final generation = _refreshGeneration;
+    bool current() => mounted && !widget.session.search.closed &&
+        intent == _navigationGeneration && generation == _refreshGeneration;
+    setState(() => _resolvingIntent = intent);
+    try {
+      await widget.operations.run(widget.session.handle, () async {
+        final parents = <RemoteFile>[];
+        final names = <String, String>{};
+        String? parent;
+        for (final id in ids) {
+          final files = await _api.listFiles(parentId: parent);
+          if (!current()) return;
+          final entry = files.where((file) => file.id == id).single;
+          if (!entry.isDir || entry.parentId != parent || parents.any((p) => p.id == id)) {
+            throw StateError('Unavailable location');
+          }
+          names[id] = NativeBridge.instance.openName(
+              widget.session.handle, entry.id, entry.nameEnc);
+          parents.add(entry);
+          parent = id;
+        }
+        if (!current()) return;
+        setState(() {
+          _path..clear()..addAll(parents);
+          _names.addAll(names);
+          _files = [];
+          _search = '';
+          _folderFilter.clear();
+        });
+        await _refreshNow(redactErrors: true, historyIndex: historyIndex);
+      });
+    } on ApiException catch (error) {
+      if (!current()) return;
+      if (error.status == 401) {
+        widget.onSignOut();
+      } else {
+        _showError('Location unavailable. Refresh and retry.');
+      }
+    } catch (_) {
+      if (current()) _showError('Location unavailable. Refresh and retry.');
+    } finally {
+      if (mounted && intent == _navigationGeneration) {
+        setState(() => _resolvingIntent = null);
+      }
+    }
+  }
+
+  void _historyStep(int delta) {
+    final next = _historyIndex + delta;
+    if (!_browserCommandsReady || next < 0 || next >= _listingHistory.length) return;
+    _visitLocation(_listingHistory[next], historyIndex: next);
+  }
+
+  ValueChanged<int>? get _breadcrumbVisitor {
+    if (!_browserCommandsReady) return null;
+    final generation = _refreshGeneration;
+    final navigation = _navigationGeneration;
+    final ids = _path.map((entry) => entry.id).toList();
+    return (count) {
+      if (!mounted || widget.session.search.closed || _loading ||
+          generation != _refreshGeneration || navigation != _navigationGeneration) {
+        return;
+      }
+      _visitLocation(ids.take(count).toList());
+    };
+  }
   List<RemoteFile> _files = [];
   final Map<String, String> _names = {};
   AccountInfo? _me;
@@ -1247,7 +1337,7 @@ class _FilesPageState extends State<FilesPage> {
   final _browserFocus = FocusNode();
   DialogRoute<String>? _commandsRoute;
 
-  bool get _browserCommandsReady => mounted && !_loading && _error == null &&
+  bool get _browserCommandsReady => mounted && !_loading && !_resolvingLocation && _error == null &&
       !widget.session.search.closed && ModalRoute.of(context)?.isCurrent == true;
 
   bool get _admitBrowserKey {
@@ -1265,6 +1355,10 @@ class _FilesPageState extends State<FilesPage> {
     const BrowserCommand('help', 'Shortcut help', binding: 'Ctrl/Cmd+/'),
     BrowserCommand('up', 'Up one folder', binding: 'Alt+Up',
         disabledReason: _path.isEmpty ? 'Already at the browser root' : null),
+    BrowserCommand('back', 'Back in listing history', binding: 'Alt+Left',
+        disabledReason: _historyIndex == 0 ? 'No earlier listing' : null),
+    BrowserCommand('forward', 'Forward in listing history', binding: 'Alt+Right',
+        disabledReason: _historyIndex + 1 == _listingHistory.length ? 'No later listing' : null),
     const BrowserCommand('global', 'Global location'),
     const BrowserCommand('devices', 'Devices location'),
     const BrowserCommand('sync', 'Sync folders'),
@@ -1281,8 +1375,18 @@ class _FilesPageState extends State<FilesPage> {
 
   void _onSearchLifecycle() {
     if (mounted && widget.session.search.closed) {
-      _dismissCommands();
-      setState(() {});
+      _dismissDetails();
+      setState(() {
+        ++_navigationGeneration;
+        _search = '';
+        _folderFilter.clear();
+        _listingHistory..clear()..add([]);
+        _historyIndex = 0;
+        _path.clear();
+        _names.clear();
+        _files = [];
+        _browserListing = BrowserListing(const [], (_) => '');
+      });
     }
   }
 
@@ -1316,6 +1420,8 @@ class _FilesPageState extends State<FilesPage> {
       case 'commands': _showCommands();
       case 'help': _showCommands(help: true);
       case 'up': _up();
+      case 'back': _historyStep(-1);
+      case 'forward': _historyStep(1);
       case 'global': _selectDestination(SessionDestination.global);
       case 'devices': _selectDestination(SessionDestination.devices);
       case 'sync': _openSync();
@@ -1340,6 +1446,10 @@ class _FilesPageState extends State<FilesPage> {
       const BrowserCommandIntent('refresh'),
     BrowserKeyActivator(LogicalKeyboardKey.arrowUp, alt: true, admit: () => _admitBrowserKey):
       const BrowserCommandIntent('up'),
+    BrowserKeyActivator(LogicalKeyboardKey.arrowLeft, alt: true, admit: () => _admitBrowserKey):
+      const BrowserCommandIntent('back'),
+    BrowserKeyActivator(LogicalKeyboardKey.arrowRight, alt: true, admit: () => _admitBrowserKey):
+      const BrowserCommandIntent('forward'),
   };
 
   late final SyncController _sync;
@@ -1579,6 +1689,8 @@ class _FilesPageState extends State<FilesPage> {
   Future<void> _navigateIndexedEntry(SearchEntry entry, {required bool containingOnly}) async {
     final index = widget.session.search;
     if (!mounted || index.closed) return;
+    final intent = ++_navigationGeneration;
+    bool current() => mounted && !index.closed && intent == _navigationGeneration;
     try {
       await widget.operations.run(widget.session.handle, () async {
         final parents = await resolveSearchLocation(index: index, entry: entry,
@@ -1590,7 +1702,7 @@ class _FilesPageState extends State<FilesPage> {
               files.map((file) => (id: file.id, nameEnc: file.nameEnc)).toList());
             return {for (var i = 0; i < files.length; i++) files[i].id: names[i]};
           });
-        if (!mounted || index.closed) return;
+        if (!current()) return;
         setState(() {
           _search = '';
           _folderFilter.clear();
@@ -1599,12 +1711,19 @@ class _FilesPageState extends State<FilesPage> {
           _files = [];
         });
         await _refreshNow(redactErrors: true);
-        if (!mounted || index.closed || _error != null || containingOnly || entry.file.isDir) return;
-        final current = _files.where((file) => file.id == entry.file.id).firstOrNull;
-        if (current != null) _open(current);
+        if (!current() || _error != null || containingOnly || entry.file.isDir) return;
+        final selected = _files.where((file) => file.id == entry.file.id).firstOrNull;
+        if (selected != null) _open(selected);
       });
+    } on ApiException catch (error) {
+      if (!current()) return;
+      if (error.status == 401) {
+        widget.onSignOut();
+      } else {
+        _showError('Folder unavailable. Refresh the source page and retry.');
+      }
     } catch (_) {
-      if (mounted && !index.closed) {
+      if (current()) {
         _showError('Folder unavailable. Refresh the source page and retry.');
       }
     }
@@ -1738,9 +1857,12 @@ class _FilesPageState extends State<FilesPage> {
 
   Future<void> _refresh() => _fileOperation(_refreshNow);
 
-  Future<void> _refreshNow({bool redactErrors = false}) async {
+  Future<void> _refreshNow({bool redactErrors = false, int? historyIndex}) async {
     _dismissDetails();
     final generation = ++_refreshGeneration;
+    final navigation = _navigationGeneration;
+    bool current() => mounted && !widget.session.search.closed &&
+        generation == _refreshGeneration && navigation == _navigationGeneration;
     final parentIds = _path.map((entry) => entry.id).toList();
     setState(() {
       _loading = true;
@@ -1749,11 +1871,13 @@ class _FilesPageState extends State<FilesPage> {
     });
     try {
       final me = await _api.me();
+      if (!current()) return;
       if (_sync.loaded && _sync.accountRoots.isNotEmpty) {
         await _sync.refreshAccountRoots();
       }
+      if (!current()) return;
       final files = await _api.listFiles(parentId: parentIds.lastOrNull);
-      if (!mounted || widget.session.search.closed) return;
+      if (!current()) return;
       final bridge = NativeBridge.instance;
       final names = <String, String>{};
       for (final f in files) {
@@ -1765,7 +1889,7 @@ class _FilesPageState extends State<FilesPage> {
       }
       await _sync.scanConflicts();
       final availability = await _inspectAvailability(parentIds);
-      if (!mounted || widget.session.search.closed || generation != _refreshGeneration) return;
+      if (!current()) return;
       setState(() {
         _availability = availability;
         _me = me;
@@ -1781,9 +1905,10 @@ class _FilesPageState extends State<FilesPage> {
           if (keep.contains(root.nodeId)) _names[root.nodeId] = accountRootLabel(root);
         }
         _browserListing = BrowserListing(_files, _name);
+        _rememberLocation(historyIndex: historyIndex);
       });
     } on ApiException catch (e) {
-      if (!mounted || generation != _refreshGeneration) return;
+      if (!current()) return;
       if (e.status == 401) {
         widget.onSignOut();
         return;
@@ -1793,7 +1918,7 @@ class _FilesPageState extends State<FilesPage> {
           ? 'Folder unavailable. Refresh and retry.' : e.toString());
       }
     } catch (e) {
-      if (mounted && generation == _refreshGeneration) {
+      if (current()) {
         setState(() => _error = redactErrors
           ? 'Folder unavailable. Refresh and retry.' : e.toString());
       }
@@ -1806,11 +1931,12 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   void _open(RemoteFile file) {
+    if (!mounted || _loading || widget.session.search.closed ||
+        !_files.any((entry) => identical(entry, file))) {
+      return;
+    }
     if (file.isDir) {
-      _dismissDetails();
-      ++_navigationGeneration;
-      setState(() => _path.add(file));
-      _refresh();
+      _visitLocation([..._path.map((entry) => entry.id), file.id]);
       return;
     }
     _itemActions(file);
@@ -1820,11 +1946,8 @@ class _FilesPageState extends State<FilesPage> {
   /// this, so back cannot drop the user out of the account while a folder is
   /// open.
   void _up() {
-    if (_path.isEmpty) return;
-    _dismissDetails();
-    ++_navigationGeneration;
-    setState(() => _path.removeLast());
-    _refresh();
+    if (_path.isEmpty || widget.session.search.closed) return;
+    _visitLocation(_path.take(_path.length - 1).map((entry) => entry.id).toList());
   }
 
   /// Keeps Android back inside the folder trail. The route itself stays
@@ -3118,6 +3241,17 @@ class _FilesPageState extends State<FilesPage> {
         children: [
           if (space != null && spaceNotice != null)
             SpaceWriteNotice(root: space, message: spaceNotice),
+          Row(children: [
+            IconButton(tooltip: 'Back in listing history',
+              onPressed: _browserCommandsReady && _historyIndex > 0 ? () => _historyStep(-1) : null,
+              icon: const Icon(Icons.arrow_back)),
+            IconButton(tooltip: 'Forward in listing history',
+              onPressed: _browserCommandsReady && _historyIndex + 1 < _listingHistory.length
+                  ? () => _historyStep(1) : null,
+              icon: const Icon(Icons.arrow_forward)),
+            Expanded(child: BrowserBreadcrumbs(names: _path.map(_name).toList(),
+              onVisit: _breadcrumbVisitor)),
+          ]),
           Align(alignment: Alignment.centerLeft, child: Wrap(children: [
             TextButton.icon(
               onPressed: _browserCommandsReady ? () => _showCommands() : null,
@@ -3235,7 +3369,7 @@ class _EmptyView extends StatelessWidget {
   const _EmptyView();
   @override
   Widget build(BuildContext context) => Center(
-        child: Column(
+        child: SingleChildScrollView(child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             const Icon(Icons.folder_open, size: 48),
@@ -3244,7 +3378,7 @@ class _EmptyView extends StatelessWidget {
             const SizedBox(height: 4),
             const Text('Use + to upload a file or create a folder.'),
           ],
-        ),
+        )),
       );
 }
 
