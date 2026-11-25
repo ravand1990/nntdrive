@@ -16,8 +16,11 @@ identity, retained filter/Grid/current folder, actual list/grid size differences
 320/800 dp and 100/200% text, and scrollable 200% dialog/48 dp targets. Independently
 disconnecting production density forwarding fails (expected Compact, got Comfortable);
 disconnecting the theme callback fails (expected persisted Dark index 2, got null).
-Both sabotages were restored. An initial recreation fixture expected onboarding
-even after prior confirmation; it now accepts the real remembered-confirmation path.
+Both sabotages were restored. Initial fixture corrections removed assumptions
+about repeated onboarding and OS-specific default device labels: hosted Linux and
+Windows initially failed the density filter fixture because their suggested label
+did not contain `Dev`. The fixture now explicitly confirms `Device` before checking
+filter preservation; production naming and collision rules were not changed.
 
 The restored focused appearance/browser-view suite and clean analysis exited 0.
 The canonical `bash scripts/dev-check.sh flutter` exited 0 with pinned Flutter

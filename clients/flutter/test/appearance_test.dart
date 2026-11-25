@@ -41,6 +41,9 @@ Future<void> unlock(WidgetTester tester) async {
                 .any((f) => f.enabled != false)),
   );
   if (find.byType(DeviceOnboardingPage).evaluate().isNotEmpty) {
+    // Default suggestions depend on the runner's OS/device identity. Keep the
+    // later folder-filter assertion independent of that installed environment.
+    await tester.enterText(find.byType(TextField), 'Device');
     await tester.runAsync(() async {
       await tester.tap(
         find.widgetWithText(FilledButton, 'Confirm device name'),
