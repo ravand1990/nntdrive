@@ -65,6 +65,29 @@ listing incremental or establish installed frame-time performance. Synthetic 10k
 fixtures and real FilesPage wiring/layout tests are not installed-device acceptance.
 The remaining #219 stages stay open; installed acceptance is tracked on #222.
 
+### Loading, empty folders and listing errors (#219 bounded slice)
+
+While an authenticated folder listing is pending, the browser shows static
+placeholders using theme surface roles and a single **Loading folder** semantic
+announcement. There is no shimmer, timer or animation, including with reduced
+motion enabled. Placeholders are decorative, not file rows or selectable items.
+An empty folder offers **Upload a file** and **Create folder**, delegating to the
+existing file picker and guarded creation dialog. A filter with no results instead
+explains **No matching files** and offers **Clear filter**, which clears the visible
+field and local query without another listing request.
+
+Listing failures show **Could not load this folder**, generic refresh guidance and
+**Retry**; raw HTTP/native diagnostics are not displayed. Retry repeats the existing
+authenticated listing workflow for the current location. HTTP 401 still requests
+sign-out instead of Retry. Loading and error states replace prior rows: a retained
+stale snapshot is not yet displayed. Errors never masquerade as an empty folder.
+These scrollable states wrap their labelled actions with at least 48 dp targets;
+light/dark, narrow 200% text, semantic loading and session-drain widget fixtures are
+automated evidence, not installed screen-reader, file-picker or visual acceptance.
+No protocol, crypto, selection, persistence or lifecycle ownership changes were
+added. Stale-content retention and all other remaining #219 design criteria stay
+open; installed accessibility/screenshots/performance acceptance remains #222.
+
 ### Read-only file details (#219 bounded slice)
 
 Use the **Details for <name>** information button on a file or folder in either

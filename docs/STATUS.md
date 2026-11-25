@@ -43,6 +43,39 @@ and the subsequent complete canonical run passed. Pinned SDK tag-fetch advisory
 errors did not prevent that final check. Installed screen-reader, screenshots,
 keyboard/gesture and performance acceptance remain #222, not these widget tests.
 
+## Browser loading, empty and error states (#219 bounded slice)
+
+FilesPage now replaces the central listing spinner with a static theme-role
+skeleton: decorative rows, one Loading folder semantic announcement and no timers
+or animation under normal or reduced-motion settings. Empty folders expose real
+Upload/Create folder adapters; no-match filters instead expose Clear filter without
+HTTP. Shared scrollable notices wrap 48 dp actions. Listing failures redact both
+API and other exceptions, preserve 401 sign-out and Retry through the existing
+session-owned refresh. Loading/errors hide prior rows; retaining a labelled stale
+snapshot is still unfinished. No backend/crypto, selection or session-owner change.
+
+Ten new production FilesPage regressions use real native sealed names and an
+unlocked authenticated Session with injected transport. They cover suspended
+listing -> List/Grid or empty, the real creation dialog, clearing the visible
+filter without listing, API/non-API redaction and Retry -> loading -> rows, 401,
+refresh failure hiding previous rows, suspended close/drain with late-result and
+keyboard rejection, and light/dark 390 dp / 200% scrollability, theme roles,
+semantics and minimum action heights. Against original production, the initial
+eight-test version failed seven tests (401 passed), before implementation. An
+initial expanded focused run exposed a session fixture that awaited only the old
+spinner; it now explicitly waits for the static loading state too, without
+weakening its controller/key/drain assertions. The storage-navigation waiter was
+updated for the same exact pending state.
+
+The canonical `bash scripts/dev-check.sh flutter` exited 0: release native build,
+clean analysis and **927 tests passed / 5 skipped**. The final focused browser /
+commands/navigation/history/views/details/session/storage-navigation run passed
+**78 tests**, with new-file formatting checks clean. The SDK's advisory failed
+Git tag fetch did not prevent the check. Widget transport injection is not real
+HTTP, an installed file-picker run, screen-reader, screenshot or frame-time
+acceptance (#222). Selection, docked details, embedded shell, remaining visual /
+mobile criteria and all other #219 work remain open; no stage is completed here.
+
 ## Browser list/grid and local ordering (#219 bounded slice)
 
 The real FilesPage now exposes lazy List/Grid surfaces and labelled Name, Size,

@@ -91,6 +91,7 @@ Future<void> turns(WidgetTester tester) async {
     await tester.pump(const Duration(milliseconds: 20));
     if (i > 30 &&
         find.byType(LinearProgressIndicator).evaluate().isEmpty &&
+        find.byKey(const ValueKey('browser-loading')).evaluate().isEmpty &&
         find.byType(CircularProgressIndicator).evaluate().isEmpty) {
       return;
     }

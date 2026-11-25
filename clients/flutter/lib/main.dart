@@ -36,6 +36,7 @@ import 'desktop_lifecycle.dart';
 import 'secure_keyfile.dart';
 import 'session_operations.dart';
 import 'local_availability.dart';
+import 'browser_listing_states.dart';
 import 'browser_views.dart';
 import 'browser_file_details.dart';
 import 'browser_commands.dart';
@@ -1285,7 +1286,7 @@ class _FilesPageState extends State<FilesPage> {
           _search = '';
           _folderFilter.clear();
         });
-        await _refreshNow(redactErrors: true, historyIndex: historyIndex);
+        await _refreshNow(historyIndex: historyIndex);
       });
     } on ApiException catch (error) {
       if (!current()) return;
@@ -1654,7 +1655,7 @@ class _FilesPageState extends State<FilesPage> {
           _search = '';
           _folderFilter.clear();
         });
-        await _refreshNow(redactErrors: true);
+        await _refreshNow();
       });
     } on ApiException catch (e) {
       if (!current()) return;
@@ -1710,7 +1711,7 @@ class _FilesPageState extends State<FilesPage> {
           _names.addAll({for (final parent in parents) parent.file.id: parent.name});
           _files = [];
         });
-        await _refreshNow(redactErrors: true);
+        await _refreshNow();
         if (!current() || _error != null || containingOnly || entry.file.isDir) return;
         final selected = _files.where((file) => file.id == entry.file.id).firstOrNull;
         if (selected != null) _open(selected);
@@ -1857,7 +1858,7 @@ class _FilesPageState extends State<FilesPage> {
 
   Future<void> _refresh() => _fileOperation(_refreshNow);
 
-  Future<void> _refreshNow({bool redactErrors = false, int? historyIndex}) async {
+  Future<void> _refreshNow({int? historyIndex}) async {
     _dismissDetails();
     final generation = ++_refreshGeneration;
     final navigation = _navigationGeneration;
@@ -1914,13 +1915,11 @@ class _FilesPageState extends State<FilesPage> {
         return;
       }
       if (mounted) {
-        setState(() => _error = redactErrors
-          ? 'Folder unavailable. Refresh and retry.' : e.toString());
+        setState(() => _error = 'Folder unavailable. Refresh and retry.');
       }
     } catch (e) {
       if (current()) {
-        setState(() => _error = redactErrors
-          ? 'Folder unavailable. Refresh and retry.' : e.toString());
+        setState(() => _error = 'Folder unavailable. Refresh and retry.');
       }
     } finally {
       if (mounted && generation == _refreshGeneration) {
@@ -3273,15 +3272,37 @@ class _FilesPageState extends State<FilesPage> {
           ),
           Expanded(
             child: _loading
-                ? const Center(child: CircularProgressIndicator())
+                ? const BrowserLoadingSkeleton()
                 : _error != null
-                    ? _ErrorView(error: _error!, onRetry: _refresh)
+                    ? BrowserListingNotice(
+                        icon: Icons.cloud_off, isError: true,
+                        title: 'Could not load this folder', message: _error!,
+                        actions: [FilledButton(onPressed: _refresh,
+                          style: FilledButton.styleFrom(minimumSize: const Size(48, 48)),
+                          child: const Text('Retry'))],
+                      )
                     : filtered.isEmpty
-                        ? (_search.isEmpty ? const _EmptyView() : Center(child: TextButton(
-                            onPressed: () => setState(() { _search = ''; _folderFilter.clear(); }),
-                            style: TextButton.styleFrom(minimumSize: const Size(48, 48)),
-                            child: const Text('No matching files. Clear filter'),
-                          )))
+                        ? (_search.isEmpty
+                          ? BrowserListingNotice(
+                              icon: Icons.folder_open, title: 'This folder is empty',
+                              message: 'Upload a file or create a folder to get started.',
+                              actions: [
+                                FilledButton(onPressed: _upload,
+                                  style: FilledButton.styleFrom(minimumSize: const Size(48, 48)),
+                                  child: const Text('Upload a file')),
+                                OutlinedButton(onPressed: _createFolder,
+                                  style: OutlinedButton.styleFrom(minimumSize: const Size(48, 48)),
+                                  child: const Text('Create folder')),
+                              ],
+                            )
+                          : BrowserListingNotice(
+                              icon: Icons.search_off, title: 'No matching files',
+                              message: 'Try a different folder filter or clear it to see all items.',
+                              actions: [FilledButton(
+                                onPressed: () => setState(() { _search = ''; _folderFilter.clear(); }),
+                                style: FilledButton.styleFrom(minimumSize: const Size(48, 48)),
+                                child: const Text('Clear filter'))],
+                            ))
                         : RefreshIndicator(
                       onRefresh: _refresh,
                       child: BrowserFilesView(
@@ -3340,46 +3361,6 @@ class _FilesPageState extends State<FilesPage> {
       ),
     ))));
   }
-}
-
-class _ErrorView extends StatelessWidget {
-  const _ErrorView({required this.error, required this.onRetry});
-  final String error;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.cloud_off, size: 44),
-              const SizedBox(height: 12),
-              Text(error, textAlign: TextAlign.center),
-              const SizedBox(height: 16),
-              FilledButton(onPressed: onRetry, child: const Text('Retry')),
-            ],
-          ),
-        ),
-      );
-}
-
-class _EmptyView extends StatelessWidget {
-  const _EmptyView();
-  @override
-  Widget build(BuildContext context) => Center(
-        child: SingleChildScrollView(child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.folder_open, size: 48),
-            const SizedBox(height: 10),
-            Text('This folder is empty', style: Theme.of(context).textTheme.titleMedium),
-            const SizedBox(height: 4),
-            const Text('Use + to upload a file or create a folder.'),
-          ],
-        )),
-      );
 }
 
 String _formatBytes(int bytes) {
