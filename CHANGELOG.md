@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Features
+
+- Added static, theme-role folder-loading skeletons with one semantic announcement and no animation/timers, direct Upload/Create folder empty-state actions, distinct Clear filter guidance, and redacted retryable listing errors (#219 bounded browser slice). Existing authenticated listing, List/Grid, keyboard admission, sign-out and session drain remain authoritative. Scrollable states retain 48 dp actions at narrow/200% text. Refresh hides prior rows instead of presenting stale data as current; stale-snapshot retention is not implemented. Other redesign criteria remain open, with installed accessibility/screenshots/performance acceptance on #222.
+
 ## [0.37.0] - 2026-11-25
 
 ### Documentation

@@ -228,6 +228,23 @@ data, key handles, preferences or the wire protocol.
 
 ## Bounded implementation progress (not stage completion)
 
+The loading/empty/error increment now wires a static theme-surface skeleton into
+production FilesPage rather than the central spinner. It exposes one Loading
+folder semantic announcement with decorative noninteractive rows, no animation
+or timers (reduced motion by construction). Shared scrollable notices provide
+real Upload/Create folder adapters, a distinct no-match Clear filter action and
+redacted listing-failure guidance with Retry; HTTP 401 still signs out. List/Grid,
+keyboard admission, authenticated names and session drain keep their existing
+owners. Light/dark 390 dp / 200% text, semantic/action-size, suspended-listing and
+close/drain regressions are automated evidence, not installed acceptance. The
+original-production regression run failed seven of eight new tests before fixing;
+the final canonical check passed clean analysis, native release build and 927
+tests / 5 skips (STATUS.md). Refresh deliberately replaces prior rows with the
+skeleton/error rather than retaining a labelled stale snapshot: that proposed
+behavior remains open. This slice does not complete shared states across other
+pages, selection, docked details, embedded shell, visual/mobile stages or installed
+accessibility/screenshots/performance (#222); all other #219 criteria stay open.
+
 Compact navigation now implements Files/Search/Sync/Activity/More over the existing
 browser adapters, not an app-wide embedded shell. Files explicitly chooses Global
 or Devices, More contains the remaining real destinations, and grouped selected

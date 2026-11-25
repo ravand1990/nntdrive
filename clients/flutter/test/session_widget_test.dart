@@ -72,6 +72,7 @@ void main() {
     await tester.runAsync(() async {
       await tester.tap(find.widgetWithText(FilledButton, 'Confirm device name'));
       for (var i = 0; i < 100 && (find.byType(FilesPage).evaluate().isEmpty ||
+          find.byKey(const ValueKey('browser-loading')).evaluate().isNotEmpty ||
           find.byType(CircularProgressIndicator).evaluate().isNotEmpty); i++) {
         await Future<void>.delayed(const Duration(milliseconds: 20));
         await tester.pump();
