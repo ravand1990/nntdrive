@@ -242,13 +242,25 @@ evidence only.
 
 The bounded browser command palette/help now delegates Refresh, focus folder
 filter, account Search, authenticated parent Up and current location/page adapters.
-Ctrl/Cmd+K, Ctrl/Cmd+/, Ctrl/Cmd+F, Ctrl/Cmd+Shift+F, F5 and Alt+Up are the only
+Ctrl/Cmd+K, Ctrl/Cmd+/, Ctrl/Cmd+F, Ctrl/Cmd+Shift+F, F5, Alt+Up and Alt+Left/Right are the
 registered browser bindings; both Ctrl/Cmd variants are accepted, not an installed
 macOS promise. Editing/IME, modal/covered routes, loading/errors and closed/stale
 views are excluded. It is not the proposed selection/action registry: item open,
 rename, delete, move, copy, select-all/clear and context-menu keys remain unfinished
-without selection. Breadcrumb/history bindings, selection and all remaining
+without selection. Selection and all remaining
 Stage 1/2/3 criteria remain on #219; installed acceptance remains #222.
+
+The bounded breadcrumb/history increment now exposes current ancestry with an
+ancestor overflow menu and at most 100 view-local successful opaque-ID trails.
+Buttons, Alt+Left/Right and palette entries share Back/Forward; Up/system Back
+remains parent traversal. Fresh per-ancestor unique membership/type and native
+name authentication precede visits; generations reject obsolete callbacks/results,
+and close clears labels/history/filter. Forward branches truncate on new visits,
+not ordinary refresh. This does not implement app-wide route history, per-visit
+selection/filter/scroll restoration, persistence, atomic traversal or continuous
+ancestor rename/move freshness. Ordinary Refresh retains ancestor labels until
+the next navigation. See CLIENTS.md for failure/Retry and mixed-time costs, and
+STATUS.md for exercised automated evidence; installed acceptance remains #222.
 
 ## First-party references (read 2026-11-24)
 

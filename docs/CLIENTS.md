@@ -22,7 +22,7 @@ and do not yet embed this navigation. Resizing/collapse does not create a second
 session or controller; collapse lasts only for this browser view.
 
 The [adaptive client design brief](UI-UX-DESIGN.md) remains the broader contract.
-Favorites/Recent projections, embedded child pages, breadcrumbs/history and
+Favorites/Recent projections, embedded child pages and
 selection are unfinished; the bounded keyboard palette and read-only details
 are described below.
 Installed platform/accessibility/performance acceptance remains unverified.
@@ -116,11 +116,47 @@ its field). A field's own select-all/delete/copy/paste behavior is not replaced.
 
 Item open/rename/delete/move/copy/select-all/clear-selection/context-menu keys remain
 **unfinished without selection**, not disabled promises of implemented actions.
-Breadcrumb/history Alt+Left/Right is also unfinished; Alt+Up is parent navigation,
+Alt+Left/Right now follows listing history (below); Alt+Up is parent navigation,
 not visit history. No destructive browser shortcut is registered. Ctrl and Cmd
 variants are exercised in widget tests, not an installed macOS delivery claim.
 Installed Windows/Linux/Android keyboard, screen-reader and performance acceptance
 remain #222; the wider Stage 1/2/3 redesign remains open on #219.
+
+### Breadcrumbs and listing history (#219 bounded slice)
+
+The ancestry bar shows **Browser root** and the current folder trail. Select an
+ancestor to visit it; the current crumb is disabled. Below 700 dp of breadcrumb
+space, above 130% text, or beyond four folders, middle ancestors move into the
+labelled **Ancestor folders** menu. Labels ellipsize with full tooltips, and menu
+labels wrap. **Back/Forward in listing history**, Alt+Left/Right and the same
+palette commands revisit successful browser locations, not application routes.
+Up, Alt+Up and Android system Back retain parent traversal, creating ordinary
+visits; at browser root Android Back can still leave the app.
+
+History keeps at most 100 locations as opaque ancestor-ID lists in view RAM.
+Refresh/reselecting the same location adds no duplicate; a new successful branch
+truncates Forward. Global/Devices and search/dashboard browser destinations join
+the same successful-listing history; child Sync/Activity/Search/Trash/settings
+routes are not history entries. Filters clear on location changes; scroll,
+selection, filter and view restoration per visit are not implemented. Close clears
+history, decrypted labels/listing and the folder filter; nothing is persisted.
+
+Folder open, Up, breadcrumbs and history re-list each expected ancestor from
+root, require unique exact ID/parent/directory membership and locally authenticate
+its fresh name before committing the trail. Missing/moved/duplicate/type-changed
+or unreadable ancestry fails with generic refresh guidance, without advancing the
+history cursor. Preliminary HTTP 401 keeps sign-out behavior. Final listing errors
+retain the attempted trail with Retry, but do not record a successful visit until
+refresh succeeds. Newer navigation/refresh/close invalidates pending results and
+retained breadcrumb callbacks; admitted work remains in session drain.
+
+This is sequential mixed-time validation, not an atomic namespace snapshot or
+continuous rename/move freshness. Ordinary Refresh still lists the current folder
+and retains previously authenticated ancestor labels until the next navigation.
+Ancestry visits cost one listing per ancestor plus the normal listing/availability
+refresh; full-list decryption and history RAM remain caller-side. Production widget
+tests use real native sealed names, not a live backend or installed OS keyboard/
+screen-reader/performance acceptance (#222). Remaining #219 stages stay open.
 
 ## Current state
 

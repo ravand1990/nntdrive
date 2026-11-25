@@ -13,8 +13,8 @@ reuse existing owners and routes. The browser alone no longer has the 840 dp
 readable-content cap; other pages retain their existing frames.
 
 This is browser chrome only: child routes do not retain the sidebar, and no new
-session/controller/navigation history is created. Favorites/Recent projections,
-embedded child pages, breadcrumbs/history, selection/item-keyboard work
+session/controller is created. Favorites/Recent projections,
+embedded child pages, selection/item-keyboard work
 and the broader #219 redesign remain unfinished. Collapse is view-local, not a
 persisted preference. Widget fixtures are not installed Windows/Linux/Android,
 accessibility or large-folder performance acceptance.
@@ -107,7 +107,40 @@ new production FilesPage command regressions). The complete canonical
 build and **901 tests passed / 5 skipped**. Independent static diff review found
 no blocking issues. Installed OS/keyboard/screen-reader/performance evidence
 is not claimed (#222). Item open/rename/delete/move/copy/select-all/clear/context-menu
-keys, breadcrumbs/history, selection and remaining #219 stages are unfinished.
+keys, selection and remaining #219 stages are unfinished. Breadcrumb/history
+support is described below.
+
+## Browser breadcrumbs and listing history (#219 bounded slice)
+
+FilesPage now exposes current ancestry, ancestor navigation/overflow and bounded
+Back/Forward successful-listing history through buttons, Alt+Left/Right and the
+palette. History stores at most 100 opaque-ID trails in view RAM, suppresses
+refresh duplicates, truncates forward branches and clears with decrypted labels
+and filters on close. Folder open, Up, breadcrumbs and history freshly re-list and
+authenticate unique directory ancestry; moved/missing/duplicate/type/ciphertext
+failures do not advance the cursor. Preliminary 401 sign-out and redacted errors
+remain intact, and navigation/refresh generations reject obsolete responses and
+callbacks. Existing Up/system Back stays parent traversal; child routes are not
+listing history. No backend, protocol, crypto or plaintext persistence changes.
+
+Pinned `bash scripts/dev-check.sh flutter` exited 0: native release build, clean
+analysis and **913 tests passed / 5 skipped**. The focused history/navigation/
+commands/storage-navigation run passed **42 tests**. Twelve new production widget
+regressions exercise native sealed-name ancestry, branching/refresh duplicates,
+fresh renamed labels, invalid membership/type/ciphertext, 401/500, suspended newer
+intent/close, stale callbacks, keyboard/palette and narrow 200% overflow. Replacing
+history with Up and ignoring breadcrumb ancestor selection independently failed
+the production regression; both sabotages were restored before the canonical run.
+The initial full run exposed existing title-only assertions now also seeing the
+breadcrumb label; those assertions were updated explicitly for both observations.
+
+Sequential ancestry validation is mixed-time, not atomic or continuously fresh;
+ordinary Refresh retains prior ancestor labels. A failed final listing retains
+its attempted trail with Retry without recording a successful visit. Full listing/
+decryption and per-ancestor HTTP costs remain; history does not restore filters,
+scroll or selection and is not a persisted/app-wide route model. Installed OS,
+keyboard, accessibility and performance acceptance remains #222. #219 stays open;
+no redesign stage is declared complete.
 
 ## Pre-login desktop startup choice (#218)
 

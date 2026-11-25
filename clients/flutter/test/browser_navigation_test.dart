@@ -242,7 +242,7 @@ void main() {
     await tester.enterText(find.byType(TextField), 'does not match');
     await select(SessionDestination.global);
     expect(api.parents.last, id);
-    expect(find.text('Authenticated Global'), findsOneWidget);
+    expect(find.text('Authenticated Global'), findsNWidgets(2));
     expect(tester.widget<TextField>(find.byType(TextField)).controller!.text, isEmpty);
     expect(browserBackScope(tester).canPop, isFalse);
     await select(SessionDestination.devices);
@@ -415,7 +415,7 @@ void main() {
 
     await tester.tap(find.text('Docs'));
     await tester.pumpAndSettle();
-    expect(find.text('Docs'), findsOneWidget);
+    expect(find.text('Docs'), findsNWidgets(2));
     expect(find.byTooltip('Up one folder'), findsOneWidget);
     expect(browserBackScope(tester).canPop, isFalse,
         reason: 'back must be handled by the folder trail, not the route');
