@@ -100,6 +100,83 @@ void main() {
     }
   }
 
+  for (final scale in [1.0, 2.0]) {
+    testWidgets(
+      'docked details at $scale scroll long names with reachable Close',
+      (tester) async {
+        var closed = false;
+        final semantics = tester.ensureSemantics();
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: ThemeData(brightness: Brightness.dark),
+            home: MediaQuery(
+              data: MediaQueryData(textScaler: TextScaler.linear(scale)),
+              child: Scaffold(
+                body: Align(
+                  alignment: Alignment.topRight,
+                  child: SizedBox(
+                    width: 320,
+                    height: 360,
+                    child: BrowserFileDetails.observed(
+                      file: RemoteFile(
+                        'opaque',
+                        null,
+                        '',
+                        false,
+                        123,
+                        false,
+                        1,
+                        null,
+                      ),
+                      name: List.filled(300, 'x').join(),
+                      availability: LocalAvailability.unknown,
+                      pinned: false,
+                      docked: true,
+                      onClose: () => closed = true,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+        expect(find.byType(AlertDialog), findsNothing);
+        final scroll = tester.state<ScrollableState>(
+          find
+              .descendant(
+                of: find.byType(BrowserFileDetails),
+                matching: find.byType(Scrollable),
+              )
+              .first,
+        );
+        expect(scroll.position.maxScrollExtent, greaterThan(0));
+        scroll.position.jumpTo(scroll.position.maxScrollExtent);
+        await tester.pumpAndSettle();
+        final close = find.widgetWithText(TextButton, 'Close details');
+        expect(
+          tester.getBottomLeft(find.textContaining('may be stale')).dy,
+          lessThanOrEqualTo(tester.getTopLeft(close).dy),
+        );
+        expect(tester.getSize(close).height, greaterThanOrEqualTo(48));
+        expect(
+          tester.getSemantics(close),
+          isSemantics(
+            label: 'Close details',
+            isButton: true,
+            isEnabled: true,
+            hasEnabledState: true,
+            hasTapAction: true,
+            isFocusable: true,
+          ),
+        );
+        await tester.tap(close);
+        expect(closed, isTrue);
+        expect(tester.takeException(), isNull);
+        semantics.dispose();
+      },
+    );
+  }
+
   testWidgets(
     'details freezes current evidence and separates folders and pins',
     (tester) async {

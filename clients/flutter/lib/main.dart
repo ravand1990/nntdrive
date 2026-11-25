@@ -1450,6 +1450,9 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   Map<ShortcutActivator, Intent> get _browserKeys => {
+    BrowserKeyActivator(LogicalKeyboardKey.escape,
+      admit: () => _browserCommandsReady && _detailsPane != null):
+      const BrowserCommandIntent('close-details'),
     for (final meta in [false, true]) ...{
       BrowserKeyActivator(LogicalKeyboardKey.keyK, control: !meta, meta: meta,
         admit: () => _admitBrowserKey): const BrowserCommandIntent('commands'),
@@ -1481,8 +1484,11 @@ class _FilesPageState extends State<FilesPage> {
   Map<String, LocalAvailability> _availability = {};
   int _refreshGeneration = 0;
   DialogRoute<void>? _detailsRoute;
+  BrowserFileDetails? _detailsPane;
+  bool _canDockDetails = false;
 
   void _dismissDetails() {
+    if (_detailsPane != null) setState(() => _detailsPane = null);
     // Both transient browser observations share refresh/navigation invalidation.
     _dismissCommands();
     final route = _detailsRoute;
@@ -1490,24 +1496,75 @@ class _FilesPageState extends State<FilesPage> {
     if (route != null && route.isActive) route.navigator?.removeRoute(route);
   }
 
+  ValueChanged<RemoteFile> get _detailsCallback {
+    final generation = _refreshGeneration;
+    final navigation = _navigationGeneration;
+    return (file) {
+      if (generation == _refreshGeneration && navigation == _navigationGeneration) {
+        _showDetails(file);
+      }
+    };
+  }
+
   void _showDetails(RemoteFile file) {
-    if (!mounted || _loading || _error != null || widget.session.search.closed ||
+    if (!_browserCommandsReady ||
         !_files.any((entry) => identical(entry, file))) {
       return;
     }
     _dismissDetails();
-    final details = BrowserFileDetails.observed(
+    late final BrowserFileDetails details;
+    details = BrowserFileDetails.observed(
       file: file,
       name: _name(file),
       availability: _availability[file.id] ?? LocalAvailability.unknown,
       pinned: _offlinePins.contains(_pinKey(file.id, file.currentVersion ?? '')),
+      docked: _canDockDetails,
+      onClose: _canDockDetails ? () {
+        if (mounted && identical(_detailsPane, details)) _dismissDetails();
+      } : null,
     );
+    if (_canDockDetails) {
+      setState(() => _detailsPane = details);
+      return;
+    }
     final route = DialogRoute<void>(context: context, builder: (_) => details);
     _detailsRoute = route;
     Navigator.of(context).push(route).whenComplete(() {
       if (identical(_detailsRoute, route)) _detailsRoute = null;
     });
   }
+
+  Widget _detailsLayout(Widget browser) => LayoutBuilder(
+    builder: (context, constraints) {
+      // Use actual post-navigation space, not just the outer window width.
+      final dock = MediaQuery.sizeOf(context).width >= 1200 &&
+          constraints.maxWidth >= 801;
+      if (_canDockDetails != dock) {
+        _canDockDetails = dock;
+        final pane = _detailsPane;
+        final route = _detailsRoute;
+        // Deliberately dismiss on a mode change, without Navigator mutations
+        // during layout. Do not let an old resize callback close a new item.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          if ((pane != null && identical(_detailsPane, pane)) ||
+              (route != null && identical(_detailsRoute, route))) {
+            _dismissDetails();
+          }
+        });
+      }
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(child: browser),
+          if (dock && _detailsPane != null) ...[
+            const VerticalDivider(width: 1),
+            SizedBox(width: 320, child: _detailsPane),
+          ],
+        ],
+      );
+    },
+  );
 
   /// Opened lazily: the first listing refresh or offline action opens it, and
   /// until then no cache directory is created on a device that never uses one.
@@ -1969,10 +2026,14 @@ class _FilesPageState extends State<FilesPage> {
   /// Keeps Android back inside the folder trail. The route itself stays
   /// poppable only at the account root, so back then exits the app normally.
   Widget _backScope(Widget child) => PopScope(
-        canPop: _path.isEmpty,
+        canPop: _path.isEmpty && _detailsPane == null,
         onPopInvokedWithResult: (didPop, Object? result) {
           if (didPop) return;
-          _up();
+          if (_detailsPane != null) {
+            _dismissDetails();
+          } else {
+            _up();
+          }
         },
         child: child,
       );
@@ -3182,7 +3243,11 @@ class _FilesPageState extends State<FilesPage> {
         actions: <Type, Action<Intent>>{
           BrowserCommandIntent: CallbackAction<BrowserCommandIntent>(
             onInvoke: (intent) {
-              if (_admitBrowserKey) _runBrowserCommand(intent.id);
+              if (intent.id == 'close-details') {
+                if (_browserCommandsReady && _detailsPane != null) _dismissDetails();
+              } else if (_admitBrowserKey) {
+                _runBrowserCommand(intent.id);
+              }
               return null;
             }),
         },
@@ -3254,7 +3319,7 @@ class _FilesPageState extends State<FilesPage> {
           ),
         ),
       ),
-      body: _backScope(Column(
+      body: _backScope(_detailsLayout(Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (space != null && spaceNotice != null)
@@ -3334,12 +3399,12 @@ class _FilesPageState extends State<FilesPage> {
                         onOpen: _open,
                         onActions: _itemActions,
                         onReveal: _revealLocal,
-                        onDetails: _showDetails,
+                        onDetails: _detailsCallback,
                       ),
               ),
           ),
         ],
-      )),
+      ))),
       floatingActionButton: FloatingActionButton(
         onPressed: () => showModalBottomSheet<void>(
           context: context,

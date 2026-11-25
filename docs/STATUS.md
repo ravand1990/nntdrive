@@ -108,7 +108,7 @@ commands/navigation/history/views/details/session/storage-navigation run passed
 **78 tests**, with new-file formatting checks clean. The SDK's advisory failed
 Git tag fetch did not prevent the check. Widget transport injection is not real
 HTTP, an installed file-picker run, screen-reader, screenshot or frame-time
-acceptance (#222). Selection, docked details, embedded shell, remaining visual /
+acceptance (#222). Selection, embedded shell, remaining visual /
 mobile criteria and all other #219 work remain open; no stage is completed here.
 
 ## Browser list/grid and local ordering (#219 bounded slice)
@@ -144,26 +144,41 @@ mobile stages; no selection, navigation history or details were added here.
 ## Read-only browser details (#219 bounded slice)
 
 Both production List/Grid surfaces now expose explicit labelled Details controls.
-A scrollable dialog capped at 560 dp reuses existing decrypted listing metadata
-and frozen local/sync/pin display evidence; opening adds no HTTP, content download,
-filesystem/native inspection, cache/journal open or mutation. Exact listed file
-bytes are not authenticated manifest sizes, folder totals are not calculated,
-UTC modification is namespace time (not access/content age), and absent evidence
-never becomes synced. Pins remain separate from equality/durability. Refresh,
-navigation and controller notifications dismiss the observation; callbacks from
-replaced listing objects are refused. The dialog adapts to available width and
-200% text but does not implement a docked wide details pane or selection model.
+A 320 dp read-only pane now docks at >=1200 dp window width only when the actual
+post-navigation browser body leaves at least 480 dp for files beside a 1 dp divider.
+Smaller layouts retain the scrollable dialog capped at 560 dp. Both reuse the
+existing decrypted listing metadata and frozen local/sync/pin display evidence;
+opening adds no HTTP, content download, filesystem/native inspection, cache/journal
+open or mutation. Exact listed file bytes are not authenticated manifest sizes,
+folder totals are not calculated, UTC modification is namespace time (not
+access/content age), and absent evidence never becomes synced. Pins remain
+separate from equality/durability. The nonmodal pane leaves List/Grid interactive
+and another Details action replaces the observation without selecting/opening
+content. Scrollable metadata and a separate 48 dp Close support enlarged text.
+Close, Escape and system Back dismiss the pane before parent navigation; narrow
+dialog barrier/route behavior is retained. Crossing the docking breakpoint
+explicitly dismisses either presentation after layout rather than migrating stale
+evidence, with identity guards against delayed Close/resize callbacks. Refresh,
+loading/error, navigation, controller notifications, session close and disposal
+invalidate details. Captured refresh/navigation generations reject old row
+callbacks even when transport reuses the same listing models. No selection model,
+new dependencies, protocol, persistence or crypto changes.
 
-Automated verification covers production file/folder List/Grid wiring, frozen
-metadata/evidence, long names, 320/600/1024/1440 dp at normal/200% text, Close,
-Escape/system Back/barrier dismissal and refresh/navigation/controller staleness.
-Missing production and missing grid wiring each fail the production regression
-before restoration. The final pinned canonical `bash scripts/dev-check.sh flutter`
-exited 0 with clean analysis, the native release build and **893 tests passed /
-5 skipped**. The focused details/views/actions/navigation/accessibility/focus suite
-passed **51 tests**. Disposal beneath an open dialog and retained disposed callbacks
-are covered as well. No installed screenshots, accessibility, performance or OS acceptance is claimed
-(#222). Parent #219 remains open; no stage is declared complete.
+The current production FilesPage regression uses real native sealed file/folder
+names and exercises List/Grid docking at 1200 dp, minimum remaining file width,
+replacement/Close/Escape/Back, both resize directions, refresh failure/loading,
+reused-model stale callbacks, controller/navigation, disposal and session close.
+It also opens details at 320/600/1024/1440 dp with 200% text and scrolls through the
+metadata. Two additional dark-theme 320 dp pane tests cover long unbroken names,
+normal/200% text, scroll reachability and semantic/48 dp Close. The original-code
+regression and a production docking-bypass sabotage each exited 1 at the missing
+pane assertion; production was restored. The final pinned canonical
+`bash scripts/dev-check.sh flutter` exited 0 with clean analysis, native release
+build and **941 tests passed / 5 skipped**; the focused details/views suite passed
+**26 tests**. The SDK's advisory failed Git tag fetch did not block execution.
+Earlier dialog/grid wiring regressions remain intact. No installed screenshots,
+screen-reader, performance or OS acceptance is claimed (#222). Parent #219 and
+its broader remaining stages stay open.
 
 ## Browser command palette and safe shortcuts (#219 bounded slice)
 
