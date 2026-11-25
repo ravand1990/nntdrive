@@ -1,5 +1,31 @@
 # Client platforms
 
+## Listing-scoped browser selection (#219 bounded slice)
+
+**Select items** enters explicit selection mode in the current List/Grid view.
+Rows and labelled 48 dp checkboxes toggle original opaque listing entries instead
+of opening them. The live count stays visible; the adjacent action strip scrolls
+horizontally on narrow/200% text layouts (keyboard focus also reveals controls).
+**Select all visible** means all loaded entries matching the folder filter,
+including offscreen lazy rows, not all account files. **Clear selection** stays
+in mode; **Exit selection** restores ordinary row opening and item actions.
+System Back closes docked Details first, then exits selection before going Up.
+Exactly one selected item exposes the existing read-only **Selection details**;
+there are no batch operations or placeholder mutation actions.
+
+Selection and original model references live only in page RAM. Refresh (including
+failure), navigation, close and disposal clear it; changing the folder filter
+clears selections while retaining mode, so hidden entries are not selected.
+List/Grid, sort and appearance changes preserve the current selection. Retained
+selection callbacks reject old listing/navigation/mode/filter generations even
+when transport reuses a model. No native select-all shortcut is intercepted:
+text-field Ctrl/Cmd+A remains editing. Ctrl-click, Shift ranges, long-press entry,
+selection shortcuts and batch writes remain future work. Existing guarded
+single-item operations outside selection mode are unchanged. Synthetic 10k lazy
+selection tests are not installed frame-time/latency or screen-reader acceptance
+(#222); the parent redesign #219 remains incomplete. This section supersedes
+earlier slice-specific statements that selection is entirely unimplemented.
+
 For a dated, source-linked comparison with consumer cloud clients, see
 [Cloud storage parity review](CLOUD-PARITY.md). That review separates integrated
 features, remaining implementation gaps and installed-device acceptance.

@@ -228,6 +228,22 @@ data, key handles, preferences or the wire protocol.
 
 ## Bounded implementation progress (not stage completion)
 
+The explicit selection increment now supplies **Select items**, List/Grid row
+and 48 dp checkbox toggles, live selected count, Select all visible/Clear/Exit and
+existing read-only Details for exactly one original listing model. The action
+strip scrolls horizontally at narrow/200% text rather than shrinking targets.
+Select-all covers loaded filtered entries, not the account. Selection is
+listing-scoped RAM and clears on refresh (including error), navigation, close,
+disposal and filter changes; generations reject obsolete callbacks. Sort/view
+changes retain it. System Back closes docked Details before exiting mode. This
+deliberately conservative filter/refresh clearing supersedes the proposed
+retain-surviving-IDs rule for this slice. Ordinary opening/actions remain outside
+mode. No batch operations, Ctrl-click/range/long-press selection, selection-key
+registry or mutation shortcuts are delivered. Production native sealed-name
+fixtures exercise behavior and synthetic 10k lazy construction, not installed
+performance/accessibility acceptance (#222). All broader #219 stages remain open;
+older progress paragraphs describe their own earlier delivery boundaries.
+
 The bounded Stage 2 appearance increment replaces the account theme cycle with
 an explicit scrollable System/Light/Dark selection dialog and Comfortable/Compact
 browser density. Both preferences are install-local and apply immediately through

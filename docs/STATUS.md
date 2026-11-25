@@ -1,5 +1,43 @@
 # Project status
 
+## Listing-scoped read-only selection (#219 bounded slice)
+
+The browser's labelled **Select items** checklist button enters explicit selection
+mode. Lazy List/Grid rows and 48 dp labelled checkboxes toggle original opaque
+listing models. A live selected count, horizontally scrollable Select all visible,
+Clear/Exit controls and existing read-only Details for exactly one entry are wired
+to production FilesPage. Select-all covers loaded filtered entries, not the account;
+filter changes clear hidden selections. Sort/view changes preserve selection.
+Refresh (including error), navigation, session close and disposal clear it, and
+listing/navigation/selection generations reject retained callbacks even if the
+transport reuses models. System Back dismisses docked Details before exiting mode.
+Ordinary open/actions remain outside selection mode. No batch operations, backend,
+crypto or persistence changes, selection shortcuts, range/Ctrl-click or long-press
+entry are implemented. Earlier slice-specific selection exclusions below describe
+their historical boundaries, not this increment.
+
+Verification: the pinned canonical `bash scripts/dev-check.sh flutter` exits 0
+with Flutter 3.47.9 / Dart 3.13.7, native release FFI build, clean analysis and
+**947 tests passed / 5 skipped**. Six new production tests use real native
+sealed-name fixtures for list/grid toggle/count, exact Details model identity,
+filtered all/Clear/Exit, sort/view retention, refresh/error/reused-model callbacks,
+navigation/close/disposal, system Back ordering, narrow 200% controls and editing
+select-all. The synthetic 10k test checks count/toggle plus bounded lazy row
+construction before/after scrolling on both surfaces, with no listing requests.
+The initial five regressions all failed on original production code; disconnecting
+production selection wiring independently failed four of those tests. Restoration
+passes; the related views/commands/selection suite passed 27 tests before adding
+the sixth Back regression, and the final full suite includes it. An initial full
+run exposed extra-toolbar-height overflows in existing narrow/enlarged tests;
+placing entry in the existing breadcrumb row and replacing command chrome in mode
+fixed them without changing existing tests or shrinking targets. An earlier
+canonical run stopped at one new lint, corrected before the full reruns.
+
+Widget-injected transport and synthetic construction are not installed network,
+keyboard/screen-reader, screenshots or frame-time/latency acceptance (#222).
+No installed performance verification is claimed. Parent #219 remains incomplete;
+batch operations and the remaining browser/shell/visual/mobile stages stay open.
+
 ## Appearance and browser density (#219 bounded Stage 2 slice)
 
 Account/Settings now opens explicit System/Light/Dark selection and installation-local
