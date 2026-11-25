@@ -21,6 +21,10 @@ about repeated onboarding and OS-specific default device labels: hosted Linux an
 Windows initially failed the density filter fixture because their suggested label
 did not contain `Dev`. The fixture now explicitly confirms `Device` before checking
 filter preservation; production naming and collision rules were not changed.
+A subsequent Windows fixture failure exposed the expected OS-vault migration
+removal of the legacy keyfile preference; appearance fixtures now inject the
+existing no-store KeyfileVault seam rather than touching a real runner's credential
+manager. This does not test or change secure-storage migration.
 
 The restored focused appearance/browser-view suite and clean analysis exited 0.
 The canonical `bash scripts/dev-check.sh flutter` exited 0 with pinned Flutter

@@ -8,6 +8,7 @@ import 'package:nntdrive/device_onboarding.dart';
 import 'package:nntdrive/local_availability.dart';
 import 'package:nntdrive/main.dart';
 import 'package:nntdrive/native.dart';
+import 'package:nntdrive/secure_keyfile.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'browser_views_test.dart' show file;
@@ -81,7 +82,15 @@ Future<({SharedPreferences prefs, SessionApi api})> setup(
     if (density != null) 'browserDensity': density,
   });
   final prefs = await SharedPreferences.getInstance();
-  await tester.pumpWidget(NntDriveApp(prefs: prefs, apiFactory: (_, _) => api));
+  // Appearance tests must not migrate fixture credentials into a real runner's
+  // credential manager (which also legitimately removes the legacy pref).
+  await tester.pumpWidget(
+    NntDriveApp(
+      prefs: prefs,
+      apiFactory: (_, _) => api,
+      keyfileVault: KeyfileVault(prefs: prefs),
+    ),
+  );
   await tester.pumpAndSettle();
   await unlock(tester);
   return (prefs: prefs, api: api);
@@ -149,7 +158,12 @@ void main() {
     page.onSignOut();
     await until(tester, () => find.byType(FilesPage).evaluate().isEmpty);
     await tester.pumpWidget(const SizedBox());
-    await tester.pumpWidget(NntDriveApp(prefs: fixture.prefs));
+    await tester.pumpWidget(
+      NntDriveApp(
+        prefs: fixture.prefs,
+        keyfileVault: KeyfileVault(prefs: fixture.prefs),
+      ),
+    );
     await tester.pumpAndSettle();
     expect(
       tester.widget<MaterialApp>(find.byType(MaterialApp)).themeMode,
@@ -221,7 +235,11 @@ void main() {
       }
       await tester.pumpWidget(const SizedBox());
       await tester.pumpWidget(
-        NntDriveApp(prefs: fixture.prefs, apiFactory: (_, _) => fixture.api),
+        NntDriveApp(
+          prefs: fixture.prefs,
+          apiFactory: (_, _) => fixture.api,
+          keyfileVault: KeyfileVault(prefs: fixture.prefs),
+        ),
       );
       await tester.pumpAndSettle();
       await unlock(tester);
