@@ -110,12 +110,19 @@ open; installed accessibility/screenshots/performance acceptance remains #222.
 ### Read-only file details (#219 bounded slice)
 
 Use the **Details for <name>** information button on a file or folder in either
-List or Grid. Details opens a dismissible dialog at every width, capped at 560 dp
-and scrollable on narrow/short windows or enlarged text. Close details, Escape,
-system Back or the outside barrier dismiss it. There is not yet a docked wide
-side pane or a selection model; the existing row open/More actions are unchanged.
+List or Grid. At window widths of at least 1200 dp, Details docks in a 320 dp
+read-only pane only when the actual post-navigation body leaves at least 480 dp
+for the browser (plus a 1 dp divider). The browser stays interactive: another
+Details button replaces the observation without opening/downloading the item.
+The pane has scrollable metadata and an always-visible 48 dp Close control;
+Close details, Escape or system Back dismiss it before parent navigation.
+Smaller layouts retain the dismissible dialog capped at 560 dp, including its
+Escape/Back/outside-barrier dismissal. Crossing the docking breakpoint dismisses
+the current pane or dialog; it does not migrate or reopen stale observations.
+Other resizes retain the observation. No selection model is added; existing row
+open/More actions and density/theme choices are unchanged.
 
-The dialog reuses the current locally decrypted name and listing fields: type,
+Both presentations reuse the current locally decrypted name and listing fields: type,
 exact regular-file bytes, favorite and namespace modification time in UTC (Unknown
 when absent). Listed size is not verified manifest content size, and folders show
 **Not calculated**, never their metadata size as a recursive total. Namespace time
@@ -130,8 +137,9 @@ Opening details does not list HTTP, download/preview, inspect disk, hash, open a
 journal/cache or invoke native inspection. Existing browser refresh/cache loading
 is separate. Details is an explicitly possibly stale snapshot, not continuous
 status: close and refresh to recheck. Browser refresh, destination/child navigation
-and controller notifications dismiss it; retained callbacks for replaced listing
-objects cannot reopen old metadata. No plaintext persistence, protocol, mutation,
+and controller notifications, session close and disposal dismiss it; retained
+callbacks from older refresh/navigation generations cannot reopen even reused
+listing objects. No plaintext persistence, protocol, mutation,
 permission or crypto changes were added. Automated layout/dismissal and production
 wiring tests do not establish installed Windows/Linux/Android or screen-reader
 acceptance (#222). #219 and all remaining stage criteria stay open.

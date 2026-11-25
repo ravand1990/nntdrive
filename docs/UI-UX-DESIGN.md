@@ -253,7 +253,7 @@ the final canonical check passed clean analysis, native release build and 927
 tests / 5 skips (STATUS.md). Refresh deliberately replaces prior rows with the
 skeleton/error rather than retaining a labelled stale snapshot: that proposed
 behavior remains open. This slice does not complete shared states across other
-pages, selection, docked details, embedded shell, visual/mobile stages or installed
+pages, selection, embedded shell, visual/mobile stages or installed
 accessibility/screenshots/performance (#222); all other #219 criteria stay open.
 
 Compact navigation now implements Files/Search/Sync/Activity/More over the existing
@@ -275,9 +275,15 @@ remain open.
 The browser navigation and lazy List/Grid/local-ordering increments are now
 implemented; see CLIENTS.md and STATUS.md for their exact boundaries. The bounded
 read-only details increment supplies explicit information buttons on both
-surfaces and a scrollable, width-constrained dialog at all breakpoints. It does
-**not** yet implement the proposed docked 320 dp pane. This deliberately bounded
-alternative retains the full browser width and existing route/Back behavior.
+surfaces. At >=1200 dp window width, a 320 dp docked read-only pane is now
+implemented when the actual post-navigation body retains at least 480 dp for
+files beside the 1 dp divider. Smaller layouts keep the scrollable dialog capped
+at 560 dp. Both reuse the same frozen observation/content. The pane leaves the
+browser interactive, so another explicit Details action replaces it; it does not
+create selection or trigger preview. Its scrollable content and separate 48 dp
+Close support enlarged text. Escape/system Back close it before parent traversal.
+Crossing the docking threshold dismisses either presentation after layout rather
+than migrating/reopening it; the browser child remains in the same element slot.
 Details freezes existing decrypted listing metadata and device display evidence,
 adds no automatic preview/download/inspection or mutation, and dismisses on
 refresh/navigation/controller changes rather than retaining misleading evidence.

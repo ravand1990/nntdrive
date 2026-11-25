@@ -1,4 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
+
+import 'package:flutter/services.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -26,12 +29,16 @@ class BrowserApi extends ApiClient {
   BrowserApi() : super(baseUrl: 'http://127.0.0.1:1', token: 'test');
   final entries = <RemoteFile>[];
   final parents = <String?>[];
+  Future<void>? gate;
+  bool fail = false;
   @override
   Future<AccountInfo> me() async =>
       AccountInfo('account', 'test@example.invalid', 'Test', false, null, 0);
   @override
   Future<List<RemoteFile>> listFiles({String? parentId}) async {
     parents.add(parentId);
+    if (gate != null) await gate;
+    if (fail) throw StateError('Synthetic listing failure');
     return parentId == null ? List.of(entries) : [];
   }
 }
@@ -341,7 +348,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      final before = api.parents.length;
+      var before = api.parents.length;
       Future<void> checkDetails() async {
         for (final name in ['Alpha', 'Zebra']) {
           await tester.tap(find.byTooltip('Details for $name'));
@@ -359,6 +366,97 @@ void main() {
         }
       }
       await checkDetails();
+      tester.view.physicalSize = const Size(1200, 900);
+      tester.view.devicePixelRatio = 1;
+      await tester.pumpAndSettle();
+      for (final mode in BrowserView.values) {
+        await tester.tap(find.text(mode == BrowserView.list ? 'List ✓' : 'Grid'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byTooltip('Details for Alpha'));
+        await tester.pumpAndSettle();
+        final pane = find.byKey(const ValueKey('browser-details-pane'));
+        expect(pane, findsOneWidget);
+        expect(find.byType(AlertDialog), findsNothing);
+        expect(tester.getSize(pane).width, 320);
+        expect(tester.getSize(find.byType(BrowserFilesView)).width,
+            greaterThanOrEqualTo(480));
+        expect(find.text('99 bytes'), findsOneWidget);
+        final oldClose = tester.widget<BrowserFileDetails>(find.byType(BrowserFileDetails)).onClose!;
+        // Browser controls remain usable while the nonmodal pane is open.
+        await tester.tap(find.byTooltip('Details for Zebra'));
+        await tester.pumpAndSettle();
+        expect(find.text('Not calculated for folders (not an aggregate).'), findsOneWidget);
+        expect(find.text('99 bytes'), findsNothing);
+        oldClose();
+        await tester.pumpAndSettle();
+        expect(pane, findsOneWidget, reason: 'Old Close must not dismiss a replacement');
+        expect(api.parents.length, before);
+        final close = find.widgetWithText(TextButton, 'Close details');
+        expect(tester.getSize(close).shortestSide, greaterThanOrEqualTo(48));
+        await tester.tap(close);
+        await tester.pumpAndSettle();
+        expect(pane, findsNothing);
+      }
+      for (final dismiss in ['escape', 'back', 'controller']) {
+        await tester.tap(find.byTooltip('Details for Alpha'));
+        await tester.pumpAndSettle();
+        expect(find.byKey(const ValueKey('browser-details-pane')), findsOneWidget);
+        if (dismiss == 'escape') {
+          await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        } else if (dismiss == 'back') {
+          await tester.binding.handlePopRoute();
+        } else {
+          sync.evidenceChanged();
+        }
+        await tester.pumpAndSettle();
+        expect(find.byType(BrowserFileDetails), findsNothing);
+      }
+      // Refresh invalidates both a frozen pane and retained row callbacks while
+      // loading and on failure, even if transport returns the same model object.
+      final previous = tester.widget<BrowserFilesView>(find.byType(BrowserFilesView));
+      await tester.tap(find.byTooltip('Details for Alpha'));
+      await tester.pumpAndSettle();
+      final suspended = Completer<void>();
+      api.gate = suspended.future;
+      final refreshing = tester.widget<RefreshIndicator>(find.byType(RefreshIndicator)).onRefresh();
+      await tester.pump();
+      expect(find.byType(BrowserFileDetails), findsNothing);
+      previous.onDetails(previous.files.first);
+      await tester.pump();
+      expect(find.byType(BrowserFileDetails), findsNothing);
+      api.fail = true;
+      suspended.complete();
+      await refreshing;
+      await tester.pumpAndSettle();
+      previous.onDetails(previous.files.first);
+      await tester.pumpAndSettle();
+      expect(find.byType(BrowserFileDetails), findsNothing);
+      api.gate = null;
+      api.fail = false;
+      await tester.tap(find.text('Retry'));
+      await tester.pumpAndSettle();
+      before = api.parents.length;
+      previous.onDetails(previous.files.first);
+      await tester.pumpAndSettle();
+      expect(find.byType(BrowserFileDetails), findsNothing,
+          reason: 'A retained callback cannot reopen even reused transport models');
+      // Crossing the docking boundary dismisses, rather than migrating a stale
+      // observation into a modal route or retaining an invisible pane.
+      await tester.tap(find.byTooltip('Details for Alpha'));
+      await tester.pumpAndSettle();
+      tester.view.physicalSize = const Size(1024, 900);
+      await tester.pumpAndSettle();
+      expect(find.byType(BrowserFileDetails), findsNothing);
+      await tester.tap(find.byTooltip('Details for Alpha'));
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsOneWidget);
+      tester.view.physicalSize = const Size(1440, 900);
+      await tester.pumpAndSettle();
+      expect(find.byType(BrowserFileDetails), findsNothing);
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+      await tester.tap(find.text('List'));
+      await tester.pumpAndSettle();
       expect(
         tester.getTopLeft(find.text('Alpha')).dy,
         lessThan(tester.getTopLeft(find.text('Zebra')).dy),
@@ -419,6 +517,9 @@ void main() {
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField), '');
       await tester.pumpAndSettle();
+      tester.view.physicalSize = const Size(1440, 900);
+      tester.view.devicePixelRatio = 1;
+      await tester.pumpAndSettle();
       final oldView = tester.widget<BrowserFilesView>(find.byType(BrowserFilesView));
       final oldFile = oldView.files.firstWhere((f) => f.id == ids[1]);
       await tester.tap(find.byTooltip('Details for Alpha'));
@@ -465,11 +566,29 @@ void main() {
             tester.widget<BrowserFilesView>(find.byType(BrowserFilesView)).view,
             mode,
           );
+          final enlargedView = tester.widget<BrowserFilesView>(find.byType(BrowserFilesView));
+          enlargedView.onDetails(enlargedView.files.firstWhere((f) => f.id == ids[1]));
+          await tester.pumpAndSettle();
+          expect(find.byKey(const ValueKey('browser-details-pane')),
+              width >= 1200 ? findsOneWidget : findsNothing);
+          expect(find.byType(AlertDialog), width >= 1200 ? findsNothing : findsOneWidget);
+          final detailsScroll = tester.state<ScrollableState>(find.descendant(
+            of: find.byType(BrowserFileDetails), matching: find.byType(Scrollable)).first);
+          detailsScroll.position.jumpTo(detailsScroll.position.maxScrollExtent);
+          await tester.pumpAndSettle();
+          final enlargedClose = find.widgetWithText(TextButton, 'Close details');
+          expect(tester.getBottomLeft(find.textContaining('may be stale')).dy,
+              lessThanOrEqualTo(tester.getTopLeft(enlargedClose).dy));
+          expect(tester.getSize(enlargedClose).height, greaterThanOrEqualTo(48));
+          await tester.tap(enlargedClose);
+          await tester.pumpAndSettle();
           expect(tester.takeException(), isNull);
         }
       }
-      tester.view.resetPhysicalSize();
-      tester.view.resetDevicePixelRatio();
+      tester.view.physicalSize = const Size(1440, 800);
+      tester.view.devicePixelRatio = 1;
+      await tester.pumpAndSettle();
+      final page = tester.widget<FilesPage>(find.byType(FilesPage));
       final disposedView = tester.widget<BrowserFilesView>(find.byType(BrowserFilesView));
       disposedView.onDetails(disposedView.files.first);
       await tester.pumpAndSettle();
@@ -478,6 +597,18 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(BrowserFileDetails), findsNothing);
       disposedView.onDetails(disposedView.files.first);
+      await tester.pumpAndSettle();
+      expect(find.byType(BrowserFileDetails), findsNothing);
+      await tester.pumpWidget(MaterialApp(home: page));
+      await tester.pumpAndSettle();
+      final closingView = tester.widget<BrowserFilesView>(find.byType(BrowserFilesView));
+      closingView.onDetails(closingView.files.first);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('browser-details-pane')), findsOneWidget);
+      session.search.close();
+      await tester.pumpAndSettle();
+      expect(find.byType(BrowserFileDetails), findsNothing);
+      closingView.onDetails(closingView.files.first);
       await tester.pumpAndSettle();
       expect(find.byType(BrowserFileDetails), findsNothing);
       await tester.pumpWidget(const SizedBox());
