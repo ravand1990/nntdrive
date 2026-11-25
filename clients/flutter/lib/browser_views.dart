@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'api.dart';
+import 'appearance.dart';
 import 'local_availability.dart';
 import 'local_availability_widgets.dart';
 
@@ -152,6 +153,7 @@ String _sortLabel(BrowserSort sort) => switch (sort) {
 class BrowserFilesView extends StatelessWidget {
   const BrowserFilesView({
     super.key,
+    this.density = BrowserDensity.comfortable,
     required this.files,
     required this.view,
     required this.nameFor,
@@ -163,6 +165,7 @@ class BrowserFilesView extends StatelessWidget {
     required this.onDetails,
   });
   final List<RemoteFile> files;
+  final BrowserDensity density;
   final BrowserView view;
   final String Function(RemoteFile) nameFor;
   final LocalAvailability Function(RemoteFile) availabilityFor;
@@ -183,6 +186,7 @@ class BrowserFilesView extends StatelessWidget {
         local: availabilityFor(file),
         pinned: pinned(file),
         grid: view == BrowserView.grid,
+        density: density,
         onOpen: () => onOpen(file),
         onActions: () => onActions(file),
         onReveal: () => onReveal(file),
@@ -210,12 +214,14 @@ class BrowserFilesView extends StatelessWidget {
           itemCount: files.length,
           itemBuilder: item,
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 88),
+          padding: EdgeInsets.fromLTRB(
+            12, density == BrowserDensity.compact ? 4 : 8, 12, 88),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: columns,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
-            mainAxisExtent: 180 * scale + 64,
+            crossAxisSpacing: density == BrowserDensity.compact ? 8 : 12,
+            mainAxisSpacing: density == BrowserDensity.compact ? 8 : 12,
+            mainAxisExtent:
+                (density == BrowserDensity.compact ? 164 : 180) * scale + 64,
           ),
         );
       },
@@ -226,6 +232,7 @@ class BrowserFilesView extends StatelessWidget {
 class BrowserFileTile extends StatelessWidget {
   const BrowserFileTile({
     super.key,
+    this.density = BrowserDensity.comfortable,
     required this.file,
     required this.name,
     required this.local,
@@ -237,6 +244,7 @@ class BrowserFileTile extends StatelessWidget {
     required this.onDetails,
   });
   final RemoteFile file;
+  final BrowserDensity density;
   final String name;
   final LocalAvailability local;
   final bool pinned;
@@ -291,6 +299,8 @@ class BrowserFileTile extends StatelessWidget {
       builder: (context, constraints) {
         if (!grid && constraints.maxWidth >= 520 && scale <= 1.3) {
           return ListTile(
+            minVerticalPadding: density == BrowserDensity.compact ? 4 : 12,
+            minTileHeight: 48,
             leading: icon,
             title: title,
             subtitle: status,
@@ -303,7 +313,7 @@ class BrowserFileTile extends StatelessWidget {
           child: InkWell(
             onTap: onOpen,
             child: Padding(
-              padding: const EdgeInsets.all(12),
+              padding: EdgeInsets.all(density == BrowserDensity.compact ? 8 : 12),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
