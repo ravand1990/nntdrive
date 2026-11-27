@@ -218,11 +218,10 @@ pub async fn register(
     .bind(state.config.default_quota_bytes)
     .execute(&mut *tx)
     .await?;
-    let device_id = body.device.id.unwrap_or_else(Uuid::new_v4);
-    upsert_device_tx(
+    let device_id = upsert_device_tx(
         &mut tx,
         body.account_id,
-        device_id,
+        body.device.id,
         body.device.platform.as_deref().unwrap_or("unknown"),
         &body.device.public_key,
     )
@@ -281,12 +280,11 @@ pub async fn login(
                     "device public_key must be 32 bytes".into(),
                 ));
             }
-            let id = device.id.unwrap_or_else(Uuid::new_v4);
             let mut tx = state.pool.begin().await?;
-            upsert_device_tx(
+            let id = upsert_device_tx(
                 &mut tx,
                 account_id,
-                id,
+                device.id,
                 device.platform.as_deref().unwrap_or("unknown"),
                 &device.public_key,
             )
@@ -412,42 +410,64 @@ pub async fn create_token(
 async fn upsert_device_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     account_id: Uuid,
-    device_id: Uuid,
+    requested_id: Option<Uuid>,
     platform: &str,
     public_key: &str,
-) -> ApiResult<()> {
-    let existing: Option<(Uuid, Option<DateTime<Utc>>)> =
-        sqlx::query_as("SELECT account_id, revoked_at FROM devices WHERE id = $1")
-            .bind(device_id)
+) -> ApiResult<Uuid> {
+    // Serialize resolution and insertion across backend replicas, including the
+    // empty-key case. No namespace/event writer is called while holding this gate.
+    sqlx::query("SELECT id FROM accounts WHERE id = $1 FOR UPDATE")
+        .bind(account_id)
+        .fetch_one(&mut **tx)
+        .await?;
+    let existing: Option<(Uuid, String, Option<DateTime<Utc>>)> =
+        match requested_id {
+            Some(id) => sqlx::query_as(
+                "SELECT account_id, public_key, revoked_at FROM devices WHERE id = $1 FOR UPDATE",
+            )
+            .bind(id)
             .fetch_optional(&mut **tx)
-            .await?;
-    match existing {
-        Some((owner, _)) if owner != account_id => Err(ApiError::Unauthorized),
-        Some(_) => {
-            sqlx::query(
-                "UPDATE devices SET last_seen_at = now(), name = 'Device', platform = $2 WHERE id = $1 AND account_id = $3",
-            )
-            .bind(device_id)
-            .bind(platform)
-            .bind(account_id)
-            .execute(&mut **tx)
-            .await?;
-            Ok(())
+            .await?,
+            None => None,
+        };
+    let id = if let Some((owner, key, revoked)) = existing {
+        if owner != account_id || revoked.is_some() {
+            return Err(ApiError::Unauthorized);
         }
-        None => {
-            sqlx::query(
-                "INSERT INTO devices (id, account_id, name, public_key, platform, last_seen_at)
-                 VALUES ($1, $2, 'Device', $3, $4, now())",
-            )
-            .bind(device_id)
-            .bind(account_id)
-            .bind(public_key)
-            .bind(platform)
-            .execute(&mut **tx)
-            .await?;
-            Ok(())
+        if key != public_key {
+            return Err(ApiError::Conflict("device identity does not match".into()));
         }
-    }
+        requested_id.expect("existing row requires a requested ID")
+    } else {
+        // Include revoked identities: a fresh ID must not bypass revocation.
+        // Bound legacy ambiguity detection; never silently merge existing roots.
+        let matches: Vec<(Uuid, Option<DateTime<Utc>>)> = sqlx::query_as(
+            "SELECT id, revoked_at FROM devices WHERE account_id = $1 AND public_key = $2 ORDER BY id LIMIT 2 FOR UPDATE",
+        ).bind(account_id).bind(public_key).fetch_all(&mut **tx).await?;
+        match matches.as_slice() {
+            [] => {
+                let id = requested_id.unwrap_or_else(Uuid::new_v4);
+                let inserted: Option<Uuid> = sqlx::query_scalar(
+                    "INSERT INTO devices (id, account_id, name, public_key, platform, last_seen_at)
+                     VALUES ($1, $2, 'Device', $3, $4, now()) ON CONFLICT (id) DO NOTHING RETURNING id",
+                ).bind(id).bind(account_id).bind(public_key).bind(platform)
+                    .fetch_optional(&mut **tx).await?;
+                // A concurrent different account can claim a requested UUID.
+                return inserted.ok_or(ApiError::Unauthorized);
+            }
+            [(id, None)] => *id,
+            [(_, Some(_))] => return Err(ApiError::Unauthorized),
+            _ => {
+                return Err(ApiError::Conflict(
+                    "device identity is ambiguous; explicit repair required".into(),
+                ))
+            }
+        }
+    };
+    sqlx::query(
+        "UPDATE devices SET last_seen_at = now(), name = 'Device', platform = $2 WHERE id = $1 AND account_id = $3",
+    ).bind(id).bind(platform).bind(account_id).execute(&mut **tx).await?;
+    Ok(id)
 }
 
 async fn issue_token_tx(

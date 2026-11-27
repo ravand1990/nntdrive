@@ -1,5 +1,23 @@
 # Project status
 
+## Backend device identity prevention (#234 partial)
+
+Registration/login resolve a missing or unknown requested device ID to the unique
+same-account public key under a transaction-held account row lock. Tokens and the
+response carry the resolved ID, so its existing root is retained. A known ID with
+a different key returns 409; foreign/revoked IDs return 401. Missing/unknown IDs
+cannot bypass a revoked key; multiple legacy matches return 409 rather than
+selecting or merging roots. Distinct keys and accounts remain independent. No
+migration, duplicate repair, file deletion or plaintext label is introduced.
+
+Disposable PostgreSQL HTTP-router regressions cover missing/unknown/known IDs,
+existing sealed-root retention, concurrent new-key enrollment, token rejection,
+revocation, ambiguous legacy rows and tenant isolation. Both new tests failed
+against the original behavior. This is only backend prevention: Flutter still
+regenerates its ID and public key on authentication, and persistent install
+identity plus documented reversible duplicate/root repair remain open on #234.
+Installed restart/update/sign-out acceptance has not been run.
+
 ## Listing-scoped read-only selection (#219 bounded slice)
 
 The browser's labelled **Select items** checklist button enters explicit selection
