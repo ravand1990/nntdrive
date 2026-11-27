@@ -6,6 +6,8 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+## [0.38.0] - 2026-11-27
+
 ### Bug fixes
 
 - Authentication now reuses an account's unique existing device/public key when a supplied device ID is missing or unknown (#234 backend prevention slice). Returned IDs and tokens use that identity and preserve its device root. Concurrent enrollments serialize in PostgreSQL; foreign IDs, mismatched keys, revoked identities and ambiguous legacy duplicate keys fail closed. No roots/files are merged or deleted. Client install-identity persistence and reversible duplicate repair remain unfinished on #234; this backend-only change does not yet fix restarts of clients that regenerate both ID and key.

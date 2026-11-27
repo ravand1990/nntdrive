@@ -1718,8 +1718,8 @@ Linux/Android/Windows builds and Android native smoke. Exact-head CI run
 passed. NNT-017 changed only Flutter code; the 93 Rust tests above remain the
 latest recorded Rust count, not a new post-merge run.
 
-The current release version is **v0.37.0** (2026-11-25); Cargo and Flutter
-source versions are 0.37.0 (`0.37.0+90` for Flutter). Publication must be verified
+The current release version is **v0.38.0** (2026-11-27); Cargo and Flutter
+source versions are 0.38.0 (`0.38.0+91` for Flutter). Publication must be verified
 from the tag's Release workflow and attached assets. The historical
 live-provider, desktop and release evidence below was not repeated by this
 documentation run.
@@ -1779,7 +1779,7 @@ decrypt, verify) and through the Flutter FFI sync layer.
 | Real Eweka round-trip: post via `post.eweka.nl:563`, retrieve via `news.eweka.nl:563`, decrypt, verify hash | 4 KB live upload; both articles STAT-verified |
 | Live deployment: dev Compose stack with mock NNTP; register/upload/download through the API | `crates/client/examples/smoke.rs` (verified) |
 | Docker image build, Compose stack, healthcheck, admin page, CLI bootstrap, admin API | ✅ verified locally (image built, stack started, `/healthz` 200, admin stats returned) |
-| Versioned image release: tests → GHCR push (`0.37.0`, `0.37`, `latest`, `sha-*`) → GitHub release with Compose files, checksums and Linux/Android/Windows client builds | Tag-driven workflow; verify publication for the selected tag |
+| Versioned image release: tests → GHCR push (`0.38.0`, `0.38`, `latest`, `sha-*`) → GitHub release with Compose files, checksums and Linux/Android/Windows client builds | Tag-driven workflow; verify publication for the selected tag |
 | Flutter client analyze/tests, Linux/Android/Windows release builds | ✅ clean analyze, Dart FFI tests pass; Linux/Windows bundles run, Android APK (~77 MB, debug-signed) embeds all ABIs |
 
 Run it yourself:
