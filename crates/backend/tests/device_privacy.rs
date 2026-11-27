@@ -124,6 +124,133 @@ async fn device_row(state: &AppState, device: Uuid) -> (Uuid, String, String, St
         .unwrap()
 }
 
+async fn identity_login(
+    state: &AppState,
+    account: &Account,
+    id: Option<Uuid>,
+    key: &str,
+) -> (StatusCode, Value) {
+    call(
+        state,
+        "POST",
+        "/api/v1/auth/login",
+        None,
+        json!({
+            "email": account.email, "verifier": "ab".repeat(32),
+            "device": {"id": id, "platform": "linux", "public_key": key}
+        }),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn identity_reuses_missing_unknown_and_concurrent_ids_with_existing_root() {
+    let env = env().await;
+    let alice = register(&env.state, None).await;
+    let node = Uuid::new_v4();
+    let master = MasterKey::generate(alice.id, 1);
+    let sealed = STANDARD.encode(master.seal_name(node, "Private root").unwrap().to_bytes());
+    assert_eq!(
+        call(
+            &env.state,
+            "POST",
+            "/api/v1/roots",
+            Some(&alice.token),
+            json!({"kind": "device", "node_id": node, "name_enc": sealed})
+        )
+        .await
+        .0,
+        StatusCode::CREATED
+    );
+    for id in [None, Some(Uuid::new_v4()), Some(alice.device)] {
+        let (status, body) = identity_login(&env.state, &alice, id, &alice.key).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["device_id"], json!(alice.device));
+        let token = body["token"].as_str().unwrap();
+        let (status, roots) =
+            call(&env.state, "GET", "/api/v1/roots", Some(token), Value::Null).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(roots["roots"][0]["node_id"], json!(node));
+        assert_eq!(roots["roots"][0]["name_enc"], sealed);
+    }
+    let key = STANDARD.encode(DeviceKeypair::generate().public().0);
+    let (a, b) = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        tokio::join!(
+            identity_login(&env.state, &alice, None, &key),
+            identity_login(&env.state, &alice, Some(Uuid::new_v4()), &key)
+        )
+    })
+    .await
+    .expect("concurrent enrollment must finish");
+    assert_eq!(a.0, StatusCode::OK, "{}", a.1);
+    assert_eq!(b.0, StatusCode::OK, "{}", b.1);
+    assert_eq!(a.1["device_id"], b.1["device_id"]);
+    assert_ne!(a.1["device_id"], json!(alice.device));
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM devices WHERE account_id = $1")
+        .bind(alice.id)
+        .fetch_one(&env.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 2);
+}
+
+#[tokio::test]
+async fn identity_conflicts_revocation_and_legacy_duplicates_fail_without_tokens() {
+    let env = env().await;
+    let alice = register(&env.state, None).await;
+    let bob = register(&env.state, None).await;
+    let other_key = STANDARD.encode(DeviceKeypair::generate().public().0);
+    let before: i64 = sqlx::query_scalar("SELECT count(*) FROM api_tokens")
+        .fetch_one(&env.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        identity_login(&env.state, &alice, Some(alice.device), &other_key)
+            .await
+            .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        identity_login(&env.state, &alice, Some(bob.device), &alice.key)
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
+    sqlx::query("UPDATE devices SET revoked_at = now() WHERE id = $1")
+        .bind(alice.device)
+        .execute(&env.state.pool)
+        .await
+        .unwrap();
+    for id in [Some(alice.device), None, Some(Uuid::new_v4())] {
+        assert_eq!(
+            identity_login(&env.state, &alice, id, &alice.key).await.0,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    let after: i64 = sqlx::query_scalar("SELECT count(*) FROM api_tokens")
+        .fetch_one(&env.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(before, after);
+    // Legacy duplicates are not silently merged or selected; explicit known IDs remain usable.
+    sqlx::query("INSERT INTO devices (id, account_id, name, public_key, platform) VALUES ($1,$2,'Device',$3,'linux')")
+        .bind(Uuid::new_v4()).bind(bob.id).bind(&bob.key).execute(&env.state.pool).await.unwrap();
+    assert_eq!(
+        identity_login(&env.state, &bob, None, &bob.key).await.0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        identity_login(&env.state, &bob, Some(bob.device), &bob.key)
+            .await
+            .0,
+        StatusCode::OK
+    );
+    // Same key in a different tenant is independent, not a cross-account dedupe.
+    let (status, body) = identity_login(&env.state, &bob, None, &alice.key).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_ne!(body["device_id"], json!(alice.device));
+}
+
 #[tokio::test]
 async fn registration_and_login_never_persist_legacy_device_names() {
     let env = env().await;
@@ -134,10 +261,9 @@ async fn registration_and_login_never_persist_legacy_device_names() {
     );
     // Same-device upsert ignores a new legacy name, preserves enrollment key,
     // updates platform/last-seen and still issues a working bound token.
-    let replacement_key = STANDARD.encode(DeviceKeypair::generate().public().0);
     let (status, login) = call(&env.state, "POST", "/api/v1/auth/login", None, json!({
         "email": alice.email, "verifier": "ab".repeat(32),
-        "device": {"id": alice.device, "name": "Secret renamed hostname", "platform": "windows", "public_key": replacement_key}
+        "device": {"id": alice.device, "name": "Secret renamed hostname", "platform": "windows", "public_key": alice.key}
     })).await;
     assert_eq!(status, StatusCode::OK, "{login}");
     assert_eq!(login["device_id"], json!(alice.device));
@@ -186,8 +312,9 @@ async fn registration_and_login_never_persist_legacy_device_names() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{login}");
+    assert_eq!(login["device_id"], json!(alice.device));
     assert_eq!(
-        device_row(&env.state, fresh).await,
+        device_row(&env.state, alice.device).await,
         (
             alice.id,
             "Device".into(),

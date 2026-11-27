@@ -6,6 +6,10 @@ release workflow refuses to publish if the entry is missing.
 
 ## [Unreleased]
 
+### Bug fixes
+
+- Authentication now reuses an account's unique existing device/public key when a supplied device ID is missing or unknown (#234 backend prevention slice). Returned IDs and tokens use that identity and preserve its device root. Concurrent enrollments serialize in PostgreSQL; foreign IDs, mismatched keys, revoked identities and ambiguous legacy duplicate keys fail closed. No roots/files are merged or deleted. Client install-identity persistence and reversible duplicate repair remain unfinished on #234; this backend-only change does not yet fix restarts of clients that regenerate both ID and key.
+
 ### Features
 
 - Added explicit **Select items** mode to browser List/Grid, with an announced selected count, **Select all visible** (the loaded filtered folder view), **Clear selection**, **Exit selection**, and existing read-only **Selection details** for exactly one original listing entry (#219 bounded slice). Rows toggle instead of opening while selecting; ordinary open/actions return on exit. Refresh, navigation, errors and session close clear selection; changing the filter clears hidden selections. Controls retain 48 dp targets and horizontally scroll at narrow/enlarged text. No batch operations, mutation shortcuts, backend/crypto changes or installed performance/accessibility verification; #219 and #222 remain open.

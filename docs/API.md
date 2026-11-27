@@ -52,6 +52,18 @@ recovery kit the same request must carry the kit minted for the new epoch,
 otherwise it is refused with 409 so the stored kit can never fall behind the
 keyfile. Repeating an applied publish is idempotent.
 
+`device.id` is optional. Authentication returns the resolved `device_id`; clients
+must retain a stable install public key and prefer the returned ID. Missing or
+unknown IDs reuse the unique same-account key match, including its existing root;
+otherwise a new identity is inserted. Known IDs require the enrolled key (409 on
+mismatch); foreign or revoked IDs/unique revoked key matches return 401. Multiple
+legacy key matches return 409 unless an explicit matching live ID is supplied.
+Resolution and insertion serialize per account across current backend replicas;
+old backend/direct database writers do not honor this application gate. No
+legacy duplicates or roots are automatically merged/deleted. Login without any
+`device` continues to mint a device-less token. Client persistence and reversible
+legacy repair are still unfinished on #234.
+
 Legacy `device.name` input is accepted but discarded, not stored or echoed.
 `/me` and `/devices` return `Device` in compatibility name fields. Migration 0008
 retains `devices.name`, scrubs its live values and normalizes inserts/updates to
